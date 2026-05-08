@@ -1,62 +1,37 @@
 # ===========================================
 # ESTÁGIO DE BUILD
 # ===========================================
-FROM node:18-alpine as build-stage
+# node:20-bookworm-slim usa glibc (Debian), evitando o mismatch
+# @rollup/rollup-linux-x64-musl que ocorre com Alpine (musl libc)
+FROM node:20-bookworm-slim AS build-stage
 
-# ===========================================
-# CONFIGURAÇÕES DE AMBIENTE
-# ===========================================
-ENV NODE_ENV=production
-ENV VITE_API_URL=http://localhost:8000/api/v1
-ENV VITE_WS_URL=ws://localhost:8000/ws
+ARG VITE_API_URL=http://localhost:8000
+ARG VITE_WS_URL=ws://localhost:8000/ws
 
-# ===========================================
-# DIRETÓRIO DE TRABALHO
-# ===========================================
+# Não setar NODE_ENV=production antes do npm ci — isso faria o npm
+# omitir devDependencies, que incluem o próprio Vite.
+# NODE_ENV é passado inline só para o build, garantindo output minificado.
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+
 WORKDIR /app
 
-# ===========================================
-# COPIA E INSTALAÇÃO DE DEPENDÊNCIAS
-# ===========================================
-COPY package*.json ./
-RUN npm ci --only=production --silent
+COPY package.json package-lock.json ./
+RUN npm ci --silent
 
-# ===========================================
-# COPIA DO CÓDIGO FONTE
-# ===========================================
 COPY . .
-
-# ===========================================
-# BUILD DA APLICAÇÃO
-# ===========================================
-RUN npm run build
+RUN NODE_ENV=production npm run build
 
 # ===========================================
 # ESTÁGIO DE PRODUÇÃO
 # ===========================================
-FROM nginx:alpine as production-stage
+FROM nginx:alpine AS production-stage
 
-# ===========================================
-# INSTALAÇÃO DE FERRAMENTAS ADICIONAIS
-# ===========================================
 RUN apk add --no-cache curl
 
-# ===========================================
-# COPIA DO BUILD PARA NGINX
-# ===========================================
 COPY --from=build-stage /app/dist /usr/share/nginx/html
-
-# ===========================================
-# CONFIGURAÇÃO DO NGINX
-# ===========================================
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# ===========================================
-# EXPOSIÇÃO DA PORTA
-# ===========================================
-EXPOSE 5173
+EXPOSE 3000
 
-# ===========================================
-# COMANDO DE INICIALIZAÇÃO
-# ===========================================
 CMD ["nginx", "-g", "daemon off;"]

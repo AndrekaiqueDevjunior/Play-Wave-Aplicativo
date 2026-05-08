@@ -20,7 +20,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { base44 } from "@/api/base44Client";
+import { criarDispositivo } from "@/api/dispositivos";
 
 const TIPOS_DISPOSITIVO = [
   { value: "tv", label: "TV" },
@@ -56,11 +56,7 @@ export default function DispositivoNovo() {
     e.preventDefault();
     if (!form.name.trim() || !form.pairing_code.trim()) return;
     setSaving(true);
-    await base44.entities.Device.create({
-      ...form,
-      status: "offline",
-      is_active: true,
-    });
+    await criarDispositivo({ ...form, status: "offline", is_active: true });
     toast({
       title: "Dispositivo vinculado!",
       description: `${form.name} foi vinculado com sucesso.`,

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarFaixas,
+  criarPlaylistAudio,
+  atualizarPlaylistAudio,
+} from "@/api/audio";
 import {
   Dialog,
   DialogContent,
@@ -40,7 +44,7 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
 
   const { data: allTracks = [] } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => base44.entities.AudioTrack.filter({ status: "active" }),
+    queryFn: () => listarFaixas({ status: "active" }),
   });
 
   useEffect(() => {
@@ -94,9 +98,9 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
     setLoading(true);
     setError("");
     if (playlist) {
-      await base44.entities.AudioPlaylist.update(playlist.id, form);
+      await atualizarPlaylistAudio(playlist.id, form);
     } else {
-      await base44.entities.AudioPlaylist.create(form);
+      await criarPlaylistAudio(form);
     }
     setLoading(false);
     onSaved();

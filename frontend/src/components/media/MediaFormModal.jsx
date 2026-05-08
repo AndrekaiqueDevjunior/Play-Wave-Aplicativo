@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Upload, X, Image, Film, Link2, Music } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { uploadMidia } from "@/api/midias";
 
 const DEFAULT_FORM = {
   name: "",
@@ -101,8 +101,8 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
 
     if (file && mode === "upload") {
       setUploading(true);
-      const res = await base44.integrations.Core.UploadFile({ file });
-      file_url = res.file_url;
+      const uploaded = await uploadMidia(file, { name: form.name, type: form.type });
+      file_url = uploaded?.file_url || "";
       file_size = file.size;
       setUploading(false);
     }

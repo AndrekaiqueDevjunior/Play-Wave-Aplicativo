@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from core.models import Tenant
 from core.schemas_completos import TenantCreate, TenantUpdate, TenantResponse
 from .crud_base import CRUDBase

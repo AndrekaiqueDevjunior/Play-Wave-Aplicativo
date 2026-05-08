@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
 import {
   isApiConfigured,
   pairRequest,
@@ -47,10 +46,10 @@ export default function Player() {
   const progressRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // ── 1. Registra no FastAPI (se configurado) ─────────────────────────────
+  // ── 1. Registra no FastAPI ─────────────────────────────────────────────
   useEffect(() => {
     if (!isApiConfigured()) {
-      setApiStatus("base44_only");
+      setApiStatus("no_api");
       return;
     }
     pairRequest({
@@ -64,30 +63,13 @@ export default function Player() {
 
   // ── 2. Polling de pareamento ─────────────────────────────────────────────
   useEffect(() => {
-    if (phase !== "waiting") return;
+    if (phase !== "waiting" || !isApiConfigured()) return;
 
     const poll = async () => {
-      if (isApiConfigured()) {
-        const res = await getPairStatus(pairingCode);
-        if (res?.status === "paired") {
-          setDeviceId(res.device_id);
-          setPhase("loading");
-        }
-      } else {
-        const devices = await base44.entities.Device.filter({
-          pairing_code: pairingCode,
-        });
-        const device = devices?.[0];
-        if (device) {
-          setDeviceId(device.id);
-          setDeviceName(device.name || "");
-          // Marca online no banco
-          base44.entities.Device.update(device.id, {
-            status: "online",
-            last_connection: new Date().toISOString(),
-          });
-          setPhase("loading");
-        }
+      const res = await getPairStatus(pairingCode);
+      if (res?.status === "paired") {
+        setDeviceId(res.device_id);
+        setPhase("loading");
       }
     };
 
@@ -101,37 +83,9 @@ export default function Player() {
     if (phase !== "loading" || !deviceId) return;
 
     const load = async () => {
-      let medias = [];
-
-      if (isApiConfigured()) {
-        const res = await getDevicePlaylist(deviceId);
-        medias = res?.media || [];
-      } else {
-        const devList = await base44.entities.Device.filter({ id: deviceId });
-        const dev = devList?.[0];
-        if (!deviceName && dev?.name) setDeviceName(dev.name);
-
-        if (dev?.current_campaign_id) {
-          const campaigns = await base44.entities.Campaign.filter({
-            id: dev.current_campaign_id,
-          });
-          const c = campaigns?.[0];
-          if (c?.media_ids?.length) {
-            const allMedia = await base44.entities.Media.list();
-            medias = allMedia
-              .filter(
-                (m) => c.media_ids.includes(m.id) && m.status === "available",
-              )
-              .map((m) => ({
-                id: m.id,
-                file_url: m.file_url || m.thumbnail_url,
-                duration: m.duration || 10,
-                type: m.type,
-                name: m.name,
-              }));
-          }
-        }
-      }
+      const res = await getDevicePlaylist(deviceId);
+      const medias = res?.media || [];
+      if (res?.device_name) setDeviceName(res.device_name);
 
       if (medias.length > 0) {
         setPlaylist(medias);
@@ -139,7 +93,6 @@ export default function Player() {
         setProgress(0);
         setPhase("playing");
       } else {
-        // Sem campanha ainda — volta a aguardar polling
         setPhase("waiting");
       }
     };
@@ -175,32 +128,12 @@ export default function Player() {
     if (!deviceId || phase !== "playing") return;
 
     const beat = async () => {
-      if (isApiConfigured()) {
-        const res = await sendHeartbeat(deviceId, {
-          status: "online",
-          current_media_id: playlist[currentIndex]?.id || null,
-          views_count: viewsCount,
-        });
-        if (res?.playlist_updated) setPhase("loading");
-      } else {
-        // Atualiza status no Base44
-        await base44.entities.Device.update(deviceId, {
-          status: "online",
-          last_connection: new Date().toISOString(),
-        });
-        // Verifica se campanha mudou
-        const devList = await base44.entities.Device.filter({ id: deviceId });
-        const dev = devList?.[0];
-        if (dev?.current_campaign_id) {
-          const currentCampaignId = playlist[0]?.campaign_id;
-          if (
-            currentCampaignId &&
-            dev.current_campaign_id !== currentCampaignId
-          ) {
-            setPhase("loading");
-          }
-        }
-      }
+      const res = await sendHeartbeat(deviceId, {
+        status: "online",
+        current_media_id: playlist[currentIndex]?.id || null,
+        views_count: viewsCount,
+      });
+      if (res?.playlist_updated) setPhase("loading");
     };
 
     heartbeatRef.current = setInterval(beat, HEARTBEAT_INTERVAL);

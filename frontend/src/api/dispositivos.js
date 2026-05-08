@@ -72,6 +72,9 @@ export const confirmarPareamento = (deviceId, payload) =>
   });
 
 // ── Admin: CRUD ────────────────────────────────────────────────────────────
+export const criarDispositivo = (payload) =>
+  apiFetch("/devices", { method: "POST", body: JSON.stringify(payload) });
+
 export const listarDispositivos = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return apiFetch(`/devices${qs ? `?${qs}` : ""}`);

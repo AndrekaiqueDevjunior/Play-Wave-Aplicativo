@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { buscarDispositivo, atualizarDispositivo } from "@/api/dispositivos";
 import {
   sendDeviceCommand,
   getDeviceMetrics,
@@ -41,10 +41,8 @@ export default function DispositivoDetalhe() {
 
   const { data: device, isLoading } = useQuery({
     queryKey: ["device", id],
-    queryFn: async () => {
-      const list = await base44.entities.Device.list();
-      return list.find((d) => d.id === id) || null;
-    },
+    queryFn: () => buscarDispositivo(id),
+    enabled: !!id,
   });
 
   const { data: metrics } = useQuery({
@@ -55,7 +53,7 @@ export default function DispositivoDetalhe() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data) => base44.entities.Device.update(id, data),
+    mutationFn: (data) => atualizarDispositivo(id, data),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["device", id] }),
   });
@@ -301,7 +299,7 @@ export default function DispositivoDetalhe() {
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-xs">
-                  Base44 apenas
+                  Sem backend
                 </Badge>
               )}
             </div>

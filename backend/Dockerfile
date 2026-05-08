@@ -47,6 +47,9 @@ RUN mkdir -p uploads/media uploads/audio/tracks logs alembic/versions
 # ===========================================
 RUN chmod -R 755 uploads logs alembic
 
+# Script de inicialização (roda init_db.py antes do uvicorn)
+RUN chmod +x start.sh
+
 # ===========================================
 # EXPOSIÇÃO DA PORTA
 # ===========================================
@@ -55,4 +58,4 @@ EXPOSE 8000
 # ===========================================
 # COMANDO DE INICIALIZAÇÃO
 # ===========================================
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/bin/sh", "start.sh"]

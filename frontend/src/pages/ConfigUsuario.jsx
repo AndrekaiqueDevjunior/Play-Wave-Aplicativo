@@ -36,7 +36,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  buscarMe,
+  listarUsuarios,
+  criarUsuario,
+  atualizarUsuario,
+} from "@/api/usuarios";
+import { criarLog } from "@/api/userLogs";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import {
@@ -72,20 +78,8 @@ const ROLE_COLORS = {
   viewer: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
-async function registrarLog(
-  targetUserId,
-  targetEmail,
-  action,
-  performedBy,
-  details = "",
-) {
-  await base44.entities.UserLog.create({
-    target_user_id: targetUserId,
-    target_user_email: targetEmail,
-    action,
-    performed_by: performedBy,
-    details,
-  });
+async function registrarLog(targetUserId, targetEmail, action, performedBy, details = "") {
+  await criarLog({ target_user_id: targetUserId, target_user_email: targetEmail, action, performed_by: performedBy, details });
 }
 
 export default function ConfigUsuarios() {
@@ -105,25 +99,22 @@ export default function ConfigUsuarios() {
   // Usuário logado (para registrar responsável)
   const { data: me } = useQuery({
     queryKey: ["me"],
-    queryFn: () => base44.auth.me(),
+    queryFn: () => buscarMe(),
   });
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["users"],
-    queryFn: () => base44.entities.User.list("-created_date", 200),
+    queryFn: () => listarUsuarios({ limit: 200 }),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.User.update(id, data),
+    mutationFn: ({ id, data }) => atualizarUsuario(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleInvite = async () => {
-    await base44.users.inviteUser(
-      invite.email,
-      invite.role === "admin" ? "admin" : "user",
-    );
+    await criarUsuario({ email: invite.email, role: invite.role === "admin" ? "admin" : "user", password: crypto.randomUUID() });
     await registrarLog(
       "pending",
       invite.email,

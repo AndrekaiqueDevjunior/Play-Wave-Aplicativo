@@ -5,47 +5,74 @@
  * Configure VITE_API_URL no .env:
  *   VITE_API_URL=http://localhost:8000
  *
- * Quando VITE_API_URL não está definido, isApiConfigurada() retorna false
- * e todas as funções retornam null — o app faz fallback automático para Base44.
+ * O JWT de admin é injetado automaticamente a partir do storage.
+ * O token de device pode ser passado via options.deviceToken.
  */
 
 const BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export const isApiConfigurada = () => !!BASE_URL;
-export const getBaseUrl = () => BASE_URL;
+export const getBaseUrl       = () => BASE_URL;
+
+// Mesmas chaves usadas pelo AuthContext
+const TOKEN_KEY = "pw_access_token";
+
+function getStoredJwt() {
+  return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? null;
+}
 
 /**
- * Realiza uma chamada autenticada ao backend FastAPI.
- * O token do device (device_token) pode ser passado via options.token.
- * O admin token (JWT) pode ser passado via options.adminToken.
+ * Realiza uma chamada ao backend FastAPI.
+ *
+ * options:
+ *   deviceToken  — token do dispositivo (X-Device-Token)
+ *   adminToken   — JWT explícito (sobrescreve o token armazenado)
+ *   noAuth       — true para chamadas sem autenticação
+ *   ...restante  — opções nativas de fetch (method, body, headers, etc.)
  */
 export async function apiFetch(path, options = {}) {
   if (!BASE_URL) return null;
 
-  const { token, adminToken, ...fetchOptions } = options;
+  // `token` é alias legado de `deviceToken` para retrocompatibilidade
+  const { deviceToken, token: legacyToken, adminToken, noAuth, ...fetchOptions } = options;
+  const deviceTok = deviceToken ?? legacyToken;
+
+  const jwt = adminToken ?? (!noAuth ? getStoredJwt() : null);
 
   const headers = {
     "Content-Type": "application/json",
-    ...(token ? { "X-Device-Token": token } : {}),
-    ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+    ...(jwt       ? { Authorization: `Bearer ${jwt}` }  : {}),
+    ...(deviceTok ? { "X-Device-Token": deviceTok }     : {}),
     ...fetchOptions.headers,
   };
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...fetchOptions,
-    headers,
-  });
+  const res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${res.status}: ${text}`);
+  if (res.status === 401) {
+    // Token expirado — limpa sessão e força relogin
+    [localStorage, sessionStorage].forEach((s) => {
+      s.removeItem(TOKEN_KEY);
+      s.removeItem("pw_user");
+    });
+    window.location.href = "/login";
+    return null;
   }
 
-  // 204 No Content
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      detail = body.detail || body.message || detail;
+    } catch {
+      detail = (await res.text()) || detail;
+    }
+    throw new Error(detail);
+  }
+
   if (res.status === 204) return null;
 
   return res.json();
 }
 
-/** Verifica saúde do backend */
-export const verificarSaude = () => apiFetch("/health");
+/** Verifica saúde do backend (sem auth) */
+export const verificarSaude = () => apiFetch("/health", { noAuth: true });

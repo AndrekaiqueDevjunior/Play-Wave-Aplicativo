@@ -43,7 +43,14 @@ import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import CampaignFormModal from "@/components/campaigns/CampaignFormModal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarCampanhas,
+  criarCampanha,
+  atualizarCampanha,
+  deletarCampanha,
+} from "@/api/campanhas";
+import { listarMidias } from "@/api/midias";
+import { listarDispositivos } from "@/api/dispositivos";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -74,15 +81,15 @@ export default function Campanhas() {
 
   const { data: campaigns = [], isLoading } = useQuery({
     queryKey: ["campaigns"],
-    queryFn: () => base44.entities.Campaign.list("-created_date"),
+    queryFn: () => listarCampanhas(),
   });
   const { data: mediaList = [] } = useQuery({
     queryKey: ["media"],
-    queryFn: () => base44.entities.Media.list(),
+    queryFn: () => listarMidias(),
   });
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],
-    queryFn: () => base44.entities.Device.list(),
+    queryFn: () => listarDispositivos(),
   });
 
   const filtered = campaigns.filter((c) => {
@@ -95,10 +102,10 @@ export default function Campanhas() {
 
   const handleSave = async (form) => {
     if (editCampaign) {
-      await base44.entities.Campaign.update(editCampaign.id, form);
+      await atualizarCampanha(editCampaign.id, form);
       toast({ title: "Campanha atualizada!" });
     } else {
-      await base44.entities.Campaign.create({ ...form, total_views: 0 });
+      await criarCampanha({ ...form, total_views: 0 });
       toast({
         title: "Campanha criada!",
         description: `${form.name} foi adicionada.`,
@@ -110,7 +117,7 @@ export default function Campanhas() {
   };
 
   const handleSetStatus = async (campaign, status) => {
-    await base44.entities.Campaign.update(campaign.id, { status });
+    await atualizarCampanha(campaign.id, { status });
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     const labels = {
       active: "ativada",
@@ -123,18 +130,13 @@ export default function Campanhas() {
 
   const handleDuplicate = async (campaign) => {
     const { id, created_date, updated_date, ...rest } = campaign;
-    await base44.entities.Campaign.create({
-      ...rest,
-      name: `${campaign.name} (cópia)`,
-      status: "draft",
-      total_views: 0,
-    });
+    await criarCampanha({ ...rest, name: `${campaign.name} (cópia)`, status: "draft", total_views: 0 });
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     toast({ title: "Campanha duplicada!" });
   };
 
   const handleDelete = async () => {
-    await base44.entities.Campaign.delete(deleteTarget.id);
+    await deletarCampanha(deleteTarget.id);
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     toast({ title: "Campanha excluída." });
     setDeleteTarget(null);

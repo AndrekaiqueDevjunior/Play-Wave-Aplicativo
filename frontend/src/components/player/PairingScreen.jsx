@@ -7,7 +7,7 @@ const STATUS_CONFIG = {
     color: "text-emerald-400",
     label: "Backend conectado",
   },
-  base44_only: { icon: Wifi, color: "text-amber-400", label: "Modo Base44" },
+  no_api: { icon: WifiOff, color: "text-amber-400", label: "API não configurada" },
   error: {
     icon: WifiOff,
     color: "text-red-400",

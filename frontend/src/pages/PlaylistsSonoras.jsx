@@ -1,6 +1,10 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarPlaylistsAudio,
+  atualizarPlaylistAudio,
+  listarFaixas,
+} from "@/api/audio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,17 +31,16 @@ export default function PlaylistsSonoras() {
 
   const { data: playlists = [], isLoading } = useQuery({
     queryKey: ["audio-playlists"],
-    queryFn: () => base44.entities.AudioPlaylist.list("-created_date"),
+    queryFn: () => listarPlaylistsAudio(),
   });
 
   const { data: tracks = [] } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => base44.entities.AudioTrack.list(),
+    queryFn: () => listarFaixas(),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) =>
-      base44.entities.AudioPlaylist.update(id, { status: "archived" }),
+    mutationFn: (id) => atualizarPlaylistAudio(id, { status: "archived" }),
     onSuccess: () => {
       qc.invalidateQueries(["audio-playlists"]);
       setDeleteTarget(null);

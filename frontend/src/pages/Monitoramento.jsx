@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarDispositivos } from "@/api/dispositivos";
 import moment from "moment";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +20,7 @@ const statusPriority = { error: 0, offline: 1, syncing: 2, online: 3 };
 export default function Monitoramento() {
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],
-    queryFn: () => base44.entities.Device.list(),
+    queryFn: () => listarDispositivos(),
   });
 
   const sortedDevices = [...devices].sort(

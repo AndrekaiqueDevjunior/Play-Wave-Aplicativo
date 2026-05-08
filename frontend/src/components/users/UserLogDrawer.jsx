@@ -6,7 +6,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarLogsPorUsuario } from "@/api/userLogs";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -61,12 +61,7 @@ const ACTION_CONFIG = {
 export default function UserLogDrawer({ userId, userName, open, onClose }) {
   const { data: logs = [] } = useQuery({
     queryKey: ["user-logs", userId],
-    queryFn: () =>
-      base44.entities.UserLog.filter(
-        { target_user_id: userId },
-        "-created_date",
-        50,
-      ),
+    queryFn: () => listarLogsPorUsuario(userId),
     enabled: open && !!userId,
   });
 

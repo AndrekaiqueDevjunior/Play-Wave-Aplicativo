@@ -6,20 +6,22 @@ import RecentDevices from "@/components/dashboard/RecentDevices";
 import ActiveCampaigns from "@/components/dashboard/ActiveCampaigns";
 import AlertsList from "@/components/dashboard/AlertsList";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarDispositivos } from "@/api/dispositivos";
+import { listarCampanhas } from "@/api/campanhas";
+import { listarMidias } from "@/api/midias";
 
 export default function Dashboard() {
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],
-    queryFn: () => base44.entities.Device.list(),
+    queryFn: () => listarDispositivos(),
   });
   const { data: campaigns = [] } = useQuery({
     queryKey: ["campaigns"],
-    queryFn: () => base44.entities.Campaign.list(),
+    queryFn: () => listarCampanhas(),
   });
   const { data: media = [] } = useQuery({
     queryKey: ["media"],
-    queryFn: () => base44.entities.Media.list(),
+    queryFn: () => listarMidias(),
   });
 
   const onlineCount = devices.filter((d) => d.status === "online").length;

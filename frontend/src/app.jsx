@@ -1,22 +1,3 @@
-/**
- * App.jsx — Roteador principal do SignControl
- *
- * Estrutura de módulos:
- *  - /                   → Dashboard
- *  - /dispositivos/*     → Gestão de telas/players
- *  - /midias/*           → Biblioteca de arquivos
- *  - /campanhas/*        → Campanhas e playlists
- *  - /agenda             → Calendário de campanhas
- *  - /monitoramento      → Status em tempo real
- *  - /relatorios         → Relatórios de exibição
- *  - /localizacoes       → Grupos e locais
- *  - /audio/*            → Rádio Indoor
- *  - /configuracoes/*    → Empresa e usuários
- *  - /planos             → Planos de assinatura
- *  - /player             → Player de tela (sem layout)
- *  - /dev/quickstart     → Documentação de integração
- */
-
 import { Toaster } from "@/components/ui/toaster";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClientInstance } from "@/lib/query-client";
@@ -28,64 +9,64 @@ import ProtectedRoute from "@/components/shared/ProtectedRoute";
 // Layout
 import AppLayout from "@/components/layout/AppLayout";
 
-// ── Módulo: Dashboard ─────────────────────────────────────────────────────────
+// Dashboard
 import Dashboard from "@/pages/Dashboard";
 
-// ── Módulo: Dispositivos ──────────────────────────────────────────────────────
+// Dispositivos
 import Dispositivos from "@/pages/Dispositivos";
 import NovoDispositivo from "@/pages/DispositivoNovo";
 import DetalhesDispositivo from "@/pages/DispositivoDetalhe";
 
-// ── Módulo: Mídias ────────────────────────────────────────────────────────────
+// Mídias
 import BibliotecaMidias from "@/pages/BibliotecaMidias";
 import UploadMidia from "@/pages/MidiaUpload";
 
-// ── Módulo: Campanhas ─────────────────────────────────────────────────────────
+// Campanhas
 import Campanhas from "@/pages/Campanhas";
-import NovaCampanha from "@/pages/Campanhas";
 import PreviewCampanha from "@/pages/CampanhaPreview";
 import EditorPlaylist from "@/pages/EditorPlaylist";
 
-// ── Módulo: Agenda ────────────────────────────────────────────────────────────
-import Agenda from "@/pages/Agenda";
+// Agenda
+import Agenda from "@/pages/agenda";
 
-// ── Módulo: Monitoramento ─────────────────────────────────────────────────────
+// Monitoramento
 import Monitoramento from "@/pages/Monitoramento";
 
-// ── Módulo: Relatórios ────────────────────────────────────────────────────────
+// Relatórios
 import Relatorios from "@/pages/Relatorios";
 
-// ── Módulo: Localizações ──────────────────────────────────────────────────────
+// Localizações
 import Localizacoes from "@/pages/Localizacoes";
 
-// ── Módulo: Rádio Indoor (Áudio) ──────────────────────────────────────────────
+// Rádio Indoor
 import FaixasAudio from "@/pages/FaixasAudio";
 import PlaylistsSonoras from "@/pages/PlaylistsSonoras";
 
-// ── Módulo: Configurações ─────────────────────────────────────────────────────
+// Configurações
 import ConfiguracaoEmpresa from "@/pages/ConfigEmpresa";
 import ConfiguracaoUsuarios from "@/pages/ConfigUsuario";
 import Planos from "@/pages/Planos";
 
-// ── Módulo: Player (sem layout de admin) ─────────────────────────────────────
+// Player
 import Player from "@/pages/Player.jsx";
 
-// ── Módulo: Dev / Integração ──────────────────────────────────────────────────
+// Dev
 import Quickstart from "@/pages/Quickstart";
 
-// ── Página de Login ────────────────────────────────────────────────────────────
+// Login
 import Login from "@/pages/Login";
 
 function App() {
   return (
-    <AuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router>
+    // Router envolve tudo — AuthProvider pode usar useNavigate() com segurança
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <AuthProvider>
+        <QueryClientProvider client={queryClientInstance}>
           <Routes>
-            {/* Página de login — pública */}
+            {/* Pública */}
             <Route path="/login" element={<Login />} />
 
-            {/* Player de tela — sem barra lateral, usa autenticação de dispositivo */}
+            {/* Player de TV — autenticação de device, sem layout admin */}
             <Route path="/player" element={<Player />} />
 
             {/* Rotas protegidas — com layout */}
@@ -97,44 +78,43 @@ function App() {
                 </ProtectedRoute>
               }
             >
-              {/* Dashboard */}
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/dashboard" element={<Dashboard />} />
+              <Route index element={<Dashboard />} />
+              <Route path="dashboard" element={<Dashboard />} />
 
               {/* Dispositivos */}
-              <Route path="/dispositivos" element={<Dispositivos />} />
-              <Route path="/dispositivos/novo" element={<NovoDispositivo />} />
-              <Route path="/dispositivos/:id" element={<DetalhesDispositivo />} />
+              <Route path="dispositivos" element={<Dispositivos />} />
+              <Route path="dispositivos/novo" element={<NovoDispositivo />} />
+              <Route path="dispositivos/:id" element={<DetalhesDispositivo />} />
 
               {/* Mídias */}
-              <Route path="/midias" element={<BibliotecaMidias />} />
-              <Route path="/midias/upload" element={<UploadMidia />} />
+              <Route path="midias" element={<BibliotecaMidias />} />
+              <Route path="midias/upload" element={<UploadMidia />} />
 
               {/* Campanhas */}
-              <Route path="/campanhas" element={<Campanhas />} />
-              <Route path="/campanhas/nova" element={<NovaCampanha />} />
-              <Route path="/campanhas/:id/preview" element={<PreviewCampanha />} />
-              <Route path="/campanhas/:id/playlist" element={<EditorPlaylist />} />
+              <Route path="campanhas" element={<Campanhas />} />
+              <Route path="campanhas/nova" element={<Campanhas />} />
+              <Route path="campanhas/:id/preview" element={<PreviewCampanha />} />
+              <Route path="campanhas/:id/playlist" element={<EditorPlaylist />} />
 
               {/* Agenda */}
-              <Route path="/agenda" element={<Agenda />} />
+              <Route path="agenda" element={<Agenda />} />
 
               {/* Monitoramento */}
-              <Route path="/monitoramento" element={<Monitoramento />} />
+              <Route path="monitoramento" element={<Monitoramento />} />
 
               {/* Relatórios */}
-              <Route path="/relatorios" element={<Relatorios />} />
+              <Route path="relatorios" element={<Relatorios />} />
 
               {/* Localizações */}
-              <Route path="/localizacoes" element={<Localizacoes />} />
+              <Route path="localizacoes" element={<Localizacoes />} />
 
               {/* Rádio Indoor */}
-              <Route path="/audio/faixas" element={<FaixasAudio />} />
-              <Route path="/audio/playlists" element={<PlaylistsSonoras />} />
+              <Route path="audio/faixas" element={<FaixasAudio />} />
+              <Route path="audio/playlists" element={<PlaylistsSonoras />} />
 
-              {/* Configurações */}
+              {/* Configurações — apenas admin */}
               <Route
-                path="/configuracoes/empresa"
+                path="configuracoes/empresa"
                 element={
                   <ProtectedRoute allowedRoles={["admin"]}>
                     <ConfiguracaoEmpresa />
@@ -142,45 +122,46 @@ function App() {
                 }
               />
               <Route
-                path="/configuracoes/usuarios"
+                path="configuracoes/usuarios"
                 element={
                   <ProtectedRoute allowedRoles={["admin"]}>
                     <ConfiguracaoUsuarios />
                   </ProtectedRoute>
                 }
               />
-              <Route path="/planos" element={<Planos />} />
+              <Route path="planos" element={<Planos />} />
 
               {/* Dev */}
-              <Route path="/dev/quickstart" element={<Quickstart />} />
+              <Route path="dev/quickstart" element={<Quickstart />} />
 
-              {/* Rotas legadas — redireciona para novas */}
-              <Route path="/devices" element={<Dispositivos />} />
-              <Route path="/devices/new" element={<NovoDispositivo />} />
-              <Route path="/devices/:id" element={<DetalhesDispositivo />} />
-              <Route path="/media" element={<BibliotecaMidias />} />
-              <Route path="/media/upload" element={<UploadMidia />} />
-              <Route path="/campaigns" element={<Campanhas />} />
-              <Route path="/campaigns/new" element={<NovaCampanha />} />
-              <Route path="/campaigns/:id/preview" element={<PreviewCampanha />} />
-              <Route path="/campaigns/:id/playlist" element={<EditorPlaylist />} />
-              <Route path="/schedule" element={<Agenda />} />
-              <Route path="/monitoring" element={<Monitoramento />} />
-              <Route path="/reports" element={<Relatorios />} />
-              <Route path="/locations" element={<Localizacoes />} />
-              <Route path="/audio/tracks" element={<FaixasAudio />} />
-              <Route path="/settings/company" element={<ConfiguracaoEmpresa />} />
-              <Route path="/settings/users" element={<ConfiguracaoUsuarios />} />
-              <Route path="/billing/plans" element={<Planos />} />
-              <Route path="/quickstart" element={<Quickstart />} />
+              {/* Aliases legados */}
+              <Route path="devices" element={<Dispositivos />} />
+              <Route path="devices/new" element={<NovoDispositivo />} />
+              <Route path="devices/:id" element={<DetalhesDispositivo />} />
+              <Route path="media" element={<BibliotecaMidias />} />
+              <Route path="media/upload" element={<UploadMidia />} />
+              <Route path="campaigns" element={<Campanhas />} />
+              <Route path="campaigns/new" element={<Campanhas />} />
+              <Route path="campaigns/:id/preview" element={<PreviewCampanha />} />
+              <Route path="campaigns/:id/playlist" element={<EditorPlaylist />} />
+              <Route path="schedule" element={<Agenda />} />
+              <Route path="monitoring" element={<Monitoramento />} />
+              <Route path="reports" element={<Relatorios />} />
+              <Route path="locations" element={<Localizacoes />} />
+              <Route path="audio/tracks" element={<FaixasAudio />} />
+              <Route path="settings/company" element={<ConfiguracaoEmpresa />} />
+              <Route path="settings/users" element={<ConfiguracaoUsuarios />} />
+              <Route path="billing/plans" element={<Planos />} />
+              <Route path="quickstart" element={<Quickstart />} />
             </Route>
 
             <Route path="*" element={<PageNotFound />} />
           </Routes>
-        </Router>
-        <Toaster />
-      </QueryClientProvider>
-    </AuthProvider>
+
+          <Toaster />
+        </QueryClientProvider>
+      </AuthProvider>
+    </Router>
   );
 }
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarFaixas, atualizarFaixa } from "@/api/audio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -61,12 +61,11 @@ export default function FaixasAudio() {
 
   const { data: tracks = [], isLoading } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => base44.entities.AudioTrack.list("-created_date"),
+    queryFn: () => listarFaixas(),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) =>
-      base44.entities.AudioTrack.update(id, { status: "archived" }),
+    mutationFn: (id) => atualizarFaixa(id, { status: "archived" }),
     onSuccess: () => {
       qc.invalidateQueries(["audio-tracks"]);
       setDeleteTarget(null);

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, Config
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -502,11 +502,19 @@ class DeviceEventBase(BaseSchema):
     event_type: DeviceEventTypeEnum
     severity: Optional[EventSeverityEnum] = EventSeverityEnum.INFO
     description: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    event_metadata: Optional[Dict[str, Any]] = None
 
 
 class DeviceEventCreate(DeviceEventBase):
     pass
+
+
+class DeviceEventUpdate(BaseSchema):
+    device_name: Optional[str] = Field(None, max_length=255)
+    event_type: Optional[DeviceEventTypeEnum] = None
+    severity: Optional[EventSeverityEnum] = None
+    description: Optional[str] = None
+    event_metadata: Optional[Dict[str, Any]] = None
 
 
 class DeviceEventResponse(DeviceEventBase, TimestampedSchema):
@@ -580,6 +588,13 @@ class UserLogBase(BaseSchema):
 
 class UserLogCreate(UserLogBase):
     pass
+
+
+class UserLogUpdate(BaseSchema):
+    target_user_email: Optional[EmailStr] = None
+    action: Optional[UserLogActionEnum] = None
+    performed_by: Optional[str] = None
+    details: Optional[str] = None
 
 
 class UserLogResponse(UserLogBase, TimestampedSchema):

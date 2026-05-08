@@ -57,7 +57,7 @@ class CRUDDeviceEvent(CRUDBase[DeviceEvent, DeviceEventCreate, DeviceEventUpdate
             "event_type": event_type,
             "description": description,
             "severity": severity,
-            "metadata": metadata,
+            "event_metadata": metadata,
             "device_name": device_name
         }
         

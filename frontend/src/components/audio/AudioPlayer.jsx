@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { base44 } from "@/api/base44Client";
+import { buscarDispositivo } from "@/api/dispositivos";
+import { buscarPlaylistAudio, listarFaixas } from "@/api/audio";
 
 /**
  * AudioPlayer — Motor de áudio independente do motor visual.
@@ -18,19 +19,15 @@ export default function AudioPlayer({ deviceId, onStatusChange }) {
     if (!deviceId) return;
 
     const loadPlaylist = async () => {
-      const devices = await base44.entities.Device.filter({ id: deviceId });
-      const device = devices[0];
+      const device = await buscarDispositivo(deviceId);
       if (!device?.audio_playlist_id) return;
 
-      const playlists = await base44.entities.AudioPlaylist.filter({
-        id: device.audio_playlist_id,
-      });
-      const pl = playlists[0];
+      const pl = await buscarPlaylistAudio(device.audio_playlist_id);
       if (!pl || pl.status !== "active") return;
 
       if (!pl.track_ids?.length) return;
 
-      const allTracks = await base44.entities.AudioTrack.list();
+      const allTracks = await listarFaixas();
       const ordered = pl.track_ids
         .map((id) => allTracks.find((t) => t.id === id))
         .filter((t) => t && t.status === "active");

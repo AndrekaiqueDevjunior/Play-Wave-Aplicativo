@@ -44,7 +44,12 @@ import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import DeviceFormModal from "@/components/devices/DeviceFormModal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarDispositivos,
+  criarDispositivo,
+  atualizarDispositivo,
+  deletarDispositivo,
+} from "@/api/dispositivos";
 import { useToast } from "@/components/ui/use-toast";
 import moment from "moment";
 import { cn } from "@/lib/utils";
@@ -78,7 +83,7 @@ export default function Dispositivos() {
 
   const { data: devices = [], isLoading } = useQuery({
     queryKey: ["devices"],
-    queryFn: () => base44.entities.Device.list("-created_date"),
+    queryFn: () => listarDispositivos(),
   });
 
   const filtered = devices.filter((d) => {
@@ -94,10 +99,10 @@ export default function Dispositivos() {
 
   const handleSave = async (form) => {
     if (editDevice) {
-      await base44.entities.Device.update(editDevice.id, form);
+      await atualizarDispositivo(editDevice.id, form);
       toast({ title: "Dispositivo atualizado!" });
     } else {
-      await base44.entities.Device.create({
+      await criarDispositivo({
         ...form,
         status: "offline",
         is_active: true,
@@ -113,9 +118,7 @@ export default function Dispositivos() {
   };
 
   const handleToggleActive = async (device) => {
-    await base44.entities.Device.update(device.id, {
-      is_active: !device.is_active,
-    });
+    await atualizarDispositivo(device.id, { is_active: !device.is_active });
     queryClient.invalidateQueries({ queryKey: ["devices"] });
     toast({
       title: device.is_active
@@ -125,14 +128,14 @@ export default function Dispositivos() {
   };
 
   const handleDelete = async () => {
-    await base44.entities.Device.delete(deleteTarget.id);
+    await deletarDispositivo(deleteTarget.id);
     queryClient.invalidateQueries({ queryKey: ["devices"] });
     toast({ title: "Dispositivo removido." });
     setDeleteTarget(null);
   };
 
   const handleChangeStatus = async (device, status) => {
-    await base44.entities.Device.update(device.id, { status });
+    await atualizarDispositivo(device.id, { status });
     queryClient.invalidateQueries({ queryKey: ["devices"] });
     toast({ title: `Status alterado para "${status}".` });
   };

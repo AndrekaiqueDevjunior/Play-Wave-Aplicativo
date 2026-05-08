@@ -21,7 +21,11 @@ import {
 } from "@/components/ui/dialog";
 import { Plus, MapPin, Pencil, Trash2, Monitor } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarLocalizacoes,
+  criarLocalizacao,
+  deletarLocalizacao,
+} from "@/api/localizacoes";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function Localizacoes() {
@@ -32,11 +36,11 @@ export default function Localizacoes() {
 
   const { data: locations = [] } = useQuery({
     queryKey: ["locations"],
-    queryFn: () => base44.entities.Location.list(),
+    queryFn: () => listarLocalizacoes(),
   });
 
   const handleSave = async () => {
-    await base44.entities.Location.create({ ...form, device_count: 0 });
+    await criarLocalizacao(form);
     queryClient.invalidateQueries({ queryKey: ["locations"] });
     setForm({ name: "", description: "", address: "" });
     setOpen(false);
@@ -44,7 +48,7 @@ export default function Localizacoes() {
   };
 
   const handleDelete = async (id) => {
-    await base44.entities.Location.delete(id);
+    await deletarLocalizacao(id);
     queryClient.invalidateQueries({ queryKey: ["locations"] });
     toast({ title: "Localização removida." });
   };

@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from database import Base
+from core.database import Base
 import uuid
 import enum
 from datetime import datetime
@@ -349,7 +349,7 @@ class DeviceEvent(Base):
     event_type = Column(SQLEnum(DeviceEventType), nullable=False)
     severity = Column(SQLEnum(EventSeverity), default=EventSeverity.INFO)
     description = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    event_metadata = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="device_events")

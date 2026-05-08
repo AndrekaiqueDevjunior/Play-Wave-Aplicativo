@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarPlaylistsAudio } from "@/api/audio";
 import {
   Dialog,
   DialogContent,
@@ -48,7 +48,7 @@ export default function DeviceFormModal({ open, onClose, onSave, device }) {
 
   const { data: playlists = [] } = useQuery({
     queryKey: ["audio-playlists"],
-    queryFn: () => base44.entities.AudioPlaylist.filter({ status: "active" }),
+    queryFn: () => listarPlaylistsAudio({ status: "active" }),
   });
 
   useEffect(() => {

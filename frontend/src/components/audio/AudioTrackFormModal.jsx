@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { uploadFaixa, atualizarFaixa } from "@/api/audio";
 import {
   Dialog,
   DialogContent,
@@ -84,32 +84,16 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
     setLoading(true);
     setError("");
 
-    let fileData = {};
-
-    if (file) {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      // Tenta extrair duração via Audio API
+    if (track) {
+      await atualizarFaixa(track.id, form);
+    } else {
       const duration_seconds = await new Promise((resolve) => {
         const a = new Audio();
         a.src = URL.createObjectURL(file);
         a.onloadedmetadata = () => resolve(Math.round(a.duration));
         a.onerror = () => resolve(null);
       });
-
-      fileData = {
-        file_url,
-        mime_type: file.type,
-        file_size: file.size,
-        duration_seconds,
-      };
-    }
-
-    const data = { ...form, ...fileData };
-
-    if (track) {
-      await base44.entities.AudioTrack.update(track.id, data);
-    } else {
-      await base44.entities.AudioTrack.create(data);
+      await uploadFaixa(file, { ...form, duration_seconds, mime_type: file.type, file_size: file.size });
     }
 
     setLoading(false);

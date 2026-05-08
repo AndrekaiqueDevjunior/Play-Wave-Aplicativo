@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, Image, Film, X, CheckCircle2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { base44 } from "@/api/base44Client";
+import { uploadMidia } from "@/api/midias";
 
 export default function MidiaUpload() {
   const navigate = useNavigate();
@@ -38,26 +38,15 @@ export default function MidiaUpload() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    let file_url = "";
-    if (file) {
-      const result = await base44.integrations.Core.UploadFile({ file });
-      file_url = result.file_url;
-    }
     const tags = form.tags
-      ? form.tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
+      ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
       : [];
-    await base44.entities.Media.create({
+    await uploadMidia(file, {
       name: form.name,
-      file_url,
-      thumbnail_url: file_url,
       type: isVideo ? "video" : "image",
       duration: form.duration,
-      file_size: file?.size || 0,
       notes: form.notes,
-      tags,
+      tags: JSON.stringify(tags),
       status: "available",
     });
     toast({

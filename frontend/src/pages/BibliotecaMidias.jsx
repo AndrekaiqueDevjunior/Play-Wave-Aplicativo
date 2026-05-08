@@ -46,7 +46,12 @@ import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import MediaFormModal from "@/components/media/MediaFormModal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import {
+  listarMidias,
+  criarMidiaExterna,
+  atualizarMidia,
+  deletarMidia,
+} from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
 
 const TYPE_ICON = {
@@ -83,7 +88,7 @@ export default function BibliotecaMidias() {
 
   const { data: mediaList = [], isLoading } = useQuery({
     queryKey: ["media"],
-    queryFn: () => base44.entities.Media.list("-created_date"),
+    queryFn: () => listarMidias(),
   });
 
   const categories = [
@@ -102,10 +107,10 @@ export default function BibliotecaMidias() {
 
   const handleSave = async (form) => {
     if (editMedia) {
-      await base44.entities.Media.update(editMedia.id, form);
+      await atualizarMidia(editMedia.id, form);
       toast({ title: "Mídia atualizada!" });
     } else {
-      await base44.entities.Media.create(form);
+      await criarMidiaExterna(form);
       toast({
         title: "Mídia adicionada!",
         description: `${form.name} está disponível.`,
@@ -117,7 +122,7 @@ export default function BibliotecaMidias() {
   };
 
   const handleDelete = async () => {
-    await base44.entities.Media.delete(deleteTarget.id);
+    await deletarMidia(deleteTarget.id);
     queryClient.invalidateQueries({ queryKey: ["media"] });
     toast({ title: "Mídia excluída." });
     setDeleteTarget(null);

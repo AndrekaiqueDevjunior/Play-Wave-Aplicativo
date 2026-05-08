@@ -9,7 +9,9 @@ import {
 } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { listarCampanhas, criarCampanha, atualizarCampanha } from "@/api/campanhas";
+import { listarDispositivos } from "@/api/dispositivos";
+import { listarMidias } from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import CalendarCell from "@/components/schedule/CalendarCell";
@@ -55,15 +57,15 @@ export default function Agenda() {
 
   const { data: campaigns = [] } = useQuery({
     queryKey: ["campaigns"],
-    queryFn: () => base44.entities.Campaign.list(),
+    queryFn: () => listarCampanhas(),
   });
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],
-    queryFn: () => base44.entities.Device.list(),
+    queryFn: () => listarDispositivos(),
   });
   const { data: media = [] } = useQuery({
     queryKey: ["media"],
-    queryFn: () => base44.entities.Media.list(),
+    queryFn: () => listarMidias(),
   });
 
   const filteredCampaigns =
@@ -100,10 +102,7 @@ export default function Agenda() {
     const pad = (n) => String(n).padStart(2, "0");
     const fmt = (d) =>
       `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    await base44.entities.Campaign.update(campaignId, {
-      start_date: fmt(newStart),
-      end_date: fmt(newEnd),
-    });
+    await atualizarCampanha(campaignId, { start_date: fmt(newStart), end_date: fmt(newEnd) });
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     toast({
       title: "Campanha movida!",
@@ -112,7 +111,7 @@ export default function Agenda() {
   };
 
   const handleCampaignSaved = async (form) => {
-    await base44.entities.Campaign.create({ ...form, total_views: 0 });
+    await criarCampanha({ ...form, total_views: 0 });
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     toast({
       title: "Campanha criada!",
@@ -121,7 +120,7 @@ export default function Agenda() {
   };
 
   const handleCampaignUpdate = async (id, data) => {
-    await base44.entities.Campaign.update(id, data);
+    await atualizarCampanha(id, data);
     queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     setSelectedCampaign((prev) => (prev ? { ...prev, ...data } : prev));
     toast({ title: "Campanha atualizada!" });
