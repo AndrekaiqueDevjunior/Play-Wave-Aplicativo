@@ -21,6 +21,13 @@ function getStoredJwt() {
   return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? null;
 }
 
+function clearStoredSession() {
+  [localStorage, sessionStorage].forEach((s) => {
+    s.removeItem(TOKEN_KEY);
+    s.removeItem("pw_user");
+  });
+}
+
 /**
  * Realiza uma chamada ao backend FastAPI.
  *
@@ -49,11 +56,7 @@ export async function apiFetch(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers });
 
   if (res.status === 401) {
-    // Token expirado — limpa sessão e força relogin
-    [localStorage, sessionStorage].forEach((s) => {
-      s.removeItem(TOKEN_KEY);
-      s.removeItem("pw_user");
-    });
+    clearStoredSession();
     window.location.href = "/login";
     return null;
   }
@@ -76,3 +79,41 @@ export async function apiFetch(path, options = {}) {
 
 /** Verifica saúde do backend (sem auth) */
 export const verificarSaude = () => apiFetch("/health", { noAuth: true });
+
+export async function apiUpload(path, formData, options = {}) {
+  if (!BASE_URL) return null;
+
+  const { adminToken, noAuth, headers: customHeaders, ...fetchOptions } = options;
+  const jwt = adminToken ?? (!noAuth ? getStoredJwt() : null);
+  const headers = {
+    ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    ...customHeaders,
+  };
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    ...fetchOptions,
+    body: formData,
+    headers,
+  });
+
+  if (res.status === 401) {
+    clearStoredSession();
+    window.location.href = "/login";
+    return null;
+  }
+
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      detail = body.detail || body.message || detail;
+    } catch {
+      detail = (await res.text()) || detail;
+    }
+    throw new Error(detail);
+  }
+
+  if (res.status === 204) return null;
+  return res.json();
+}

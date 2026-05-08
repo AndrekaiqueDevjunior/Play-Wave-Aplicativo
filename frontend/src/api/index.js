@@ -19,4 +19,5 @@ export * as audio from "./audio";
 export * as relatorios from "./relatorios";
 export * as localizacoes from "./localizacoes";
 export * as tenants from "./tenants";
+export * as planos from "./planos";
 export { isApiConfigurada, verificarSaude, getBaseUrl } from "./http";

@@ -9,9 +9,10 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { mockViewsPerDay } from "@/lib/mockData";
 
-export default function ViewsChart() {
+export default function ViewsChart({ data = [] }) {
+  const chartData = data.length ? data : [{ date: "Sem dados", views: 0 }];
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -23,7 +24,7 @@ export default function ViewsChart() {
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={mockViewsPerDay}
+              data={chartData}
               margin={{ top: 5, right: 5, left: -20, bottom: 0 }}
             >
               <defs>

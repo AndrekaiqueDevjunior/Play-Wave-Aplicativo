@@ -129,7 +129,14 @@ function App() {
                   </ProtectedRoute>
                 }
               />
-              <Route path="planos" element={<Planos />} />
+              <Route
+                path="planos"
+                element={
+                  <ProtectedRoute allowedRoles={["admin"]}>
+                    <Planos />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* Dev */}
               <Route path="dev/quickstart" element={<Quickstart />} />
@@ -151,7 +158,14 @@ function App() {
               <Route path="audio/tracks" element={<FaixasAudio />} />
               <Route path="settings/company" element={<ConfiguracaoEmpresa />} />
               <Route path="settings/users" element={<ConfiguracaoUsuarios />} />
-              <Route path="billing/plans" element={<Planos />} />
+              <Route
+                path="billing/plans"
+                element={
+                  <ProtectedRoute allowedRoles={["admin"]}>
+                    <Planos />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="quickstart" element={<Quickstart />} />
             </Route>
 

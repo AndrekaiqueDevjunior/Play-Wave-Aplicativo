@@ -1,49 +1,65 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DragDropContext, Draggable, Droppable } from "@hello-pangea/dnd";
+import { ArrowLeft, Clock, Film, GripVertical, Image, Save, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  ArrowLeft,
-  GripVertical,
-  X,
-  Clock,
-  Save,
-  Image,
-  Film,
-} from "lucide-react";
-import { mockMedia, mockCampaigns } from "@/lib/mockData";
 import { useToast } from "@/components/ui/use-toast";
-import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { atualizarCampanha, buscarCampanha } from "@/api/campanhas";
+import { listarMidias } from "@/api/midias";
 
 export default function EditorPlaylist() {
   const navigate = useNavigate();
+  const { id } = useParams();
   const { toast } = useToast();
-  const pathId = window.location.pathname.split("/")[2];
-  const campaign =
-    mockCampaigns.find((c) => c.id === pathId) || mockCampaigns[0];
+  const queryClient = useQueryClient();
+  const [playlist, setPlaylist] = useState([]);
+  const [saving, setSaving] = useState(false);
 
-  const [playlist, setPlaylist] = useState(
-    mockMedia
-      .filter((m) => campaign.media_ids?.includes(m.id))
-      .map((m) => ({ ...m, customDuration: m.duration })),
-  );
+  const { data: campaign, isLoading: loadingCampaign } = useQuery({
+    queryKey: ["campaign", id],
+    queryFn: () => buscarCampanha(id),
+    enabled: !!id,
+  });
+  const { data: mediaList = [] } = useQuery({
+    queryKey: ["media"],
+    queryFn: () => listarMidias(),
+  });
 
-  const available = mockMedia.filter(
-    (m) => !playlist.find((p) => p.id === m.id) && m.status === "available",
+  useEffect(() => {
+    if (!campaign || mediaList.length === 0) return;
+    const ids = campaign.media_order?.length
+      ? campaign.media_order.map((item) => item.media_id || item)
+      : campaign.media_ids || [];
+    const byId = new Map(mediaList.map((media) => [String(media.id), media]));
+    setPlaylist(
+      ids
+        .map((mediaId) => byId.get(String(mediaId)))
+        .filter(Boolean)
+        .map((media) => ({ ...media, customDuration: media.duration || 10 })),
+    );
+  }, [campaign, mediaList]);
+
+  const available = useMemo(
+    () =>
+      mediaList.filter(
+        (media) =>
+          media.status === "available" &&
+          !playlist.find((playlistItem) => playlistItem.id === media.id),
+      ),
+    [mediaList, playlist],
   );
   const totalDuration = playlist.reduce(
-    (sum, m) => sum + (m.customDuration || m.duration || 10),
+    (sum, media) => sum + (media.customDuration || media.duration || 10),
     0,
   );
 
   const addToPlaylist = (media) =>
-    setPlaylist((prev) => [
-      ...prev,
-      { ...media, customDuration: media.duration },
-    ]);
-  const removeFromPlaylist = (id) =>
-    setPlaylist((prev) => prev.filter((m) => m.id !== id));
+    setPlaylist((prev) => [...prev, { ...media, customDuration: media.duration || 10 }]);
+  const removeFromPlaylist = (mediaId) =>
+    setPlaylist((prev) => prev.filter((media) => media.id !== mediaId));
 
   const onDragEnd = (result) => {
     if (!result.destination) return;
@@ -53,38 +69,55 @@ export default function EditorPlaylist() {
     setPlaylist(items);
   };
 
-  const updateDuration = (id, duration) => {
+  const updateDuration = (mediaId, duration) => {
     setPlaylist((prev) =>
-      prev.map((m) =>
-        m.id === id ? { ...m, customDuration: parseInt(duration) || 0 } : m,
+      prev.map((media) =>
+        media.id === mediaId ? { ...media, customDuration: parseInt(duration, 10) || 0 } : media,
       ),
     );
+  };
+
+  const savePlaylist = async () => {
+    setSaving(true);
+    try {
+      const mediaIds = playlist.map((media) => media.id);
+      await atualizarCampanha(id, {
+        media_ids: mediaIds,
+        media_order: playlist.map((media) => ({
+          media_id: media.id,
+          duration: media.customDuration || media.duration || 10,
+        })),
+      });
+      queryClient.invalidateQueries({ queryKey: ["campaign", id] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      toast({ title: "Playlist salva!" });
+      navigate("/campanhas");
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao salvar playlist",
+        description: err.message || "Tente novamente.",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate("/campanhas")}
-        >
+        <Button variant="ghost" size="icon" onClick={() => navigate("/campanhas")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1">
           <h2 className="text-xl font-bold">Editor de Playlist</h2>
           <p className="text-sm text-muted-foreground">
-            {campaign.name} · {playlist.length} mídias · {totalDuration}s total
+            {loadingCampaign ? "Carregando..." : campaign?.name || "Campanha"} · {playlist.length} mídias · {totalDuration}s total
           </p>
         </div>
-        <Button
-          onClick={() => {
-            toast({ title: "Playlist salva!" });
-            navigate("/campanhas");
-          }}
-        >
+        <Button onClick={savePlaylist} disabled={saving || loadingCampaign}>
           <Save className="w-4 h-4 mr-2" />
-          Salvar Playlist
+          {saving ? "Salvando..." : "Salvar Playlist"}
         </Button>
       </div>
 
@@ -96,7 +129,7 @@ export default function EditorPlaylist() {
           <CardContent className="space-y-2 max-h-[600px] overflow-y-auto">
             {available.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                Todas as mídias já estão na playlist
+                Todas as mídias disponíveis já estão na playlist
               </p>
             ) : (
               available.map((media) => (
@@ -106,15 +139,13 @@ export default function EditorPlaylist() {
                   className="flex items-center gap-3 p-2 rounded-lg border border-border hover:border-primary/30 cursor-pointer transition-colors"
                 >
                   <img
-                    src={media.thumbnail_url}
+                    src={media.thumbnail_url || media.file_url}
                     alt={media.name}
-                    className="w-14 h-9 rounded object-cover"
+                    className="w-14 h-9 rounded object-cover bg-muted"
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{media.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {media.duration}s
-                    </p>
+                    <p className="text-xs text-muted-foreground">{media.duration || 10}s</p>
                   </div>
                   {media.type === "image" ? (
                     <Image className="w-3.5 h-3.5 text-muted-foreground" />
@@ -146,17 +177,9 @@ export default function EditorPlaylist() {
               <DragDropContext onDragEnd={onDragEnd}>
                 <Droppable droppableId="playlist">
                   {(provided) => (
-                    <div
-                      {...provided.droppableProps}
-                      ref={provided.innerRef}
-                      className="space-y-2"
-                    >
+                    <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-2">
                       {playlist.map((media, index) => (
-                        <Draggable
-                          key={media.id}
-                          draggableId={media.id}
-                          index={index}
-                        >
+                        <Draggable key={media.id} draggableId={media.id} index={index}>
                           {(provided, snapshot) => (
                             <div
                               ref={provided.innerRef}
@@ -170,14 +193,12 @@ export default function EditorPlaylist() {
                                 {index + 1}
                               </span>
                               <img
-                                src={media.thumbnail_url}
+                                src={media.thumbnail_url || media.file_url}
                                 alt={media.name}
-                                className="w-16 h-10 rounded object-cover"
+                                className="w-16 h-10 rounded object-cover bg-muted"
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">
-                                  {media.name}
-                                </p>
+                                <p className="text-sm font-medium truncate">{media.name}</p>
                                 <p className="text-xs text-muted-foreground">
                                   {media.type === "image" ? "Imagem" : "Vídeo"}
                                 </p>
@@ -187,15 +208,11 @@ export default function EditorPlaylist() {
                                   type="number"
                                   min="1"
                                   value={media.customDuration}
-                                  onChange={(e) =>
-                                    updateDuration(media.id, e.target.value)
-                                  }
+                                  onChange={(e) => updateDuration(media.id, e.target.value)}
                                   className="w-16 h-8 text-xs text-center"
                                   disabled={media.type === "video"}
                                 />
-                                <span className="text-xs text-muted-foreground">
-                                  s
-                                </span>
+                                <span className="text-xs text-muted-foreground">s</span>
                               </div>
                               <Button
                                 variant="ghost"

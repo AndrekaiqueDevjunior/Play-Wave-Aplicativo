@@ -29,7 +29,7 @@
  * GET    /media/{id}/thumbnail             (admin)
  *   resp: { thumbnail_url }
  */
-import { apiFetch, getBaseUrl } from "./http";
+import { apiFetch, apiUpload } from "./http";
 
 export const listarMidias = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
@@ -40,22 +40,14 @@ export const buscarMidia = (id) => apiFetch(`/media/${id}`);
 
 /** Upload de arquivo binário (multipart) */
 export const uploadMidia = async (file, metadata = {}) => {
-  const BASE_URL = getBaseUrl();
-  if (!BASE_URL) return null;
-
   const form = new FormData();
   form.append("file", file);
-  Object.entries(metadata).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) form.append(k, String(v));
+  Object.entries(metadata).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    form.append(key === "type" ? "media_type" : key, String(value));
   });
 
-  const res = await fetch(`${BASE_URL}/media/upload`, {
-    method: "POST",
-    body: form,
-  });
-
-  if (!res.ok) throw new Error(`Upload error ${res.status}`);
-  return res.json();
+  return apiUpload("/media/upload", form);
 };
 
 export const criarMidiaExterna = (payload) =>
@@ -66,7 +58,7 @@ export const criarMidiaExterna = (payload) =>
 
 export const atualizarMidia = (id, payload) =>
   apiFetch(`/media/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

@@ -39,6 +39,24 @@ class Tenant(Base):
     user_logs = relationship("UserLog", back_populates="tenant")
 
 
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id = Column(String(50), primary_key=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    price_brl = Column(Float, default=0.0)
+    price_usd = Column(Float, default=0.0)
+    max_devices = Column(Integer, default=0)
+    max_users = Column(Integer, default=0)
+    max_media_gb = Column(Integer, default=0)
+    features = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_popular = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -94,11 +112,11 @@ class Device(Base):
     status = Column(SQLEnum(DeviceStatus), default=DeviceStatus.WAITING_PAIRING)
     is_active = Column(Boolean, default=True)
     is_blocked = Column(Boolean, default=False)
-    device_token = Column(String(500), nullable=True, unique=True)
+    device_token = Column(String(255), unique=True, nullable=True)
     paired_at = Column(DateTime, nullable=True)
     last_connection = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
-    config_version = Column(String(100), nullable=True)
+    config_version = Column(String(50), nullable=True)
     current_campaign = Column(String(255), nullable=True)
     current_campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"), nullable=True)
     audio_playlist_id = Column(UUID(as_uuid=True), ForeignKey("audio_playlists.id"), nullable=True)
@@ -113,12 +131,26 @@ class Device(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="devices")
-    campaign = relationship("Campaign", foreign_keys=[current_campaign_id])
-    audio_playlist = relationship("AudioPlaylist")
+    campaign = relationship("Campaign", foreign_keys=[current_campaign_id], back_populates="devices")
+    audio_playlist = relationship("AudioPlaylist", foreign_keys=[audio_playlist_id], back_populates="devices")
     device_events = relationship("DeviceEvent", back_populates="device")
     device_sessions = relationship("DeviceSession", back_populates="device")
     playback_logs = relationship("PlaybackLog", back_populates="device")
     view_reports = relationship("ViewReport", back_populates="device")
+
+    @staticmethod
+    def before_insert(mapper, connection, target):
+        if target.audio_playlist_id == "":
+            target.audio_playlist_id = None
+        if target.current_campaign_id == "":
+            target.current_campaign_id = None
+
+    @staticmethod
+    def before_update(mapper, connection, target):
+        if target.audio_playlist_id == "":
+            target.audio_playlist_id = None
+        if target.current_campaign_id == "":
+            target.current_campaign_id = None
 
 
 class CampaignStatus(str, enum.Enum):

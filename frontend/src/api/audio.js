@@ -40,7 +40,7 @@
  * GET    /audio/devices/{id}/playlist      (device, X-Device-Token)
  *   resp: { playlist_id, tracks: [{id, file_url, name, duration_seconds}], volume, loop, shuffle }
  */
-import { apiFetch, getBaseUrl } from "./http";
+import { apiFetch, apiUpload } from "./http";
 
 // ── Faixas ─────────────────────────────────────────────────────────────────
 export const listarFaixas = (params = {}) => {
@@ -49,26 +49,18 @@ export const listarFaixas = (params = {}) => {
 };
 
 export const uploadFaixa = async (file, metadata = {}) => {
-  const BASE_URL = getBaseUrl();
-  if (!BASE_URL) return null;
-
   const form = new FormData();
   form.append("file", file);
   Object.entries(metadata).forEach(([k, v]) => {
     if (v !== undefined && v !== null) form.append(k, String(v));
   });
 
-  const res = await fetch(`${BASE_URL}/audio/tracks/upload`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) throw new Error(`Upload error ${res.status}`);
-  return res.json();
+  return apiUpload("/audio/tracks/upload", form);
 };
 
 export const atualizarFaixa = (id, payload) =>
   apiFetch(`/audio/tracks/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 
@@ -91,7 +83,7 @@ export const criarPlaylistAudio = (payload) =>
 
 export const atualizarPlaylistAudio = (id, payload) =>
   apiFetch(`/audio/playlists/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

@@ -1,19 +1,35 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Maximize, Pause, Play, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowLeft, Play, Pause, SkipForward, Maximize } from "lucide-react";
-import { mockCampaigns, mockMedia } from "@/lib/mockData";
+import { buscarCampanha } from "@/api/campanhas";
+import { listarMidias } from "@/api/midias";
 
 export default function CampanhaPreview() {
   const navigate = useNavigate();
-  const pathId = window.location.pathname.split("/")[2];
-  const campaign =
-    mockCampaigns.find((c) => c.id === pathId) || mockCampaigns[0];
-  const medias = mockMedia.filter((m) => campaign.media_ids?.includes(m.id));
-
+  const { id } = useParams();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  const { data: campaign, isLoading: loadingCampaign } = useQuery({
+    queryKey: ["campaign", id],
+    queryFn: () => buscarCampanha(id),
+    enabled: !!id,
+  });
+  const { data: mediaList = [] } = useQuery({
+    queryKey: ["media"],
+    queryFn: () => listarMidias(),
+  });
+
+  const medias = useMemo(() => {
+    const ids = campaign?.media_order?.length
+      ? campaign.media_order.map((item) => item.media_id || item)
+      : campaign?.media_ids || [];
+    const byId = new Map(mediaList.map((media) => [String(media.id), media]));
+    return ids.map((mediaId) => byId.get(String(mediaId))).filter(Boolean);
+  }, [campaign, mediaList]);
 
   useEffect(() => {
     if (!isPlaying || medias.length === 0) return;
@@ -29,17 +45,15 @@ export default function CampanhaPreview() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate("/campanhas")}
-        >
+        <Button variant="ghost" size="icon" onClick={() => navigate("/campanhas")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h2 className="text-xl font-bold">Preview: {campaign.name}</h2>
+          <h2 className="text-xl font-bold">
+            Preview: {loadingCampaign ? "Carregando..." : campaign?.name || "Campanha"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            {medias.length} mídias · Mídia {currentIndex + 1} de {medias.length}
+            {medias.length} mídias · Mídia {medias.length ? currentIndex + 1 : 0} de {medias.length}
           </p>
         </div>
       </div>
@@ -49,21 +63,26 @@ export default function CampanhaPreview() {
           <Card className="overflow-hidden bg-black">
             <div className="relative aspect-video flex items-center justify-center">
               {currentMedia ? (
-                <img
-                  src={currentMedia.thumbnail_url || currentMedia.file_url}
-                  alt={currentMedia.name}
-                  className="w-full h-full object-cover"
-                />
+                currentMedia.type === "video" ? (
+                  <video
+                    src={currentMedia.file_url}
+                    className="w-full h-full object-cover"
+                    controls
+                  />
+                ) : (
+                  <img
+                    src={currentMedia.thumbnail_url || currentMedia.file_url}
+                    alt={currentMedia.name}
+                    className="w-full h-full object-cover"
+                  />
+                )
               ) : (
-                <p className="text-white/50">Nenhuma mídia</p>
+                <p className="text-white/50">Nenhuma mídia vinculada</p>
               )}
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                <p className="text-white text-sm font-medium">
-                  {currentMedia?.name}
-                </p>
+                <p className="text-white text-sm font-medium">{currentMedia?.name}</p>
                 <p className="text-white/60 text-xs">
-                  {currentMedia?.duration}s ·{" "}
-                  {currentMedia?.type === "image" ? "Imagem" : "Vídeo"}
+                  {currentMedia ? `${currentMedia.duration || 10}s · ${currentMedia.type === "image" ? "Imagem" : "Vídeo"}` : ""}
                 </p>
               </div>
             </div>
@@ -73,20 +92,16 @@ export default function CampanhaPreview() {
             <Button
               variant="outline"
               size="icon"
+              disabled={medias.length === 0}
               onClick={() => setIsPlaying(!isPlaying)}
             >
-              {isPlaying ? (
-                <Pause className="w-4 h-4" />
-              ) : (
-                <Play className="w-4 h-4" />
-              )}
+              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
             <Button
               variant="outline"
               size="icon"
-              onClick={() =>
-                setCurrentIndex((currentIndex + 1) % medias.length)
-              }
+              disabled={medias.length === 0}
+              onClick={() => setCurrentIndex((currentIndex + 1) % medias.length)}
             >
               <SkipForward className="w-4 h-4" />
             </Button>
@@ -96,19 +111,19 @@ export default function CampanhaPreview() {
           </div>
 
           <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
-            {medias.map((m, i) => (
+            {medias.map((media, index) => (
               <div
-                key={m.id}
-                onClick={() => setCurrentIndex(i)}
+                key={media.id}
+                onClick={() => setCurrentIndex(index)}
                 className={`shrink-0 w-20 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-colors ${
-                  i === currentIndex
+                  index === currentIndex
                     ? "border-primary"
                     : "border-transparent opacity-60 hover:opacity-100"
                 }`}
               >
                 <img
-                  src={m.thumbnail_url}
-                  alt={m.name}
+                  src={media.thumbnail_url || media.file_url}
+                  alt={media.name}
                   className="w-full h-full object-cover"
                 />
               </div>

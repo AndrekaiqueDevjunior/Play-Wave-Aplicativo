@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+from uuid import UUID as _UUID
 
 
 # Enums para schemas
@@ -139,6 +140,21 @@ class BaseSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def _coerce_uuids_to_str(cls, data):
+        if isinstance(data, dict):
+            return {k: str(v) if isinstance(v, _UUID) else v for k, v in data.items()}
+        # ORM object — extract declared fields, coercing any UUID to str
+        if not isinstance(data, (str, int, float, bool, type(None))):
+            result = {}
+            for name in cls.model_fields:
+                if hasattr(data, name):
+                    val = getattr(data, name)
+                    result[name] = str(val) if isinstance(val, _UUID) else val
+            return result
+        return data
+
 
 class TimestampedSchema(BaseSchema):
     created_at: Optional[datetime] = None
@@ -172,6 +188,42 @@ class TenantUpdate(BaseSchema):
 
 class TenantResponse(TenantBase, TimestampedSchema):
     id: str
+
+
+# Plan Schemas
+class PlanBase(BaseSchema):
+    id: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    price_brl: Optional[float] = Field(0.0, ge=0.0)
+    price_usd: Optional[float] = Field(0.0, ge=0.0)
+    max_devices: Optional[int] = 0
+    max_users: Optional[int] = 0
+    max_media_gb: Optional[int] = 0
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = True
+    is_popular: Optional[bool] = False
+
+
+class PlanCreate(PlanBase):
+    pass
+
+
+class PlanUpdate(BaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    price_brl: Optional[float] = Field(None, ge=0.0)
+    price_usd: Optional[float] = Field(None, ge=0.0)
+    max_devices: Optional[int] = None
+    max_users: Optional[int] = None
+    max_media_gb: Optional[int] = None
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    is_popular: Optional[bool] = None
+
+
+class PlanResponse(PlanBase, TimestampedSchema):
+    pass
 
 
 # User Schemas
@@ -213,7 +265,7 @@ class DeviceBase(BaseSchema):
     group: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = True
     is_blocked: Optional[bool] = False
-    audio_playlist_id: Optional[str] = None
+    audio_playlist_id: Optional[str] = Field(default=None)
     audio_playlist_name: Optional[str] = None
     audio_volume: Optional[float] = Field(0.7, ge=0.0, le=1.0)
     ip_address: Optional[str] = Field(None, max_length=50)
@@ -221,6 +273,20 @@ class DeviceBase(BaseSchema):
     os: Optional[DeviceOSEnum] = None
     storage_used: Optional[int] = 0
     notes: Optional[str] = None
+
+    @field_validator('audio_playlist_id', mode='before')
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if v == "":
+            return None
+        return v
+    
+    @field_validator('current_campaign_id', mode='before', check_fields=False)
+    @classmethod
+    def empty_string_to_none_campaign(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class DeviceCreate(DeviceBase):

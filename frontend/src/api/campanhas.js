@@ -52,7 +52,7 @@ export const criarCampanha = (payload) =>
 
 export const atualizarCampanha = (id, payload) =>
   apiFetch(`/campaigns/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

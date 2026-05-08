@@ -84,7 +84,7 @@ export const buscarDispositivo = (id) => apiFetch(`/devices/${id}`);
 
 export const atualizarDispositivo = (id, payload) =>
   apiFetch(`/devices/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

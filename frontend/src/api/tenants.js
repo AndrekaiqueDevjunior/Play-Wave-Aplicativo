@@ -28,6 +28,14 @@ import { apiFetch } from "./http";
 
 export const listarTenants = () => apiFetch("/tenants");
 
+export const buscarMinhaEmpresa = () => apiFetch("/tenants/me");
+
+export const atualizarMinhaEmpresa = (payload) =>
+  apiFetch("/tenants/me", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
 export const buscarTenant = (id) => apiFetch(`/tenants/${id}`);
 
 export const criarTenant = (payload) =>
@@ -38,7 +46,7 @@ export const criarTenant = (payload) =>
 
 export const atualizarTenant = (id, payload) =>
   apiFetch(`/tenants/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

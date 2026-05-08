@@ -19,6 +19,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/AuthContext";
 
 /**
  * Estrutura modular do menu lateral — agrupado por domínio de negócio.
@@ -120,6 +121,14 @@ function NavGroup({ grupo, onClose }) {
 }
 
 export default function Sidebar({ open, onClose }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const configItems = MENU_CONFIG.filter((item) => {
+    if (item.path === "/planos") return isAdmin;
+    if (item.path === "/configuracoes/empresa") return isAdmin;
+    return true;
+  });
+
   return (
     <>
       {open && (
@@ -172,7 +181,7 @@ export default function Sidebar({ open, onClose }) {
 
         {/* Configurações e Planos */}
         <div className="px-3 pb-4 border-t border-sidebar-border pt-3 space-y-0.5">
-          {MENU_CONFIG.map((item) => (
+          {configItems.map((item) => (
             <NavItem key={item.path} item={item} onClose={onClose} />
           ))}
         </div>

@@ -42,7 +42,7 @@ export const criarLocalizacao = (payload) =>
 
 export const atualizarLocalizacao = (id, payload) =>
   apiFetch(`/locations/${id}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

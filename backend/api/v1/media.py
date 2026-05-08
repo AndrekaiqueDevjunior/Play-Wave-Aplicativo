@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -114,11 +114,13 @@ def upload_media(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     file: UploadFile = File(...),
-    name: str = Query(...),
-    media_type: MediaTypeEnum = Query(...),
-    description: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    tags: Optional[str] = Query(None)
+    name: str = Form(...),
+    media_type: MediaTypeEnum = Form(...),
+    description: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    duration: Optional[int] = Form(None),
+    notes: Optional[str] = Form(None)
 ):
     """
     Faz upload de arquivo de mídia
@@ -163,8 +165,10 @@ def upload_media(
         "type": media_type,
         "mime_type": file.content_type,
         "file_size": os.path.getsize(file_path),
+        "duration": duration,
         "tags": tags.split(",") if tags else [],
-        "category": category
+        "category": category,
+        "notes": notes,
     }
     
     if current_user.role != "admin":

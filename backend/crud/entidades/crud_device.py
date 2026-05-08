@@ -7,6 +7,20 @@ from .crud_base import CRUDBase
 
 
 class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
+    def create(self, db: Session, *, obj_in: DeviceCreate) -> Device:
+        obj_in_data = obj_in.model_dump()
+        # Limpar strings vazias para campos UUID
+        if obj_in_data.get("audio_playlist_id") == "" or obj_in_data.get("audio_playlist_id") is None:
+            obj_in_data["audio_playlist_id"] = None
+        if obj_in_data.get("current_campaign_id") == "" or obj_in_data.get("current_campaign_id") is None:
+            obj_in_data["current_campaign_id"] = None
+        
+        db_obj = self.model(**obj_in_data)
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+    
     def get_by_pairing_code(self, db: Session, *, pairing_code: str) -> Optional[Device]:
         return db.query(Device).filter(Device.pairing_code == pairing_code).first()
     

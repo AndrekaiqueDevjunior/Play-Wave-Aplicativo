@@ -49,6 +49,7 @@ export default function DispositivoNovo() {
     pairing_code: "",
     device_type: "tv",
     os: "Web Player",
+    audio_playlist_id: "",  // Adicionar campo que existe no schema backend
   });
   const [saving, setSaving] = useState(false);
 
@@ -56,12 +57,32 @@ export default function DispositivoNovo() {
     e.preventDefault();
     if (!form.name.trim() || !form.pairing_code.trim()) return;
     setSaving(true);
-    await criarDispositivo({ ...form, status: "offline", is_active: true });
-    toast({
-      title: "Dispositivo vinculado!",
-      description: `${form.name} foi vinculado com sucesso.`,
-    });
-    navigate("/dispositivos");
+    try {
+      // Limpar campos vazios antes de enviar
+      const payload = {
+        ...form,
+        status: "offline", 
+        is_active: true,
+        // Converter strings vazias em null para campos UUID
+        audio_playlist_id: form.audio_playlist_id?.trim() || null,
+        // Remover campos que não existem no schema backend
+        current_campaign_id: undefined,
+      };
+      await criarDispositivo(payload);
+      toast({
+        title: "Dispositivo vinculado!",
+        description: `${form.name} foi vinculado com sucesso.`,
+      });
+      navigate("/dispositivos");
+    } catch (error) {
+      toast({
+        title: "Erro ao vincular dispositivo",
+        description: error.message || "Tente novamente",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

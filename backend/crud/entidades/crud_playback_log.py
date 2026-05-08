@@ -59,10 +59,18 @@ class CRUDPlaybackLog(CRUDBase[PlaybackLog, PlaybackLogCreate, PlaybackLogUpdate
         )
     
     def create_log(self, db: Session, *, device_id: str, campaign_id: str, media_id: str, started_at=None, ended_at=None, duration_ms=None, status="completed") -> PlaybackLog:
+        device = db.query(Device).filter(Device.id == device_id).first()
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        media = db.query(Media).filter(Media.id == media_id).first()
+
         obj_in_data = {
+            "tenant_id": device.tenant_id if device else None,
             "device_id": device_id,
+            "device_name": device.name if device else None,
             "campaign_id": campaign_id,
+            "campaign_name": campaign.name if campaign else None,
             "media_id": media_id,
+            "media_name": media.name if media else None,
             "started_at": started_at,
             "ended_at": ended_at,
             "duration_ms": duration_ms,

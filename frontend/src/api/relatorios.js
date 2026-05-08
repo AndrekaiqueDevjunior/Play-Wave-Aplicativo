@@ -77,5 +77,5 @@ export const exportarRelatorioCSV = (params = {}) => {
 
 export const buscarEventosDispositivo = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
-  return apiFetch(`/events${qs ? `?${qs}` : ""}`);
+  return apiFetch(`/monitoring/events${qs ? `?${qs}` : ""}`);
 };

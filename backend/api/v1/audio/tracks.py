@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -108,9 +108,11 @@ def upload_audio_track(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     file: UploadFile = File(...),
-    name: str = Query(...),
-    category: Optional[AudioTrackCategoryEnum] = Query(AudioTrackCategoryEnum.MUSIC),
-    description: Optional[str] = Query(None)
+    name: str = Form(...),
+    category: Optional[AudioTrackCategoryEnum] = Form(AudioTrackCategoryEnum.MUSIC),
+    description: Optional[str] = Form(None),
+    duration_seconds: Optional[int] = Form(None),
+    notes: Optional[str] = Form(None)
 ):
     """
     Faz upload de arquivo de áudio
@@ -153,7 +155,9 @@ def upload_audio_track(
         "file_url": f"/uploads/audio/tracks/{filename}",
         "mime_type": file.content_type,
         "file_size": os.path.getsize(file_path),
-        "category": category
+        "duration_seconds": duration_seconds,
+        "category": category,
+        "notes": notes,
     }
     
     if current_user.role != "admin":

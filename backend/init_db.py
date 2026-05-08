@@ -1,5 +1,5 @@
 from core.database import SessionLocal, Base, engine
-from core.models import User, Tenant, UserRole
+from core.models import Plan, User, Tenant, UserRole
 from core.auth import get_password_hash
 from core.config import settings
 
@@ -10,6 +10,76 @@ def init_db():
     db = SessionLocal()
 
     try:
+        default_plans = [
+            {
+                "id": "starter",
+                "name": "Starter",
+                "description": "Ideal para negócios em crescimento",
+                "price_brl": 199.0,
+                "price_usd": 39.0,
+                "max_devices": 5,
+                "max_users": 3,
+                "max_media_gb": 10,
+                "features": [
+                    "Até 5 dispositivos",
+                    "3 usuários",
+                    "10 GB de mídia",
+                    "Suporte por e-mail",
+                    "Relatórios básicos",
+                ],
+                "is_active": True,
+                "is_popular": False,
+            },
+            {
+                "id": "pro",
+                "name": "Pro",
+                "description": "Para empresas que precisam de mais controle",
+                "price_brl": 499.0,
+                "price_usd": 99.0,
+                "max_devices": 25,
+                "max_users": 10,
+                "max_media_gb": 50,
+                "features": [
+                    "Até 25 dispositivos",
+                    "10 usuários",
+                    "50 GB de mídia",
+                    "Suporte prioritário",
+                    "Relatórios avançados",
+                    "Agendamento de campanhas",
+                    "Rádio Indoor",
+                ],
+                "is_active": True,
+                "is_popular": True,
+            },
+            {
+                "id": "enterprise",
+                "name": "Enterprise",
+                "description": "Solução completa para grandes operações",
+                "price_brl": 0.0,
+                "price_usd": 0.0,
+                "max_devices": -1,
+                "max_users": -1,
+                "max_media_gb": -1,
+                "features": [
+                    "Dispositivos ilimitados",
+                    "Usuários ilimitados",
+                    "Armazenamento ilimitado",
+                    "SLA dedicado",
+                    "Suporte 24/7",
+                    "Onboarding personalizado",
+                    "API dedicada",
+                    "Multi-tenant",
+                ],
+                "is_active": True,
+                "is_popular": False,
+            },
+        ]
+        for plan_data in default_plans:
+            plan = db.query(Plan).filter(Plan.id == plan_data["id"]).first()
+            if not plan:
+                db.add(Plan(**plan_data))
+        db.commit()
+
         # Criar tenant padrão
         tenant = db.query(Tenant).filter(Tenant.name == "Empresa Padrão").first()
         if not tenant:
