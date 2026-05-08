@@ -1,0 +1,129 @@
+{
+  "name": "Device",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "description": "ID do tenant propriet\u00e1rio"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome do dispositivo"
+    },
+    "pairing_code": {
+      "type": "string",
+      "description": "C\u00f3digo de pareamento TV-XXXX"
+    },
+    "device_type": {
+      "type": "string",
+      "enum": [
+        "tv",
+        "tablet",
+        "totem",
+        "smartphone",
+        "panel",
+        "other"
+      ],
+      "default": "tv"
+    },
+    "location": {
+      "type": "string",
+      "description": "Localiza\u00e7\u00e3o do dispositivo"
+    },
+    "group": {
+      "type": "string",
+      "description": "Grupo do dispositivo"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "waiting_pairing",
+        "online",
+        "offline",
+        "syncing",
+        "error",
+        "blocked"
+      ],
+      "default": "waiting_pairing"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "is_blocked": {
+      "type": "boolean",
+      "default": false,
+      "description": "Device bloqueado pelo admin"
+    },
+    "device_token": {
+      "type": "string",
+      "description": "Token seguro de autentica\u00e7\u00e3o da TV"
+    },
+    "paired_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data/hora do pareamento"
+    },
+    "last_connection": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u00daltima conex\u00e3o registrada"
+    },
+    "last_seen_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u00daltimo heartbeat recebido"
+    },
+    "config_version": {
+      "type": "string",
+      "description": "Hash/vers\u00e3o da configura\u00e7\u00e3o atual"
+    },
+    "current_campaign": {
+      "type": "string",
+      "description": "Nome da campanha atual (cache)"
+    },
+    "current_campaign_id": {
+      "type": "string"
+    },
+    "audio_playlist_id": {
+      "type": "string",
+      "description": "ID da playlist de \u00e1udio vinculada"
+    },
+    "audio_playlist_name": {
+      "type": "string",
+      "description": "Nome da playlist de \u00e1udio (cache)"
+    },
+    "audio_volume": {
+      "type": "number",
+      "description": "Volume 0.0\u20131.0",
+      "default": 0.7
+    },
+    "ip_address": {
+      "type": "string"
+    },
+    "player_version": {
+      "type": "string"
+    },
+    "os": {
+      "type": "string",
+      "enum": [
+        "Android TV",
+        "Windows",
+        "Web Player",
+        "iOS",
+        "Linux"
+      ]
+    },
+    "storage_used": {
+      "type": "number",
+      "description": "Armazenamento usado em MB"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "pairing_code"
+  ]
+}

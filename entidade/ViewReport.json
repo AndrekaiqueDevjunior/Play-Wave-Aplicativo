@@ -1,0 +1,47 @@
+{
+  "name": "ViewReport",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string"
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "device_name": {
+      "type": "string"
+    },
+    "campaign_id": {
+      "type": "string"
+    },
+    "campaign_name": {
+      "type": "string"
+    },
+    "media_id": {
+      "type": "string"
+    },
+    "media_name": {
+      "type": "string"
+    },
+    "views": {
+      "type": "number",
+      "default": 1
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "error",
+        "partial"
+      ]
+    }
+  },
+  "required": [
+    "device_id",
+    "campaign_id"
+  ]
+}

@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 
 const routeTitles = {
   "/dashboard": "Dashboard",
@@ -28,6 +28,7 @@ const routeTitles = {
 
 export default function Header({ onMenuToggle }) {
   const location = useLocation();
+  const { user, logout } = useAuth();
 
   const getTitle = () => {
     for (const [path, title] of Object.entries(routeTitles)) {
@@ -69,16 +70,16 @@ export default function Header({ onMenuToggle }) {
             <Button variant="ghost" size="icon" className="rounded-full">
               <Avatar className="w-8 h-8">
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-                  SC
+                  {user?.name?.substring(0, 2).toUpperCase() || "US"}
                 </AvatarFallback>
               </Avatar>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem>Meu Perfil</DropdownMenuItem>
-            <DropdownMenuItem>Configurações</DropdownMenuItem>
+            <DropdownMenuItem disabled>Meu Perfil</DropdownMenuItem>
+            <DropdownMenuItem disabled>Configurações</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => base44.auth.logout()}>
+            <DropdownMenuItem onClick={logout}>
               Sair
             </DropdownMenuItem>
           </DropdownMenuContent>

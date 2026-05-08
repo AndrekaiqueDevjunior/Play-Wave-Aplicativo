@@ -1,0 +1,52 @@
+{
+  "name": "DeviceEvent",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string"
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "device_name": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "paired",
+        "blocked",
+        "unblocked",
+        "token_revoked",
+        "offline_detected",
+        "media_error",
+        "network_error",
+        "restart",
+        "cache_used",
+        "playlist_updated",
+        "sync"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error",
+        "critical"
+      ],
+      "default": "info"
+    },
+    "description": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "string",
+      "description": "JSON string com dados adicionais"
+    }
+  },
+  "required": [
+    "device_id",
+    "event_type"
+  ]
+}

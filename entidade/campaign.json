@@ -1,0 +1,101 @@
+{
+  "name": "Campaign",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "description": "ID do tenant propriet\u00e1rio"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome da campanha"
+    },
+    "description": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "scheduled",
+        "active",
+        "paused",
+        "ended"
+      ],
+      "default": "draft"
+    },
+    "priority": {
+      "type": "number",
+      "default": 1,
+      "description": "Prioridade 1=baixa, 10=alta"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "device_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "media_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "media_order": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "media_id": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "schedule_all_day": {
+      "type": "boolean",
+      "default": true
+    },
+    "schedule_days": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "schedule_start_time": {
+      "type": "string"
+    },
+    "schedule_end_time": {
+      "type": "string"
+    },
+    "total_views": {
+      "type": "number",
+      "default": 0
+    },
+    "target_groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Grupos/localiza\u00e7\u00f5es alvo"
+    },
+    "config_version": {
+      "type": "string",
+      "description": "Hash da vers\u00e3o desta campanha"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

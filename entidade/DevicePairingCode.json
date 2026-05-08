@@ -1,0 +1,50 @@
+{
+  "name": "DevicePairingCode",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "C\u00f3digo de pareamento ex: TV-A3F9"
+    },
+    "tenant_id": {
+      "type": "string",
+      "description": "Tenant que confirmou (preenchido pelo admin)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "waiting",
+        "paired",
+        "expired",
+        "cancelled"
+      ],
+      "default": "waiting"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Expira\u00e7\u00e3o: criado_em + 10 minutos"
+    },
+    "used_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Preenchido ap\u00f3s confirma\u00e7\u00e3o do pareamento"
+    },
+    "player_version": {
+      "type": "string"
+    },
+    "os": {
+      "type": "string"
+    },
+    "screen_resolution": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "expires_at"
+  ]
+}

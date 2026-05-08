@@ -1,0 +1,43 @@
+{
+  "name": "UserLog",
+  "type": "object",
+  "properties": {
+    "target_user_id": {
+      "type": "string",
+      "description": "ID do usu\u00e1rio afetado"
+    },
+    "target_user_email": {
+      "type": "string",
+      "description": "Email do usu\u00e1rio afetado"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "invite",
+        "edit",
+        "activate",
+        "deactivate",
+        "block",
+        "unblock",
+        "reset_password"
+      ],
+      "description": "A\u00e7\u00e3o realizada"
+    },
+    "performed_by": {
+      "type": "string",
+      "description": "Email do admin que realizou a a\u00e7\u00e3o"
+    },
+    "details": {
+      "type": "string",
+      "description": "Detalhes adicionais da a\u00e7\u00e3o"
+    },
+    "tenant_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_user_id",
+    "action",
+    "performed_by"
+  ]
+}

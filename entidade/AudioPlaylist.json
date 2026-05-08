@@ -1,0 +1,64 @@
+{
+  "name": "AudioPlaylist",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "archived"
+      ],
+      "default": "active"
+    },
+    "volume_default": {
+      "type": "number",
+      "default": 0.7
+    },
+    "loop_enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "shuffle_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "schedule_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "schedule_start_time": {
+      "type": "string"
+    },
+    "schedule_end_time": {
+      "type": "string"
+    },
+    "schedule_days": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "track_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "track_volumes": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

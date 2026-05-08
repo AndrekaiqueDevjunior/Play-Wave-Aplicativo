@@ -1,17 +1,166 @@
-node_modules/
-dist/
-build/
+# ===========================================
+# VARIÁVEIS DE AMBIENTE E CONFIGURAÇÕES SENSÍVEIS
+# ===========================================
 .env
-.env.*
+.env.local
+.env.development
+.env.production
+.env.test
 !.env.example
 
-*.log
+# ===========================================
+# NODE.JS
+# ===========================================
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-.DS_Store
-Thumbs.db
+# ===========================================
+# FRONTEND BUILD
+# ===========================================
+dist/
+build/
+.vite/
+
+# ===========================================
+# PYTHON
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===========================================
+# VIRTUAL ENVIRONMENTS
+# ===========================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ===========================================
+# IDES E EDITORES
+# ===========================================
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# ===========================================
+# BANCO DE DADOS
+# ===========================================
+*.db
+*.sqlite3
+*.sqlite
+
+# ===========================================
+# LOGS
+# ===========================================
+*.log
+logs/
+*.log.*
+
+# ===========================================
+# UPLOADS E ARQUIVOS TEMPORÁRIOS
+# ===========================================
+uploads/
+temp/
+tmp/
+*.tmp
+*.temp
+
+# ===========================================
+# DOCKER
+# ===========================================
+.dockerignore
+docker-compose.override.yml
+
+# ===========================================
+# SISTEMAS OPERACIONAIS
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===========================================
+# BACKUP E MIGRAÇÕES
+# ===========================================
+*.backup
+*.bak
+*.sql
+!migrations/*.sql
+
+# ===========================================
+# CERTIFICADOS SSL
+# ===========================================
+*.pem
+*.key
+*.crt
+*.csr
+ssl/
+certs/
+
+# ===========================================
+# ALEMBIC
+# ===========================================
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# ===========================================
+# TESTES E COBERTURA
+# ===========================================
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# ===========================================
+# MONITORAMENTO E DEBUG
+# ===========================================
+.debug
+.monitoring
+sentry-debug.log
+
+# ===========================================
+# CACHE
+# ===========================================
+.cache/
+*.cache
+.pytest_cache/
+
+# ===========================================
+# ARQUIVOS DE CONFIGURAÇÃO ESPECÍFICOS
+# ===========================================
+config.local.py
+settings.local.py
+secrets.json
+config/secrets.json

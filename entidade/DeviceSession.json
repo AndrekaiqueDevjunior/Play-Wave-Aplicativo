@@ -1,0 +1,36 @@
+{
+  "name": "DeviceSession",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string",
+      "description": "Token de sess\u00e3o enviado \u00e0 TV"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revoked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_used_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "device_id",
+    "token"
+  ]
+}

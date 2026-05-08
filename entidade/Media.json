@@ -1,0 +1,71 @@
+{
+  "name": "Media",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "description": "ID do tenant propriet\u00e1rio"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome do arquivo / t\u00edtulo"
+    },
+    "description": {
+      "type": "string"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "thumbnail_url": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "image",
+        "video",
+        "audio",
+        "external_url"
+      ]
+    },
+    "mime_type": {
+      "type": "string"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Dura\u00e7\u00e3o em segundos"
+    },
+    "file_size": {
+      "type": "number",
+      "description": "Tamanho em bytes"
+    },
+    "resolution": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "available",
+        "processing",
+        "error"
+      ],
+      "default": "available"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "name": "AudioTrack",
+  "type": "object",
+  "properties": {
+    "tenant_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "mime_type": {
+      "type": "string"
+    },
+    "file_size": {
+      "type": "number"
+    },
+    "duration_seconds": {
+      "type": "number"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "music",
+        "jingle",
+        "announcement",
+        "ambient",
+        "other"
+      ],
+      "default": "music"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "archived"
+      ],
+      "default": "active"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "file_url"
+  ]
+}
