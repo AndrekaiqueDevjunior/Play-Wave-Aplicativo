@@ -134,11 +134,11 @@ export default function Login() {
 
         <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] max-w-[900px] flex-col justify-center">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 overflow-hidden rounded-xl border border-blue-500/25 shadow-[0_0_30px_rgba(37,99,235,0.45)]">
+            <div className="flex h-10 w-10 items-center justify-center">
               <img
-                src="/playwave-icon-512.png"
+                src="/apple-touch-icon.png"
                 alt=""
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain drop-shadow-[0_0_18px_rgba(14,165,233,0.55)]"
               />
             </div>
             <span className="text-xl font-bold tracking-tight">Play Wave</span>
@@ -250,11 +250,11 @@ export default function Login() {
 
         <div className="relative z-10 w-full max-w-[760px]">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <div className="h-10 w-10 overflow-hidden rounded-xl shadow-lg shadow-blue-600/20">
+            <div className="flex h-10 w-10 items-center justify-center">
               <img
-                src="/playwave-icon-512.png"
+                src="/apple-touch-icon.png"
                 alt=""
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain drop-shadow-[0_0_18px_rgba(14,165,233,0.45)]"
               />
             </div>
             <span className="text-xl font-bold tracking-tight text-[#020817]">
@@ -297,6 +297,16 @@ export default function Login() {
 
             <div className="card-soft-sparks relative z-10 w-full max-w-[520px] ml-[90px] md:ml-[150px] bg-white rounded-[30px] border border-slate-200 shadow-[0_35px_100px_rgba(15,23,42,0.18)] px-8 md:px-12 py-10 md:py-14 overflow-hidden">
               <div className="absolute inset-x-8 top-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent opacity-80" />
+              <div className="mb-5 flex flex-col items-center">
+                <img
+                  src="/apple-touch-icon.png"
+                  alt=""
+                  className="h-12 w-12 object-contain drop-shadow-[0_0_22px_rgba(14,165,233,0.45)]"
+                />
+                <span className="mt-2 text-xl font-extrabold tracking-tight text-[#020817]">
+                  PlayWave
+                </span>
+              </div>
               <h2 className="text-[34px] md:text-[38px] leading-tight font-extrabold tracking-tight text-[#020817]">
                 Bem-vindo de volta
               </h2>

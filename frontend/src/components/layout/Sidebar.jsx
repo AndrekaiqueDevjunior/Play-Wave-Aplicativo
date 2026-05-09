@@ -147,11 +147,11 @@ export default function Sidebar({ open, onClose }) {
         {/* Logo */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-sidebar-border flex-shrink-0">
           <Link to="/dashboard" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg overflow-hidden">
+            <div className="flex w-8 h-8 items-center justify-center">
               <img
-                src="/playwave-icon-512.png"
+                src="/apple-touch-icon.png"
                 alt=""
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain drop-shadow-[0_0_12px_rgba(14,165,233,0.45)]"
               />
             </div>
             <span className="text-lg font-bold tracking-tight">
