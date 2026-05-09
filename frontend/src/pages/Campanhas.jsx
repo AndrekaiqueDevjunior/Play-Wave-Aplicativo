@@ -101,19 +101,27 @@ export default function Campanhas() {
   });
 
   const handleSave = async (form) => {
-    if (editCampaign) {
-      await atualizarCampanha(editCampaign.id, form);
-      toast({ title: "Campanha atualizada!" });
-    } else {
-      await criarCampanha({ ...form, total_views: 0 });
+    try {
+      if (editCampaign) {
+        await atualizarCampanha(editCampaign.id, form);
+        toast({ title: "Campanha atualizada!" });
+      } else {
+        await criarCampanha({ ...form, total_views: 0 });
+        toast({
+          title: "Campanha criada!",
+          description: `${form.name} foi adicionada.`,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setModalOpen(false);
+      setEditCampaign(null);
+    } catch (err) {
       toast({
-        title: "Campanha criada!",
-        description: `${form.name} foi adicionada.`,
+        variant: "destructive",
+        title: "Erro ao salvar campanha",
+        description: err?.message || "Tente novamente.",
       });
     }
-    queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-    setModalOpen(false);
-    setEditCampaign(null);
   };
 
   const handleSetStatus = async (campaign, status) => {
@@ -256,13 +264,10 @@ export default function Campanhas() {
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
                       {campaign.start_date
-                        ? format(
-                            new Date(campaign.start_date + "T00:00:00"),
-                            "dd/MM/yy",
-                          )
+                        ? format(new Date(campaign.start_date), "dd/MM/yy")
                         : "—"}
                       {campaign.end_date
-                        ? ` → ${format(new Date(campaign.end_date + "T00:00:00"), "dd/MM/yy")}`
+                        ? ` → ${format(new Date(campaign.end_date), "dd/MM/yy")}`
                         : ""}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">

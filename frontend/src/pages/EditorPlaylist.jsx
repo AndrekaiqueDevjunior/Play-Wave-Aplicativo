@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { atualizarCampanha, buscarCampanha } from "@/api/campanhas";
 import { listarMidias } from "@/api/midias";
+import { assetUrl } from "@/utils/mediaUtils";
 
 export default function EditorPlaylist() {
   const navigate = useNavigate();
@@ -139,7 +140,7 @@ export default function EditorPlaylist() {
                   className="flex items-center gap-3 p-2 rounded-lg border border-border hover:border-primary/30 cursor-pointer transition-colors"
                 >
                   <img
-                    src={media.thumbnail_url || media.file_url}
+                    src={assetUrl(media.thumbnail_url || media.file_url)}
                     alt={media.name}
                     className="w-14 h-9 rounded object-cover bg-muted"
                   />
@@ -193,7 +194,7 @@ export default function EditorPlaylist() {
                                 {index + 1}
                               </span>
                               <img
-                                src={media.thumbnail_url || media.file_url}
+                                src={assetUrl(media.thumbnail_url || media.file_url)}
                                 alt={media.name}
                                 className="w-16 h-10 rounded object-cover bg-muted"
                               />

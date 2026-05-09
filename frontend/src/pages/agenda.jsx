@@ -93,8 +93,8 @@ export default function Agenda() {
   const handleDrop = async (campaignId, newDateStr) => {
     const campaign = campaigns.find((c) => c.id === campaignId);
     if (!campaign) return;
-    const oldStart = new Date(campaign.start_date + "T00:00:00");
-    const oldEnd = new Date(campaign.end_date + "T00:00:00");
+    const oldStart = new Date(campaign.start_date);
+    const oldEnd = new Date(campaign.end_date);
     const duration = Math.round((oldEnd - oldStart) / (1000 * 60 * 60 * 24));
     const newStart = new Date(newDateStr + "T00:00:00");
     const newEnd = new Date(newStart);

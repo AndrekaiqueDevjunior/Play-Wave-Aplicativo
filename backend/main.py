@@ -1,9 +1,11 @@
+import os
 import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import event
 from api.v1 import (
     auth_router, devices_router, campaigns_router, media_router,
@@ -32,6 +34,11 @@ app = FastAPI(
     description="API para sistema de Digital Signage",
     version=settings.VERSION,
 )
+
+# Serve uploaded files as static assets
+_uploads_dir = "uploads"
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
 
 @app.exception_handler(ResponseValidationError)

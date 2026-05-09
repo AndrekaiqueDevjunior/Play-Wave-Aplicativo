@@ -1,6 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from core.models import Campaign, Device, Media
 from core.schemas_completos import CampaignCreate, CampaignUpdate, CampaignResponse
 from .crud_base import CRUDBase
@@ -33,14 +34,27 @@ class CRUDCampaign(CRUDBase[Campaign, CampaignCreate, CampaignUpdate]):
         ).all()
     
     def get_by_device(self, db: Session, *, device_id: str) -> List[Campaign]:
-        campaign = db.query(Campaign).filter(
-            Campaign.device_ids.contains([device_id])
+        return db.query(Campaign).filter(
+            cast(Campaign.device_ids, JSONB).contains([device_id])
         ).all()
-        return campaign
+
+    def get_active_for_device(self, db: Session, *, device_id: str) -> Optional[Campaign]:
+        """Return the highest-priority active campaign that targets this device."""
+        return (
+            db.query(Campaign)
+            .filter(
+                and_(
+                    cast(Campaign.device_ids, JSONB).contains([device_id]),
+                    Campaign.status == "active",
+                )
+            )
+            .order_by(Campaign.priority.desc())
+            .first()
+        )
     
     def get_by_media(self, db: Session, *, media_id: str) -> List[Campaign]:
         return db.query(Campaign).filter(
-            Campaign.media_ids.contains([media_id])
+            cast(Campaign.media_ids, JSONB).contains([media_id])
         ).all()
     
     def search(self, db: Session, *, query: str = None, skip: int = 0, limit: int = 100) -> List[Campaign]:

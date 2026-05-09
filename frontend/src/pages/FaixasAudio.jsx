@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listarFaixas, atualizarFaixa } from "@/api/audio";
+import { assetUrl } from "@/utils/mediaUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -87,7 +88,7 @@ export default function FaixasAudio() {
       audio.pause();
       setPlayingId(null);
     } else {
-      audio.src = track.file_url;
+      audio.src = assetUrl(track.file_url);
       audio.play();
       setPlayingId(track.id);
       audio.onended = () => setPlayingId(null);

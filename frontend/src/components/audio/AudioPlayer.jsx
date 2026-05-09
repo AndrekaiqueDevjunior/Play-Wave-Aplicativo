@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { buscarDispositivo } from "@/api/dispositivos";
 import { buscarPlaylistAudio, listarFaixas } from "@/api/audio";
+import { assetUrl } from "@/utils/mediaUtils";
 
 /**
  * AudioPlayer — Motor de áudio independente do motor visual.
@@ -87,7 +88,7 @@ export default function AudioPlayer({ deviceId, onStatusChange }) {
     audio.removeEventListener("ended", handleEnded);
     audio.removeEventListener("error", handleError);
 
-    audio.src = track.file_url;
+    audio.src = assetUrl(track.file_url);
     const trackVolume = playlist.track_volumes?.[track.id];
     audio.volume = trackVolume ?? playlist.volume_default ?? 0.7;
 

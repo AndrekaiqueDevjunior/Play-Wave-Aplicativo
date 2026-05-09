@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { buscarCampanha } from "@/api/campanhas";
 import { listarMidias } from "@/api/midias";
+import { resolveMediaType, resolveMediaUrl, assetUrl } from "@/utils/mediaUtils";
 
 export default function CampanhaPreview() {
   const navigate = useNavigate();
@@ -61,30 +62,66 @@ export default function CampanhaPreview() {
       <div className="flex justify-center">
         <div className="w-full max-w-4xl">
           <Card className="overflow-hidden bg-black">
-            <div className="relative aspect-video flex items-center justify-center">
+            <div className="relative aspect-video flex items-center justify-center bg-black">
               {currentMedia ? (
-                currentMedia.type === "video" ? (
-                  <video
-                    src={currentMedia.file_url}
-                    className="w-full h-full object-cover"
-                    controls
-                  />
-                ) : (
-                  <img
-                    src={currentMedia.thumbnail_url || currentMedia.file_url}
-                    alt={currentMedia.name}
-                    className="w-full h-full object-cover"
-                  />
-                )
+                (() => {
+                  const mType = resolveMediaType(currentMedia);
+                  const mSrc  = resolveMediaUrl(currentMedia);
+                  if (mType === "video") return (
+                    <video key={currentMedia.id} src={mSrc} className="w-full h-full object-cover" controls autoPlay />
+                  );
+                  if (mType === "audio") return (
+                    <div className="flex flex-col items-center gap-4 p-8 text-white">
+                      <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center">
+                        <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                        </svg>
+                      </div>
+                      <p className="text-sm font-medium">{currentMedia.name}</p>
+                      <audio key={currentMedia.id} src={mSrc} controls className="w-full max-w-xs" />
+                    </div>
+                  );
+                  if (mType === "youtube" || mType === "vimeo" || mType === "external_url") return (
+                    <iframe
+                      key={currentMedia.id}
+                      src={mSrc}
+                      className="w-full h-full border-0"
+                      title={currentMedia.name}
+                      allow="autoplay; fullscreen; encrypted-media"
+                      allowFullScreen
+                    />
+                  );
+                  return (
+                    <img
+                      key={currentMedia.id}
+                      src={assetUrl(currentMedia.thumbnail_url) || mSrc}
+                      alt={currentMedia.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src =
+                          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='112'%3E%3Crect width='200' height='112' fill='%23333'/%3E%3Ctext x='100' y='62' text-anchor='middle' fill='%23999' font-size='13'%3ESem preview%3C/text%3E%3C/svg%3E";
+                      }}
+                    />
+                  );
+                })()
               ) : (
                 <p className="text-white/50">Nenhuma mídia vinculada</p>
               )}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                <p className="text-white text-sm font-medium">{currentMedia?.name}</p>
-                <p className="text-white/60 text-xs">
-                  {currentMedia ? `${currentMedia.duration || 10}s · ${currentMedia.type === "image" ? "Imagem" : "Vídeo"}` : ""}
-                </p>
-              </div>
+              {currentMedia && resolveMediaType(currentMedia) !== "audio" && (
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                  <p className="text-white text-sm font-medium">{currentMedia.name}</p>
+                  <p className="text-white/60 text-xs">
+                    {`${currentMedia.duration || 10}s · ${
+                      resolveMediaType(currentMedia) === "video" ? "Vídeo"
+                      : resolveMediaType(currentMedia) === "youtube" ? "YouTube"
+                      : resolveMediaType(currentMedia) === "vimeo" ? "Vimeo"
+                      : resolveMediaType(currentMedia) === "audio" ? "Áudio"
+                      : resolveMediaType(currentMedia) === "external_url" ? "Link externo"
+                      : "Imagem"
+                    }`}
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -115,17 +152,29 @@ export default function CampanhaPreview() {
               <div
                 key={media.id}
                 onClick={() => setCurrentIndex(index)}
-                className={`shrink-0 w-20 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-colors ${
+                className={`shrink-0 w-20 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-colors bg-muted flex items-center justify-center ${
                   index === currentIndex
                     ? "border-primary"
                     : "border-transparent opacity-60 hover:opacity-100"
                 }`}
               >
-                <img
-                  src={media.thumbnail_url || media.file_url}
-                  alt={media.name}
-                  className="w-full h-full object-cover"
-                />
+                {media.thumbnail_url || (resolveMediaType(media) === "image" && media.file_url) ? (
+                  <img
+                    src={assetUrl(media.thumbnail_url || media.file_url)}
+                    alt={media.name}
+                    className="w-full h-full object-cover"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ) : (
+                  <span className="text-base text-center">
+                    {resolveMediaType(media) === "video" ? "🎬"
+                      : resolveMediaType(media) === "audio" ? "🎵"
+                      : resolveMediaType(media) === "youtube" ? "▶️"
+                      : resolveMediaType(media) === "vimeo" ? "🎥"
+                      : resolveMediaType(media) === "external_url" ? "🔗"
+                      : "🖼"}
+                  </span>
+                )}
               </div>
             ))}
           </div>

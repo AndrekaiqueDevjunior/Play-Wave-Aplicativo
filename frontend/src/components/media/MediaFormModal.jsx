@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Upload, X, Image, Film, Link2, Music } from "lucide-react";
 import { uploadMidia } from "@/api/midias";
+import { detectUrlMediaType } from "@/utils/mediaUtils";
 
 const DEFAULT_FORM = {
   name: "",
@@ -61,72 +62,82 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
 
   const set = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
+  const ALLOWED_MIMES = [
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/svg+xml",
+    "video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo", "video/avi",
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/m4a", "audio/x-m4a",
+  ];
+
   const handleFile = (f) => {
-    const MAX = 100 * 1024 * 1024;
+    const MAX = 500 * 1024 * 1024;
     if (f.size > MAX) {
-      alert("Arquivo maior que 100MB");
+      alert("Arquivo maior que 500MB");
       return;
     }
-    const allowed = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "video/mp4",
-      "audio/mpeg",
-      "audio/wav",
-    ];
-    if (!allowed.includes(f.type)) {
-      alert("Tipo de arquivo não permitido");
+    if (!ALLOWED_MIMES.includes(f.type)) {
+      alert(`Tipo de arquivo não permitido: ${f.type}`);
       return;
     }
     setFile(f);
     if (!form.name) set("name", f.name.replace(/\.[^/.]+$/, ""));
     set(
       "type",
-      f.type.startsWith("video")
-        ? "video"
-        : f.type.startsWith("audio")
-          ? "audio"
-          : "image",
+      f.type.startsWith("video") ? "video"
+        : f.type.startsWith("audio") ? "audio"
+        : "image",
     );
     set("mime_type", f.type);
+  };
+
+  const handleUrlChange = (url) => {
+    set("file_url", url);
+    if (!url) return;
+    const detected = detectUrlMediaType(url);
+    if (detected === "youtube" || detected === "vimeo") {
+      set("type", "external_url");
+    } else if (detected !== "external_url") {
+      set("type", detected);
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSaving(true);
-    let file_url = form.file_url;
-    let file_size = media?.file_size || 0;
+    try {
+      let file_url = form.file_url;
+      let file_size = media?.file_size || 0;
 
-    if (file && mode === "upload") {
-      setUploading(true);
-      const uploaded = await uploadMidia(file, { name: form.name, type: form.type });
-      file_url = uploaded?.file_url || "";
-      file_size = file.size;
-      setUploading(false);
+      if (file && mode === "upload") {
+        setUploading(true);
+        try {
+          const uploaded = await uploadMidia(file, { name: form.name, type: form.type });
+          file_url = uploaded?.file_url || "";
+          file_size = file.size;
+        } finally {
+          setUploading(false);
+        }
+      }
+
+      const tags = form.tags
+        ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
+        : [];
+      await onSave({
+        name: form.name,
+        description: form.description,
+        type: form.type,
+        file_url,
+        thumbnail_url: file_url,
+        duration: Number(form.duration),
+        file_size,
+        tags,
+        notes: form.notes,
+        category: form.category,
+        status: "available",
+      });
+    } finally {
+      setSaving(false);
     }
-
-    const tags = form.tags
-      ? form.tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [];
-    await onSave({
-      name: form.name,
-      description: form.description,
-      type: form.type,
-      file_url,
-      thumbnail_url: file_url,
-      duration: Number(form.duration),
-      file_size,
-      tags,
-      notes: form.notes,
-      category: form.category,
-      status: "available",
-    });
-    setSaving(false);
   };
 
   return (
@@ -174,12 +185,12 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
                     Clique ou arraste o arquivo
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    JPG, PNG, WEBP, MP4, MP3 · Máx 100MB
+                    JPG, PNG, WEBP, GIF, SVG, MP4, WEBM, MOV, MP3, WAV, OGG, M4A · Máx 500MB
                   </p>
                   <input
                     ref={fileRef}
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,video/mp4,audio/mpeg,audio/wav"
+                    accept="image/*,video/mp4,video/webm,video/quicktime,video/x-matroska,audio/mpeg,audio/wav,audio/ogg,audio/m4a"
                     className="hidden"
                     onChange={(e) =>
                       e.target.files[0] && handleFile(e.target.files[0])
@@ -221,10 +232,15 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
               <Label>URL do arquivo</Label>
               <Input
                 value={form.file_url}
-                onChange={(e) => set("file_url", e.target.value)}
-                placeholder="https://..."
+                onChange={(e) => handleUrlChange(e.target.value)}
+                placeholder="https:// · YouTube · Vimeo · imagem · vídeo..."
                 required={mode === "url"}
               />
+              {form.file_url && (
+                <p className="text-xs text-muted-foreground">
+                  Tipo detectado: <span className="font-medium">{detectUrlMediaType(form.file_url)}</span>
+                </p>
+              )}
             </div>
           )}
 

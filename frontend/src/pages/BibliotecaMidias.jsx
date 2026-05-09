@@ -53,6 +53,7 @@ import {
   deletarMidia,
 } from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
+import { assetUrl } from "@/utils/mediaUtils";
 
 const TYPE_ICON = {
   image: Image,
@@ -231,7 +232,7 @@ export default function BibliotecaMidias() {
                 <div className="relative aspect-video bg-muted overflow-hidden">
                   {media.thumbnail_url || media.file_url ? (
                     <img
-                      src={media.thumbnail_url || media.file_url}
+                      src={assetUrl(media.thumbnail_url || media.file_url)}
                       alt={media.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
@@ -365,7 +366,7 @@ export default function BibliotecaMidias() {
                         <div className="w-12 h-8 rounded bg-muted overflow-hidden shrink-0">
                           {media.thumbnail_url || media.file_url ? (
                             <img
-                              src={media.thumbnail_url || media.file_url}
+                              src={assetUrl(media.thumbnail_url || media.file_url)}
                               alt={media.name}
                               className="w-full h-full object-cover"
                             />
@@ -468,7 +469,7 @@ export default function BibliotecaMidias() {
           </Button>
           {previewMedia?.type === "video" ? (
             <video
-              src={previewMedia.file_url}
+              src={assetUrl(previewMedia.file_url)}
               controls
               autoPlay
               className="w-full max-h-[80vh]"
@@ -477,11 +478,11 @@ export default function BibliotecaMidias() {
             <div className="p-8 flex flex-col items-center gap-4">
               <Music className="w-16 h-16 text-white/50" />
               <p className="text-white font-medium">{previewMedia.name}</p>
-              <audio src={previewMedia.file_url} controls className="w-full" />
+              <audio src={assetUrl(previewMedia.file_url)} controls className="w-full" />
             </div>
           ) : (
             <img
-              src={previewMedia?.file_url || previewMedia?.thumbnail_url}
+              src={assetUrl(previewMedia?.thumbnail_url || previewMedia?.file_url)}
               alt={previewMedia?.name}
               className="w-full max-h-[80vh] object-contain"
             />

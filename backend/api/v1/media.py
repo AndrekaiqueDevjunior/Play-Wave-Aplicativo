@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from uuid import UUID
 import os
+import re
 import shutil
 from datetime import datetime
 
@@ -16,6 +16,66 @@ from crud.entidades import crud_media
 from core.config import settings
 
 router = APIRouter(prefix="/media", tags=["media"])
+
+# ─── MIME / extension mappings ───────────────────────────────────────────────
+
+ALLOWED_MIME = {
+    "image": [
+        "image/jpeg", "image/jpg", "image/png", "image/webp",
+        "image/gif", "image/svg+xml",
+    ],
+    "video": [
+        "video/mp4", "video/webm", "video/quicktime",
+        "video/x-matroska", "video/x-msvideo", "video/avi",
+    ],
+    "audio": [
+        "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg",
+        "audio/m4a", "audio/x-m4a",
+    ],
+}
+
+ALLOWED_EXT = {
+    "image": {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"},
+    "video": {".mp4", ".webm", ".mov", ".mkv", ".avi"},
+    "audio": {".mp3", ".wav", ".ogg", ".m4a"},
+}
+
+YOUTUBE_RE = re.compile(r"(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/)([^&?/]+)")
+VIMEO_RE   = re.compile(r"vimeo\.com/(\d+)")
+
+
+def _detect_url_subtype(url: str) -> str:
+    """Return a hint about the URL: 'youtube', 'vimeo', 'image', 'video', or 'external_url'."""
+    if not url:
+        return "external_url"
+    lower = url.lower().split("?")[0]
+    if YOUTUBE_RE.search(url):
+        return "youtube"
+    if VIMEO_RE.search(url):
+        return "vimeo"
+    ext = os.path.splitext(lower)[1]
+    if ext in ALLOWED_EXT["image"]:
+        return "image"
+    if ext in ALLOWED_EXT["video"]:
+        return "video"
+    if ext in ALLOWED_EXT["audio"]:
+        return "audio"
+    return "external_url"
+
+
+def _validate_file(file: UploadFile, media_type: str) -> None:
+    """Raise 400 if the file MIME type or extension is not allowed for media_type."""
+    allowed_mimes = ALLOWED_MIME.get(media_type, [])
+    content_type = (file.content_type or "").lower()
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    allowed_exts = ALLOWED_EXT.get(media_type, set())
+
+    if content_type not in allowed_mimes and ext not in allowed_exts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de arquivo não permitido para '{media_type}'. "
+                   f"MIME recebido: {content_type}, extensão: {ext}",
+        )
 
 
 @router.get("/", response_model=List[MediaResponse])
@@ -120,44 +180,29 @@ def upload_media(
     category: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     duration: Optional[int] = Form(None),
-    notes: Optional[str] = Form(None)
+    notes: Optional[str] = Form(None),
 ):
-    """
-    Faz upload de arquivo de mídia
-    """
-    # Validar tipo de arquivo
-    allowed_types = {
-        "image": ["image/jpeg", "image/png", "image/gif", "image/webp"],
-        "video": ["video/mp4", "video/avi", "video/mov", "video/webm"],
-        "audio": ["audio/mp3", "audio/wav", "audio/ogg", "audio/m4a"]
-    }
-    
-    if file.content_type not in allowed_types.get(media_type, []):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tipo de arquivo não permitido para {media_type}"
-        )
-    
-    # Criar diretório de uploads se não existir
+    _validate_file(file, media_type)
+
     upload_dir = "uploads/media"
     os.makedirs(upload_dir, exist_ok=True)
-    
-    # Gerar nome de arquivo único
+
+    # Keep original extension for correct Content-Type when serving
+    orig_ext = os.path.splitext(file.filename or "")[1].lower() or ""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{timestamp}_{file.filename}"
+    safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "file")
+    filename = f"{timestamp}_{safe_name}"
     file_path = os.path.join(upload_dir, filename)
-    
-    # Salvar arquivo
+
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
+        with open(file_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao salvar arquivo: {str(e)}"
+            detail=f"Erro ao salvar arquivo: {exc}",
         )
-    
-    # Criar mídia no banco
+
     media_data = {
         "name": name,
         "description": description,
@@ -166,16 +211,14 @@ def upload_media(
         "mime_type": file.content_type,
         "file_size": os.path.getsize(file_path),
         "duration": duration,
-        "tags": tags.split(",") if tags else [],
+        "tags": [t.strip() for t in tags.split(",") if t.strip()] if tags else [],
         "category": category,
         "notes": notes,
     }
-    
     if current_user.role != "admin":
         media_data["tenant_id"] = current_user.tenant_id
-    
-    media = crud_media.create(db, obj_in=MediaCreate(**media_data))
-    return media
+
+    return crud_media.create(db, obj_in=MediaCreate(**media_data))
 
 
 @router.put("/{media_id}", response_model=MediaResponse)

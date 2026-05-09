@@ -28,6 +28,22 @@ function clearStoredSession() {
   });
 }
 
+function parseErrorDetail(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) {
+    // Pydantic v2 validation errors: [{loc, msg, type}, ...]
+    return raw
+      .map((e) => {
+        const loc = Array.isArray(e.loc)
+          ? e.loc.filter((l) => l !== "body").join(" → ")
+          : "";
+        return loc ? `${loc}: ${e.msg}` : e.msg || JSON.stringify(e);
+      })
+      .join(" | ");
+  }
+  return String(raw);
+}
+
 /**
  * Realiza uma chamada ao backend FastAPI.
  *
@@ -65,9 +81,9 @@ export async function apiFetch(path, options = {}) {
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      detail = body.detail || body.message || detail;
+      detail = parseErrorDetail(body.detail || body.message) || detail;
     } catch {
-      detail = (await res.text()) || detail;
+      try { detail = (await res.text()) || detail; } catch { /* ignore */ }
     }
     throw new Error(detail);
   }
@@ -107,9 +123,9 @@ export async function apiUpload(path, formData, options = {}) {
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      detail = body.detail || body.message || detail;
+      detail = parseErrorDetail(body.detail || body.message) || detail;
     } catch {
-      detail = (await res.text()) || detail;
+      try { detail = (await res.text()) || detail; } catch { /* ignore */ }
     }
     throw new Error(detail);
   }

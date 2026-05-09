@@ -346,6 +346,13 @@ class CampaignBase(BaseSchema):
     schedule_end_time: Optional[str] = Field(None, max_length=10)
     target_groups: Optional[List[str]] = None
 
+    @field_validator('start_date', 'end_date', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
 
 class CampaignCreate(CampaignBase):
     pass
@@ -364,6 +371,13 @@ class CampaignUpdate(BaseSchema):
     schedule_all_day: Optional[bool] = None
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
+
+    @field_validator('start_date', 'end_date', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
     schedule_end_time: Optional[str] = Field(None, max_length=10)
     target_groups: Optional[List[str]] = None
 

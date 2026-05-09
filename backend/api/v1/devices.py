@@ -192,6 +192,7 @@ def get_waiting_pairing_devices(
 @router.post("/pair-request")
 def pair_request(body: PairRequestBody, db: Session = Depends(get_db)):
     code = body.pairing_code or ("TV-" + secrets.token_hex(2).upper())
+    print(f"[pair-request] code={code} player_version={body.player_version}")
 
     # Reuse existing entry if not expired
     existing = crud_device_pairing_code.get_by_code(db, code=code)
@@ -225,17 +226,35 @@ def pair_request(body: PairRequestBody, db: Session = Depends(get_db)):
 def check_pairing_status(code: str, db: Session = Depends(get_db)):
     pairing = crud_device_pairing_code.get_by_code(db, code=code)
     if pairing:
+        # Always check if admin already created a matching device regardless of pairing status.
+        # This handles the "admin-first" flow where create_device ran before pair_request.
+        device_for_code = crud_device.get_by_pairing_code(db, pairing_code=code)
+
         if pairing.expires_at and pairing.expires_at < datetime.utcnow():
+            # Expired but device may already exist
+            if device_for_code and device_for_code.device_token:
+                return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
             return {"status": "expired", "device_id": None, "device_token": None}
+
+        # If DevicePairingCode is still "waiting" but admin already created the device
+        if pairing.status == "waiting" and device_for_code and device_for_code.device_token:
+            print(f"[pairing] auto-linking code={code} to device={device_for_code.id}")
+            pairing.status = "paired"
+            pairing.device_id = device_for_code.id
+            pairing.used_at = datetime.utcnow()
+            db.commit()
+            return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
+
         result: dict = {"status": pairing.status, "device_id": None, "device_token": None}
         if pairing.status == "paired" and pairing.device_id:
             device = crud_device.get(db, id=str(pairing.device_id))
             if device:
                 result["device_id"] = str(device.id)
                 result["device_token"] = device.device_token
+        print(f"[pairing] code={code} status={result['status']}")
         return result
 
-    # Fallback: admin may have created the device directly via the panel
+    # Fallback: player polling a code that was never registered (admin-first, no pair_request yet)
     device = crud_device.get_by_pairing_code(db, pairing_code=code)
     if not device:
         raise HTTPException(status_code=404, detail="Código não encontrado")
@@ -243,11 +262,10 @@ def check_pairing_status(code: str, db: Session = Depends(get_db)):
     if device.is_blocked:
         return {"status": "expired", "device_id": None, "device_token": None}
 
-    # Already has a token — pairing is complete
     if device.device_token:
+        print(f"[pairing] code={code} fallback direct device match id={device.id}")
         return {"status": "paired", "device_id": str(device.id), "device_token": device.device_token}
 
-    # Admin created the device and is waiting for the player — generate token on first poll
     if device.status == "waiting_pairing":
         device.device_token = secrets.token_urlsafe(32)
         db.commit()
@@ -268,16 +286,19 @@ def get_device_playlist(
 
     crud_device.update_last_seen(db, db_obj=device)
 
-    if not device.current_campaign_id:
-        return {
-            "device_name": device.name,
-            "campaign": None,
-            "media": [],
-            "audio_playlist": _build_audio_playlist(device),
-        }
+    # 1. Try explicit current_campaign_id on device
+    campaign = None
+    if device.current_campaign_id:
+        campaign = crud_campaign.get(db, id=str(device.current_campaign_id))
+        print(f"[playlist] device={device.id} current_campaign_id={device.current_campaign_id} found={campaign is not None}")
 
-    campaign = crud_campaign.get(db, id=str(device.current_campaign_id))
+    # 2. Fallback: find active campaign that targets this device via device_ids
     if not campaign:
+        campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+        print(f"[playlist] device={device.id} fallback campaign={campaign.id if campaign else None}")
+
+    if not campaign:
+        print(f"[playlist] device={device.id} no active campaign found")
         return {
             "device_name": device.name,
             "campaign": None,
