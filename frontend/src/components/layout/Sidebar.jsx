@@ -147,8 +147,12 @@ export default function Sidebar({ open, onClose }) {
         {/* Logo */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-sidebar-border flex-shrink-0">
           <Link to="/dashboard" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center">
-              <Monitor className="w-4 h-4 text-sidebar-primary-foreground" />
+            <div className="w-8 h-8 rounded-lg overflow-hidden">
+              <img
+                src="/playwave-icon-512.png"
+                alt=""
+                className="h-full w-full object-cover"
+              />
             </div>
             <span className="text-lg font-bold tracking-tight">
               SignControl
