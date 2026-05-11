@@ -151,7 +151,7 @@ export default function Sidebar({ open, onClose }) {
               <Monitor className="w-4 h-4 text-sidebar-primary-foreground" />
             </div>
             <span className="text-lg font-bold tracking-tight">
-              SignControl
+              PlayWave
             </span>
           </Link>
           <button

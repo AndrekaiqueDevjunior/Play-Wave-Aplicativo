@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Wifi, WifiOff, Radio } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 
 const STATUS_CONFIG = {
   connected: {
@@ -66,11 +66,15 @@ export default function PairingScreen({ pairingCode, apiStatus }) {
 
       {/* Logo — top left */}
       <div className="absolute top-6 left-8 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-600/30">
-          <Radio className="w-5 h-5" />
+        <div className="w-9 h-9 flex items-center justify-center">
+          <img
+            src="/apple-touch-icon.png"
+            alt=""
+            className="h-full w-full object-contain drop-shadow-[0_0_14px_rgba(14,165,233,0.55)]"
+          />
         </div>
         <span className="text-sm font-semibold tracking-wide text-white/70">
-          SignControl
+          PlayWave
         </span>
       </div>
 
@@ -143,7 +147,7 @@ export default function PairingScreen({ pairingCode, apiStatus }) {
 
       {/* Bottom bar */}
       <div className="absolute bottom-0 left-0 right-0 border-t border-white/[0.05] px-8 py-4 flex items-center justify-between">
-        <span className="text-xs text-white/20">SignControl Player v3.0</span>
+        <span className="text-xs text-white/20">PlayWave Player v3.0</span>
         <span className="text-xs text-white/20">Digital Signage Platform</span>
       </div>
     </div>

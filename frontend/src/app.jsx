@@ -52,6 +52,7 @@ import Player from "@/pages/Player.jsx";
 
 // Dev
 import Quickstart from "@/pages/Quickstart";
+import Apresentacao from "@/pages/Apresentacao";
 
 // Login
 import Login from "@/pages/Login";
@@ -68,6 +69,7 @@ function App() {
 
             {/* Player de TV — autenticação de device, sem layout admin */}
             <Route path="/player" element={<Player />} />
+            <Route path="/apresentacao" element={<Apresentacao />} />
 
             {/* Rotas protegidas — com layout */}
             <Route
