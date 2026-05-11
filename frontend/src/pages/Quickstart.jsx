@@ -1,6 +1,6 @@
 /**
  * pages/Quickstart.jsx
- * Documentação interativa do contrato FastAPI para o SignControl.
+ * Documentação interativa do contrato FastAPI para o PlayWave.
  * Atualizada com todos os endpoints e entidades.
  */
 import React, { useState } from "react";
@@ -473,7 +473,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import devices, campaigns, media, audio, reports, locations, tenants
 
-app = FastAPI(title="SignControl API", version="1.0.0")
+app = FastAPI(title="PlayWave API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

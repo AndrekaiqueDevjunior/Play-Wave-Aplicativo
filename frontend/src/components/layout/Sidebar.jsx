@@ -155,7 +155,7 @@ export default function Sidebar({ open, onClose }) {
               />
             </div>
             <span className="text-lg font-bold tracking-tight">
-              SignControl
+              PlayWave
             </span>
           </Link>
           <button

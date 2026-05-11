@@ -38,7 +38,7 @@ export default function Header({ onMenuToggle }) {
     if (location.pathname.startsWith("/devices/"))
       return "Detalhes do Dispositivo";
     if (location.pathname.startsWith("/campaigns/")) return "Campanha";
-    return "SignControl";
+    return "PlayWave";
   };
 
   return (
