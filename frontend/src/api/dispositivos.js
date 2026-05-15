@@ -120,3 +120,11 @@ export const desbloquearDispositivo = (deviceId) =>
 
 export const revogarTokenDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/revoke-token`, { method: "POST" });
+
+// ── TV: Playback log ─────────────────────────────────────────
+export const registrarPlayback = (deviceId, token, payload) =>
+  apiFetch(`/devices/${deviceId}/playback-log`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
+  });

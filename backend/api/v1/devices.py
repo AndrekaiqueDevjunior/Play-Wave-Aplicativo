@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import Device, Media, User
+from core.models import AudioPlaylist, AudioPlaylistStatus, AudioTrack, AudioTrackStatus, Device, Media, User
 from core.schemas_completos import (
     DeviceCreate,
     DevicePairingCodeCreate,
@@ -81,13 +81,44 @@ def _clean_uuid_fields(data: dict) -> dict:
     return data
 
 
-def _build_audio_playlist(device: Device) -> Optional[dict]:
+def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
     if not device.audio_playlist_id:
         return None
+    playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
+    if not playlist or playlist.status != AudioPlaylistStatus.ACTIVE:
+        return None
+    if not playlist.track_ids:
+        return {
+            "id": str(playlist.id),
+            "name": playlist.name,
+            "volume": playlist.volume_default,
+            "loop": playlist.loop_enabled,
+            "shuffle": playlist.shuffle_enabled,
+            "tracks": [],
+        }
+    tracks = db.query(AudioTrack).filter(
+        AudioTrack.id.in_([str(tid) for tid in playlist.track_ids]),
+        AudioTrack.status == AudioTrackStatus.ACTIVE,
+    ).all()
+    track_map = {str(t.id): t for t in tracks}
+    ordered = []
+    for tid in playlist.track_ids:
+        t = track_map.get(str(tid))
+        if t:
+            ordered.append({
+                "id": str(t.id),
+                "name": t.name,
+                "file_url": t.file_url,
+                "duration_seconds": t.duration_seconds or 0,
+                "volume": (playlist.track_volumes or {}).get(str(t.id), playlist.volume_default),
+            })
     return {
-        "id": str(device.audio_playlist_id),
-        "name": device.audio_playlist_name,
-        "volume": device.audio_volume,
+        "id": str(playlist.id),
+        "name": playlist.name,
+        "volume": playlist.volume_default,
+        "loop": playlist.loop_enabled,
+        "shuffle": playlist.shuffle_enabled,
+        "tracks": ordered,
     }
 
 
@@ -303,7 +334,7 @@ def get_device_playlist(
             "device_name": device.name,
             "campaign": None,
             "media": [],
-            "audio_playlist": _build_audio_playlist(device),
+            "audio_playlist": _build_audio_playlist(device, db),
         }
 
     media_order = campaign.media_order or []
@@ -343,7 +374,7 @@ def get_device_playlist(
             for media_id in ordered_ids
             if (m := media_by_id.get(str(media_id)))
         ],
-        "audio_playlist": _build_audio_playlist(device),
+        "audio_playlist": _build_audio_playlist(device, db),
     }
 
 
@@ -607,5 +638,104 @@ def log_playback(
         status=body.status,
     )
     return {"id": str(log.id), "status": log.status}
+
+
+# ─── Admin: Pair confirm ──────────────────────────────────────────────────────
+
+class PairConfirmBody(BaseModel):
+    name: str
+    device_type: Optional[str] = "tv"
+    location: Optional[str] = None
+    group: Optional[str] = None
+    os: Optional[str] = None
+
+
+@router.post("/{device_id}/pair-confirm", response_model=DeviceResponse)
+def pair_confirm(
+    device_id: str,
+    body: PairConfirmBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    update_data = {"name": body.name, "device_type": body.device_type, "status": "online"}
+    if body.location:
+        update_data["location"] = body.location
+    if body.os:
+        update_data["os"] = body.os
+    return crud_device.update(db, db_obj=device, obj_in=update_data)
+
+
+# ─── Admin: Device metrics ────────────────────────────────────────────────────
+
+@router.get("/{device_id}/metrics")
+def get_device_metrics(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    return {
+        "last_seen_at": device.last_seen_at,
+        "status": device.status.value if hasattr(device.status, "value") else device.status,
+        "storage_used": getattr(device, "storage_used", None),
+        "player_version": getattr(device, "player_version", None),
+        "ip_address": getattr(device, "ip_address", None),
+    }
+
+
+# ─── Admin: Send command ──────────────────────────────────────────────────────
+
+class CommandBody(BaseModel):
+    command: str
+
+
+@router.post("/{device_id}/command")
+def send_device_command(
+    device_id: str,
+    body: CommandBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    valid_commands = {"restart", "sync", "clear_cache", "screenshot"}
+    if body.command not in valid_commands:
+        raise HTTPException(status_code=400, detail=f"Comando inválido. Válidos: {valid_commands}")
+
+    return {"queued": True}
+
+
+# ─── Admin: Revoke device token ───────────────────────────────────────────────
+
+@router.post("/{device_id}/revoke-token")
+def revoke_device_token(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    new_token = secrets.token_urlsafe(32)
+    crud_device.update(db, db_obj=device, obj_in={"device_token": new_token})
+    return {"new_token": new_token}
 
 

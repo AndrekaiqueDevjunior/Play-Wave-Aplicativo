@@ -6,6 +6,7 @@ import {
   getDevicePlaylist,
   sendHeartbeat,
 } from "@/lib/api";
+import { registrarPlayback } from "@/api/dispositivos";
 import AudioPlayer from "@/components/audio/AudioPlayer";
 import PairingScreen from "@/components/player/PairingScreen";
 import LoadingScreen from "@/components/player/LoadingScreen";
@@ -64,6 +65,8 @@ export default function Player() {
   const [deviceToken, setDeviceToken] = useState(saved.token);
   const [deviceName,  setDeviceName]  = useState("");
   const [playlist,    setPlaylist]    = useState([]);
+  const [audioPlaylist, setAudioPlaylist] = useState(null);
+  const [campaignId, setCampaignId] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress,   setProgress]    = useState(0);
   const [viewsCount, setViewsCount]  = useState(0);
@@ -127,6 +130,13 @@ export default function Player() {
         ...m,
         file_url: assetUrl(m.file_url),
       }));
+
+      if (res?.campaign?.id) {
+        setCampaignId(res.campaign.id);
+      }
+      if (res?.audio_playlist) {
+        setAudioPlaylist(res.audio_playlist);
+      }
 
       if (medias.length > 0) {
         setPlaylist(medias);
@@ -198,6 +208,18 @@ export default function Player() {
     }, 250);
 
     const advance = setTimeout(() => {
+      const prevIndex = currentIndex;
+      const prevMedia = playlist[prevIndex];
+      if (prevMedia && campaignId && deviceToken) {
+        registrarPlayback(deviceId, deviceToken, {
+          campaign_id: campaignId,
+          media_id: prevMedia.id,
+          started_at: new Date(Date.now() - duration).toISOString(),
+          ended_at: new Date().toISOString(),
+          duration_ms: duration,
+          status: "completed",
+        }).catch(() => {});
+      }
       setCurrentIndex((prev) => (prev + 1) % playlist.length);
       setViewsCount((prev) => prev + 1);
     }, duration);
@@ -284,7 +306,7 @@ export default function Player() {
         currentIndex={currentIndex}
         deviceName={deviceName}
       />
-      {deviceId && <AudioPlayer deviceId={deviceId} />}
+      {audioPlaylist && <AudioPlayer audioPlaylist={audioPlaylist} />}
     </div>
   );
 }

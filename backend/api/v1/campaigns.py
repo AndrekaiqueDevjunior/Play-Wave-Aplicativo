@@ -5,7 +5,7 @@ from uuid import UUID
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import User
+from core.models import PlaybackLog, User
 from core.schemas_completos import (
     CampaignCreate, CampaignUpdate, CampaignResponse, CampaignStatusEnum
 )
@@ -326,3 +326,74 @@ def get_campaigns_by_media(
         campaigns = [c for c in campaigns if str(c.tenant_id) == str(current_user.tenant_id)]
     
     return campaigns[skip:skip+limit]
+
+
+# ─── Campaign actions ──────────────────────────────────────────────────────────
+
+@router.post("/{campaign_id}/publish", response_model=CampaignResponse)
+def publish_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    campaign = crud_campaign.get(db, id=campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+
+
+@router.post("/{campaign_id}/pause", response_model=CampaignResponse)
+def pause_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    campaign = crud_campaign.get(db, id=campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "paused"})
+
+
+@router.post("/{campaign_id}/resume", response_model=CampaignResponse)
+def resume_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    campaign = crud_campaign.get(db, id=campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+
+
+@router.get("/{campaign_id}/stats")
+def get_campaign_stats(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    campaign = crud_campaign.get(db, id=campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    playback_count = db.query(PlaybackLog).filter(
+        PlaybackLog.campaign_id == campaign_id
+    ).count()
+
+    return {
+        "id": str(campaign.id),
+        "name": campaign.name,
+        "status": campaign.status.value if hasattr(campaign.status, "value") else campaign.status,
+        "device_count": len(campaign.device_ids or []),
+        "media_count": len(campaign.media_ids or []),
+        "total_views": campaign.total_views or 0,
+        "playback_count": playback_count,
+    }

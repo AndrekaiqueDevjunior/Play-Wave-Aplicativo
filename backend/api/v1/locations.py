@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import User
+from core.models import Device, User
 from core.schemas_completos import (
     LocationCreate, LocationUpdate, LocationResponse
 )
@@ -284,3 +284,19 @@ def get_locations_by_address(
         locations = [l for l in locations if str(l.tenant_id) == str(current_user.tenant_id)]
     
     return locations[skip:skip+limit]
+
+
+@router.get("/{location_id}/devices")
+def get_location_devices(
+    location_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    location = crud_location.get(db, id=location_id)
+    if not location:
+        raise HTTPException(status_code=404, detail="Localização não encontrada")
+    if current_user.role != "admin" and str(location.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    devices = db.query(Device).filter(Device.location == location.name).all()
+    return devices

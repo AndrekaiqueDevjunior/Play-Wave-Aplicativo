@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -291,3 +292,62 @@ def export_playback_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ─── Device / Campaign specific reports ────────────────────────────────────────
+
+@router.get("/device/{device_id}")
+def get_device_report(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tid = _tenant_id_for(current_user)
+    logs = crud_playback_log.get_by_device(db, device_id=device_id)
+    if tid:
+        logs = [l for l in logs if str(l.tenant_id) == tid]
+    return logs
+
+
+@router.get("/campaign/{campaign_id}")
+def get_campaign_report(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tid = _tenant_id_for(current_user)
+    logs = crud_playback_log.get_by_campaign(db, campaign_id=campaign_id)
+    if tid:
+        logs = [l for l in logs if str(l.tenant_id) == tid]
+    return logs
+
+
+# ─── Register playback (admin or device) ───────────────────────────────────────
+
+class PlaybackCreateBody(BaseModel):
+    device_id: str
+    campaign_id: str
+    media_id: str
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    status: str = "completed"
+
+
+@router.post("/playback")
+def register_playback(
+    body: PlaybackCreateBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    log = crud_playback_log.create_log(
+        db,
+        device_id=body.device_id,
+        campaign_id=body.campaign_id,
+        media_id=body.media_id,
+        started_at=body.started_at,
+        ended_at=body.ended_at,
+        duration_ms=body.duration_ms,
+        status=body.status,
+    )
+    return {"id": str(log.id), "status": log.status}
