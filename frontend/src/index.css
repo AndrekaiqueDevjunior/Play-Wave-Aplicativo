@@ -86,3 +86,532 @@
     @apply bg-background text-foreground font-inter;
   }
 }
+
+@keyframes floatParticle {
+  0% {
+    transform: translateY(0px) translateX(0px) scale(1);
+    opacity: 0.15;
+  }
+  25% {
+    transform: translateY(-10px) translateX(6px) scale(1.05);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(-18px) translateX(-4px) scale(1.15);
+    opacity: 0.95;
+  }
+  75% {
+    transform: translateY(-9px) translateX(5px) scale(1.05);
+    opacity: 0.55;
+  }
+  100% {
+    transform: translateY(0px) translateX(0px) scale(1);
+    opacity: 0.15;
+  }
+}
+
+@keyframes breatheGlow {
+  0%, 100% {
+    opacity: 0.45;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@keyframes panelGlow {
+  0%, 100% {
+    box-shadow: 0 30px 80px rgba(37, 99, 235, 0.25);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: 0 30px 95px rgba(56, 189, 248, 0.45);
+    filter: brightness(1.06);
+  }
+}
+
+@keyframes floatCard {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes orbitGlow {
+  0% {
+    transform: rotate(0deg) scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    transform: rotate(180deg) scale(1.04);
+    opacity: 0.85;
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+    opacity: 0.4;
+  }
+}
+
+@keyframes inputGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(59, 130, 246, 0.35),
+      0 0 18px rgba(96, 165, 250, 0.18);
+  }
+}
+
+@keyframes buttonPulse {
+  0%, 100% {
+    box-shadow:
+      0 18px 35px rgba(37, 99, 235, 0.35),
+      0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    box-shadow:
+      0 18px 35px rgba(37, 99, 235, 0.45),
+      0 0 22px rgba(96, 165, 250, 0.55);
+  }
+}
+
+@keyframes sweepLight {
+  0% {
+    transform: translateX(-130%) skewX(-22deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.45;
+  }
+  40% {
+    opacity: 0.9;
+  }
+  55% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(180%) skewX(-22deg);
+    opacity: 0;
+  }
+}
+
+@keyframes scanMove {
+  0% {
+    transform: translateY(-180px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(180px);
+    opacity: 0;
+  }
+}
+
+@keyframes iconPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 0 rgba(59, 130, 246, 0));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.45));
+    transform: scale(1.06);
+  }
+}
+
+@keyframes diagonalMove {
+  0% {
+    transform: translateX(0) translateY(0);
+    opacity: 0.18;
+  }
+  50% {
+    transform: translateX(-8px) translateY(8px);
+    opacity: 0.28;
+  }
+  100% {
+    transform: translateX(0) translateY(0);
+    opacity: 0.18;
+  }
+}
+
+.floating-particle {
+  animation: floatParticle ease-in-out infinite;
+}
+
+.neon-breathe {
+  animation: breatheGlow 5s ease-in-out infinite;
+}
+
+.neon-panel-glow {
+  animation: panelGlow 4.5s ease-in-out infinite;
+}
+
+.floating-card {
+  animation: floatCard 4.2s ease-in-out infinite;
+}
+
+.neon-orbit {
+  animation: orbitGlow 7s linear infinite;
+  box-shadow:
+    0 0 18px rgba(125, 211, 252, 0.55),
+    inset 0 0 12px rgba(125, 211, 252, 0.18);
+}
+
+.neon-input-wrap {
+  animation: inputGlow 3.5s ease-in-out infinite;
+  border-radius: 0.75rem;
+}
+
+.neon-button {
+  animation: buttonPulse 2.8s ease-in-out infinite;
+}
+
+.neon-button-sweep {
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255,255,255,0) 30%,
+    rgba(255,255,255,0.65) 48%,
+    rgba(255,255,255,0.08) 55%,
+    transparent 80%
+  );
+  width: 38%;
+  animation: sweepLight 3s ease-in-out infinite;
+}
+
+.neon-scanline {
+  animation: scanMove 4.8s ease-in-out infinite;
+}
+
+.neon-icon-pulse {
+  animation: iconPulse 2.6s ease-in-out infinite;
+}
+
+.neon-diagonal-lines {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(59, 130, 246, 0.18) 0px,
+    rgba(59, 130, 246, 0.18) 2px,
+    transparent 2px,
+    transparent 14px
+  );
+  animation: diagonalMove 6s ease-in-out infinite;
+}
+
+/* ============================= */
+/* PARTICLES & SPARKS EFFECT */
+/* ============================= */
+
+@keyframes particleFloat {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.8);
+    opacity: 0;
+  }
+
+  20% {
+    opacity: 0.85;
+  }
+
+  50% {
+    transform: translate3d(12px, -28px, 0) scale(1.15);
+    opacity: 1;
+  }
+
+  80% {
+    opacity: 0.65;
+  }
+
+  100% {
+    transform: translate3d(-8px, -55px, 0) scale(0.75);
+    opacity: 0;
+  }
+}
+
+@keyframes particlePulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 12px rgba(34, 211, 238, 0.75),
+      0 0 26px rgba(59, 130, 246, 0.45);
+  }
+
+  50% {
+    box-shadow:
+      0 0 22px rgba(34, 211, 238, 1),
+      0 0 52px rgba(59, 130, 246, 0.9);
+  }
+}
+
+@keyframes sparkBlink {
+  0% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+
+  12% {
+    transform: scale(1.2) rotate(35deg);
+    opacity: 1;
+  }
+
+  24% {
+    transform: scale(0.5) rotate(70deg);
+    opacity: 0.3;
+  }
+
+  36%,
+  100% {
+    transform: scale(0) rotate(100deg);
+    opacity: 0;
+  }
+}
+
+@keyframes electricSpark {
+  0% {
+    opacity: 0;
+    transform: translateX(0) scaleX(0.3);
+  }
+
+  15% {
+    opacity: 1;
+    transform: translateX(6px) scaleX(1);
+  }
+
+  35% {
+    opacity: 0.7;
+    transform: translateX(-4px) scaleX(0.75);
+  }
+
+  55% {
+    opacity: 1;
+    transform: translateX(8px) scaleX(1.15);
+  }
+
+  75%,
+  100% {
+    opacity: 0;
+    transform: translateX(0) scaleX(0.2);
+  }
+}
+
+@keyframes fogMove {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: translate3d(20px, -18px, 0) scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+.particle-dot {
+  background: radial-gradient(circle, #ffffff 0%, #67e8f9 35%, #2563eb 70%);
+  filter: blur(0.05px) brightness(1.35);
+  outline: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 12px rgba(34, 211, 238, 0.95),
+    0 0 28px rgba(37, 99, 235, 0.85),
+    0 0 46px rgba(59, 130, 246, 0.45);
+  animation:
+    particleFloat linear infinite,
+    particlePulse 2.8s ease-in-out infinite;
+}
+
+.particle-spark {
+  width: 24px;
+  height: 24px;
+  transform-origin: center;
+  animation: sparkBlink 4.2s ease-in-out infinite;
+}
+
+.particle-spark::before,
+.particle-spark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(34, 211, 238, 0.95),
+    transparent
+  );
+  box-shadow:
+    0 0 18px rgba(34, 211, 238, 1),
+    0 0 30px rgba(59, 130, 246, 0.95),
+    0 0 48px rgba(37, 99, 235, 0.55);
+}
+
+.particle-spark::before {
+  width: 28px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+}
+
+.particle-spark::after {
+  width: 2px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+}
+
+.particle-fog {
+  animation: fogMove 8s ease-in-out infinite;
+}
+
+.particle-fog-delay {
+  animation-delay: 2.5s;
+}
+
+@keyframes buttonSparkBorder {
+  0% {
+    background-position: 0% 50%;
+    opacity: 0.45;
+  }
+
+  50% {
+    background-position: 100% 50%;
+    opacity: 1;
+  }
+
+  100% {
+    background-position: 0% 50%;
+    opacity: 0.45;
+  }
+}
+
+.button-sparks::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(37, 99, 235, 0),
+    rgba(34, 211, 238, 1),
+    rgba(255, 255, 255, 0.9),
+    rgba(37, 99, 235, 1),
+    rgba(37, 99, 235, 0)
+  );
+  background-size: 300% 300%;
+  animation: buttonSparkBorder 2.8s ease-in-out infinite;
+  pointer-events: none;
+
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.button-sparks::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 35%,
+    rgba(255, 255, 255, 0.55) 48%,
+    transparent 62%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  animation: buttonLightSweep 3.2s ease-in-out infinite;
+}
+
+@keyframes buttonLightSweep {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 0.9;
+  }
+
+  55% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+@keyframes cardSparkGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 35px 100px rgba(15, 23, 42, 0.18),
+      0 0 0 rgba(34, 211, 238, 0);
+  }
+
+  50% {
+    box-shadow:
+      0 35px 100px rgba(15, 23, 42, 0.18),
+      0 0 34px rgba(34, 211, 238, 0.22);
+  }
+}
+
+.card-soft-sparks {
+  animation: cardSparkGlow 4.5s ease-in-out infinite;
+}
+
+.card-soft-sparks::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(34, 211, 238, 0.18), transparent 16%),
+    radial-gradient(circle at 90% 72%, rgba(59, 130, 246, 0.14), transparent 18%);
+}
+
+@keyframes panelParticleGlow {
+  0% {
+    transform: translateY(0) scale(0.8);
+    opacity: 0.15;
+  }
+
+  30% {
+    opacity: 0.95;
+  }
+
+  55% {
+    transform: translateY(-18px) scale(1.25);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-34px) scale(0.75);
+    opacity: 0.1;
+  }
+}
+
+.panel-particle {
+  background: radial-gradient(circle, #ffffff 0%, #a5f3fc 28%, #38bdf8 62%, transparent 72%);
+  box-shadow:
+    0 0 12px rgba(255, 255, 255, 0.95),
+    0 0 24px rgba(34, 211, 238, 0.95),
+    0 0 42px rgba(125, 211, 252, 0.6);
+  animation: panelParticleGlow ease-in-out infinite;
+}
