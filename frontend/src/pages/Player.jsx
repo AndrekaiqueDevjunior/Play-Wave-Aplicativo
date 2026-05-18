@@ -374,8 +374,17 @@ export default function Player() {
   }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId]);
 
   // ── Renders ───────────────────────────────────────────────────────────────
-  const renderAudio = () =>
-    audioPlaylist ? <AudioPlayer key="audio" audioPlaylist={audioPlaylist} /> : null;
+  // AudioPlayer NUNCA desmonta — vive pelo ciclo inteiro do app.
+  // `enabled` controla play/pause; `audioPlaylist` controla o conteúdo.
+  const renderAudio = () => (
+    <AudioPlayer
+      audioPlaylist={audioPlaylist || null}
+      enabled={phase === "playing"}
+      onStatusChange={(status) =>
+        console.log("[player] audio status:", status.playing, status.track?.name)
+      }
+    />
+  );
 
   if (phase === "waiting") {
     return (
