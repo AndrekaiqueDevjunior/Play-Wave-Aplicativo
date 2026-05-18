@@ -131,7 +131,7 @@ class Device(Base):
     audio_volume = Column(Float, default=0.7)
     ip_address = Column(String(50), nullable=True)
     player_version = Column(String(50), nullable=True)
-    os = Column(SQLEnum(DeviceOS), nullable=True)
+    os = Column(String(50), nullable=True)
     storage_used = Column(Integer, default=0)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

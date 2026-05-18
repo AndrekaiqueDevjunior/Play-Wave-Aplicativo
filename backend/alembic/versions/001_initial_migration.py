@@ -30,7 +30,7 @@ def upgrade():
     device_type_enum = postgresql.ENUM('tv', 'tablet', 'totem', 'smartphone', 'panel', 'other', name='devicetype')
     device_type_enum.create(op.get_bind())
     
-    device_os_enum = postgresql.ENUM('Android TV', 'Windows', 'Web Player', 'iOS', 'Linux', name='deviceos')
+    device_os_enum = postgresql.ENUM('android_tv', 'windows', 'web_player', 'ios', 'linux', 'tizen', 'webos', name='deviceos')
     device_os_enum.create(op.get_bind())
     
     campaign_status_enum = postgresql.ENUM('draft', 'scheduled', 'active', 'paused', 'ended', name='campaignstatus')
