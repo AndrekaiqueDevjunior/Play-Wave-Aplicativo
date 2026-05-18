@@ -102,6 +102,42 @@ def _clean_uuid_fields(data: dict) -> dict:
     return data
 
 
+def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
+    if not playlist.track_ids:
+        return {
+            "id": str(playlist.id),
+            "name": playlist.name,
+            "volume": playlist.volume_default,
+            "loop": playlist.loop_enabled,
+            "shuffle": playlist.shuffle_enabled,
+            "tracks": [],
+        }
+    tracks = db.query(AudioTrack).filter(
+        AudioTrack.id.in_([str(tid) for tid in playlist.track_ids]),
+        AudioTrack.status == AudioTrackStatus.ACTIVE,
+    ).all()
+    track_map = {str(t.id): t for t in tracks}
+    ordered = []
+    for tid in playlist.track_ids:
+        t = track_map.get(str(tid))
+        if t:
+            ordered.append({
+                "id": str(t.id),
+                "name": t.name,
+                "file_url": t.file_url,
+                "duration_seconds": t.duration_seconds or 0,
+                "volume": (playlist.track_volumes or {}).get(str(t.id), playlist.volume_default),
+            })
+    return {
+        "id": str(playlist.id),
+        "name": playlist.name,
+        "volume": playlist.volume_default,
+        "loop": playlist.loop_enabled,
+        "shuffle": playlist.shuffle_enabled,
+        "tracks": ordered,
+    }
+
+
 def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
     if not device.audio_playlist_id:
         return None
@@ -369,6 +405,19 @@ def get_device_playlist(
         media_items = db.query(Media).filter(Media.id.in_(ordered_ids)).all()
         media_by_id = {str(m.id): m for m in media_items}
 
+    # Use campaign's audio playlist if set, otherwise fall back to device's
+    audio_playlist_source = campaign.audio_playlist_id or device.audio_playlist_id
+    audio_playlist = None
+    if audio_playlist_source:
+        # If campaign has its own playlist, build from campaign
+        if campaign.audio_playlist_id:
+            playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
+            if playlist and playlist.status == AudioPlaylistStatus.ACTIVE:
+                audio_playlist = _build_audio_playlist_from_model(playlist, db)
+        else:
+            # Otherwise use device's playlist
+            audio_playlist = _build_audio_playlist(device, db)
+
     return {
         "device_name": device.name,
         "campaign": {
@@ -395,7 +444,7 @@ def get_device_playlist(
             for media_id in ordered_ids
             if (m := media_by_id.get(str(media_id)))
         ],
-        "audio_playlist": _build_audio_playlist(device, db),
+        "audio_playlist": audio_playlist,
     }
 
 
