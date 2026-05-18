@@ -22,7 +22,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Film, Monitor, Globe, Music, ImageIcon } from "lucide-react";
+import { Loader2, Film, Monitor, Globe, Music, ImageIcon, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DAYS = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
@@ -35,6 +35,7 @@ const DEFAULT_FORM = {
   start_date: "",
   end_date: "",
   media_ids: [],
+  audio_playlist_id: "",
   device_ids: [],
   schedule_all_day: true,
   schedule_days: [...DAYS],
@@ -70,6 +71,7 @@ export default function CampaignFormModal({
   campaign,
   mediaList = [],
   devices = [],
+  audioPlaylists = [],
 }) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
@@ -85,6 +87,7 @@ export default function CampaignFormModal({
         start_date: campaign.start_date || "",
         end_date: campaign.end_date || "",
         media_ids: Array.isArray(campaign.media_ids) ? campaign.media_ids : [],
+        audio_playlist_id: campaign.audio_playlist_id || "",
         device_ids: Array.isArray(campaign.device_ids) ? campaign.device_ids : [],
         schedule_all_day: campaign.schedule_all_day !== false,
         schedule_days: campaign.schedule_days || [...DAYS],
@@ -136,6 +139,11 @@ export default function CampaignFormModal({
     { id: "media", label: `Mídias (${(form.media_ids || []).length})` },
     { id: "devices", label: `TVs (${(form.device_ids || []).length})` },
     { id: "schedule", label: "Agendamento" },
+  ];
+
+  const playlistOptions = [
+    { value: "", label: "Sem rádio indoor" },
+    ...(Array.isArray(audioPlaylists) ? audioPlaylists.map((p) => ({ value: p.id, label: p.name })) : []),
   ];
 
   const availableMedia = Array.isArray(mediaList)
@@ -258,6 +266,30 @@ export default function CampaignFormModal({
                       onChange={(e) => set("end_date", e.target.value)}
                     />
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-primary" />
+                    Rádio Indoor (Áudio)
+                  </Label>
+                  <Select
+                    value={form.audio_playlist_id || ""}
+                    onValueChange={(v) => set("audio_playlist_id", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sem rádio indoor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {playlistOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    A playlist de áudio tocará junto com as mídias da campanha.
+                  </p>
                 </div>
               </>
             )}

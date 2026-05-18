@@ -73,6 +73,13 @@ def get_campaign(
             detail="Sem permissão para acessar esta campanha"
         )
     
+    # Carregar playlist de áudio se existir
+    from crud.entidades.crud_audio_playlist import crud_audio_playlist
+    if campaign.audio_playlist_id:
+        audio_playlist = crud_audio_playlist.get(db, id=str(campaign.audio_playlist_id))
+        # Adicionar ao objeto campaign (não é um campo de modelo, apenas para resposta)
+        campaign.audio_playlist = audio_playlist
+    
     return campaign
 
 

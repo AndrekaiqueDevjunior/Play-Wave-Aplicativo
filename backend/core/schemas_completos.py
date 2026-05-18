@@ -37,11 +37,13 @@ class DeviceTypeEnum(str, Enum):
 
 
 class DeviceOSEnum(str, Enum):
-    ANDROID_TV = "Android TV"
-    WINDOWS = "Windows"
-    WEB_PLAYER = "Web Player"
-    IOS = "iOS"
-    LINUX = "Linux"
+    ANDROID_TV = "android_tv"
+    WINDOWS = "windows"
+    WEB_PLAYER = "web_player"
+    IOS = "ios"
+    LINUX = "linux"
+    TIZEN = "tizen"
+    WEBOS = "webos"
 
 
 class CampaignStatusEnum(str, Enum):
@@ -320,6 +322,7 @@ class DeviceUpdate(BaseSchema):
     os: Optional[DeviceOSEnum] = None
     storage_used: Optional[int] = None
     notes: Optional[str] = None
+    current_campaign_id: Optional[str] = None
 
 
 class DeviceResponse(DeviceBase, TimestampedSchema):
@@ -391,6 +394,7 @@ class CampaignBase(BaseSchema):
     device_ids: Optional[List[str]] = None
     media_ids: Optional[List[str]] = None
     media_order: Optional[List[MediaOrderItem]] = None
+    audio_playlist_id: Optional[str] = None
     schedule_all_day: Optional[bool] = True
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -419,6 +423,7 @@ class CampaignUpdate(BaseSchema):
     device_ids: Optional[List[str]] = None
     media_ids: Optional[List[str]] = None
     media_order: Optional[List[MediaOrderItem]] = None
+    audio_playlist_id: Optional[str] = None
     schedule_all_day: Optional[bool] = None
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -438,6 +443,7 @@ class CampaignResponse(CampaignBase, TimestampedSchema):
     tenant_id: Optional[str] = None
     total_views: Optional[int] = 0
     config_version: Optional[str] = None
+    audio_playlist: Optional["AudioPlaylistResponse"] = None
 
 
 # Media Schemas

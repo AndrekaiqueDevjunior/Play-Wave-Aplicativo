@@ -98,23 +98,35 @@ export default function Dispositivos() {
   });
 
   const handleSave = async (form) => {
-    if (editDevice) {
-      await atualizarDispositivo(editDevice.id, form);
-      toast({ title: "Dispositivo atualizado!" });
-    } else {
-      await criarDispositivo({
-        ...form,
-        status: "offline",
-        is_active: true,
-      });
+    try {
+      if (editDevice) {
+        await atualizarDispositivo(editDevice.id, form);
+        toast({ title: "✓ Dispositivo atualizado!", description: form.name });
+      } else {
+        await criarDispositivo({
+          ...form,
+          status: "offline",
+          is_active: true,
+        });
+        toast({
+          title: "✓ Dispositivo cadastrado!",
+          description: `${form.name} foi vinculado.`,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      setModalOpen(false);
+      setEditDevice(null);
+    } catch (err) {
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao salvar dispositivo.");
       toast({
-        title: "Dispositivo cadastrado!",
-        description: `${form.name} foi vinculado.`,
+        title: "Erro ao salvar",
+        description: msg,
+        variant: "destructive",
       });
     }
-    queryClient.invalidateQueries({ queryKey: ["devices"] });
-    setModalOpen(false);
-    setEditDevice(null);
   };
 
   const handleToggleActive = async (device) => {

@@ -51,6 +51,7 @@ import {
 } from "@/api/campanhas";
 import { listarMidias } from "@/api/midias";
 import { listarDispositivos } from "@/api/dispositivos";
+import { listarPlaylistsAudio } from "@/api/audio";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -90,6 +91,10 @@ export default function Campanhas() {
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],
     queryFn: () => listarDispositivos(),
+  });
+  const { data: audioPlaylists = [] } = useQuery({
+    queryKey: ["audio-playlists"],
+    queryFn: () => listarPlaylistsAudio({ status: "active" }),
   });
 
   const filtered = campaigns.filter((c) => {
@@ -381,6 +386,7 @@ export default function Campanhas() {
         campaign={editCampaign}
         mediaList={mediaList}
         devices={devices}
+        audioPlaylists={audioPlaylists}
       />
       <ConfirmDialog
         open={!!deleteTarget}

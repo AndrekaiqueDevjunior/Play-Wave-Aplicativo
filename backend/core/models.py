@@ -181,6 +181,7 @@ class Campaign(Base):
     device_ids = Column(JSON, nullable=True)
     media_ids = Column(JSON, nullable=True)
     media_order = Column(JSON, nullable=True)
+    audio_playlist_id = Column(UUID(as_uuid=True), ForeignKey("audio_playlists.id"), nullable=True)
     schedule_all_day = Column(Boolean, default=True)
     schedule_days = Column(JSON, nullable=True)
     schedule_start_time = Column(String(10), nullable=True)
@@ -195,6 +196,7 @@ class Campaign(Base):
     devices = relationship("Device", foreign_keys=[Device.current_campaign_id])
     playback_logs = relationship("PlaybackLog", back_populates="campaign")
     view_reports = relationship("ViewReport", back_populates="campaign")
+    audio_playlist = relationship("AudioPlaylist", foreign_keys=[audio_playlist_id])
 
 
 class MediaType(str, enum.Enum):
