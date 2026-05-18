@@ -8,7 +8,7 @@ from core.dependencies import get_current_user
 from datetime import timedelta
 from core.config import settings
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
