@@ -36,12 +36,21 @@ const DEFAULT_FORM = {
   end_date: "",
   media_ids: [],
   audio_playlist_id: "",
+  video_muted: true,
   device_ids: [],
   schedule_all_day: true,
   schedule_days: [...DAYS],
   schedule_start_time: "08:00",
   schedule_end_time: "22:00",
   target_groups: [],
+};
+
+const NO_AUDIO_PLAYLIST = "__none__";
+
+const toDateInputValue = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 10);
+  return "";
 };
 
 function MediaTypeIcon({ type }) {
@@ -84,10 +93,11 @@ export default function CampaignFormModal({
         description: campaign.description || "",
         status: campaign.status || "draft",
         priority: campaign.priority || 1,
-        start_date: campaign.start_date || "",
-        end_date: campaign.end_date || "",
+        start_date: toDateInputValue(campaign.start_date),
+        end_date: toDateInputValue(campaign.end_date),
         media_ids: Array.isArray(campaign.media_ids) ? campaign.media_ids : [],
         audio_playlist_id: campaign.audio_playlist_id || "",
+        video_muted: campaign.video_muted !== false,
         device_ids: Array.isArray(campaign.device_ids) ? campaign.device_ids : [],
         schedule_all_day: campaign.schedule_all_day !== false,
         schedule_days: campaign.schedule_days || [...DAYS],
@@ -128,7 +138,24 @@ export default function CampaignFormModal({
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      await onSave({ ...form, priority: Number(form.priority) });
+      const knownDeviceIds = new Set(
+        (Array.isArray(devices) ? devices : []).map((device) => device.id),
+      );
+      const normalizedDeviceIds = knownDeviceIds.size
+        ? (Array.isArray(form.device_ids) ? form.device_ids : []).filter((id) =>
+            knownDeviceIds.has(id),
+          )
+        : form.device_ids;
+
+      await onSave({
+        ...form,
+        priority: Number(form.priority),
+        audio_playlist_id: form.audio_playlist_id || null,
+        video_muted: form.video_muted !== false,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
+        device_ids: normalizedDeviceIds,
+      });
     } finally {
       setSaving(false);
     }
@@ -142,7 +169,7 @@ export default function CampaignFormModal({
   ];
 
   const playlistOptions = [
-    { value: "", label: "Sem rádio indoor" },
+    { value: NO_AUDIO_PLAYLIST, label: "Sem rádio indoor" },
     ...(Array.isArray(audioPlaylists) ? audioPlaylists.map((p) => ({ value: p.id, label: p.name })) : []),
   ];
 
@@ -273,8 +300,13 @@ export default function CampaignFormModal({
                     Rádio Indoor (Áudio)
                   </Label>
                   <Select
-                    value={form.audio_playlist_id || ""}
-                    onValueChange={(v) => set("audio_playlist_id", v)}
+                    value={form.audio_playlist_id || NO_AUDIO_PLAYLIST}
+                    onValueChange={(v) =>
+                      set(
+                        "audio_playlist_id",
+                        v === NO_AUDIO_PLAYLIST ? "" : v,
+                      )
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Sem rádio indoor" />
@@ -290,6 +322,18 @@ export default function CampaignFormModal({
                   <p className="text-xs text-muted-foreground">
                     A playlist de áudio tocará junto com as mídias da campanha.
                   </p>
+                </div>
+                <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div>
+                    <Label>Som dos vídeos</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Permite tocar o áudio embutido nos vídeos desta campanha.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!form.video_muted}
+                    onCheckedChange={(v) => set("video_muted", !v)}
+                  />
                 </div>
               </>
             )}

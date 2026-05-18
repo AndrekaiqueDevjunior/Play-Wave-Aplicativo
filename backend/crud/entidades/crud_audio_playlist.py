@@ -57,16 +57,16 @@ class CRUDAudioPlaylist(CRUDBase[AudioPlaylist, AudioPlaylistCreate, AudioPlayli
     def add_track(self, db: Session, *, playlist_id: str, track_id: str, volume: float = None) -> AudioPlaylist:
         playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == playlist_id).first()
         if playlist:
-            if not playlist.track_ids:
-                playlist.track_ids = []
-            if track_id not in playlist.track_ids:
-                playlist.track_ids.append(track_id)
+            track_ids = [str(tid) for tid in (playlist.track_ids or [])]
+            if track_id not in track_ids:
+                track_ids.append(track_id)
+            playlist.track_ids = track_ids
             
-            if not playlist.track_volumes:
-                playlist.track_volumes = {}
+            track_volumes = dict(playlist.track_volumes or {})
             
             if volume is not None:
-                playlist.track_volumes[track_id] = volume
+                track_volumes[track_id] = volume
+            playlist.track_volumes = track_volumes
             
             db.add(playlist)
             db.commit()
@@ -76,9 +76,10 @@ class CRUDAudioPlaylist(CRUDBase[AudioPlaylist, AudioPlaylistCreate, AudioPlayli
     def remove_track(self, db: Session, *, playlist_id: str, track_id: str) -> AudioPlaylist:
         playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == playlist_id).first()
         if playlist and playlist.track_ids and track_id in playlist.track_ids:
-            playlist.track_ids.remove(track_id)
-            if playlist.track_volumes and track_id in playlist.track_volumes:
-                del playlist.track_volumes[track_id]
+            playlist.track_ids = [tid for tid in playlist.track_ids if str(tid) != str(track_id)]
+            track_volumes = dict(playlist.track_volumes or {})
+            track_volumes.pop(str(track_id), None)
+            playlist.track_volumes = track_volumes
             
             db.add(playlist)
             db.commit()

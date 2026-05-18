@@ -184,6 +184,7 @@ class Campaign(Base):
     media_ids = Column(JSON, nullable=True)
     media_order = Column(JSON, nullable=True)
     audio_playlist_id = Column(UUID(as_uuid=True), ForeignKey("audio_playlists.id"), nullable=True)
+    video_muted = Column(Boolean, default=True)
     schedule_all_day = Column(Boolean, default=True)
     schedule_days = Column(JSON, nullable=True)
     schedule_start_time = Column(String(10), nullable=True)

@@ -397,6 +397,7 @@ class CampaignBase(BaseSchema):
     media_ids: Optional[List[str]] = None
     media_order: Optional[List[MediaOrderItem]] = None
     audio_playlist_id: Optional[str] = None
+    video_muted: Optional[bool] = True
     schedule_all_day: Optional[bool] = True
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -408,6 +409,13 @@ class CampaignBase(BaseSchema):
     def coerce_date_str(cls, v):
         if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
             return f"{v}T00:00:00"
+        return v
+
+    @field_validator('audio_playlist_id', mode='before')
+    @classmethod
+    def empty_audio_playlist_to_none(cls, v):
+        if v == "":
+            return None
         return v
 
 
@@ -426,6 +434,7 @@ class CampaignUpdate(BaseSchema):
     media_ids: Optional[List[str]] = None
     media_order: Optional[List[MediaOrderItem]] = None
     audio_playlist_id: Optional[str] = None
+    video_muted: Optional[bool] = None
     schedule_all_day: Optional[bool] = None
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -435,6 +444,13 @@ class CampaignUpdate(BaseSchema):
     def coerce_date_str(cls, v):
         if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
             return f"{v}T00:00:00"
+        return v
+
+    @field_validator('audio_playlist_id', mode='before')
+    @classmethod
+    def empty_audio_playlist_to_none(cls, v):
+        if v == "":
+            return None
         return v
     schedule_end_time: Optional[str] = Field(None, max_length=10)
     target_groups: Optional[List[str]] = None

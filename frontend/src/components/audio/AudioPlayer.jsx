@@ -14,14 +14,21 @@ export default function AudioPlayer({ audioPlaylist, onStatusChange }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const currentIndexRef = useRef(0);
   const tracksRef = useRef([]);
+  const trackSignature = (audioPlaylist?.tracks || [])
+    .map((track) => `${track.id}:${track.file_url}:${track.volume ?? ""}`)
+    .join("|");
 
   // Reseta quando a playlist muda
   useEffect(() => {
-    if (!audioPlaylist?.tracks?.length) return;
-    tracksRef.current = audioPlaylist.tracks;
+    const tracks = audioPlaylist?.tracks || [];
+    tracksRef.current = tracks;
+    if (!tracks.length) {
+      audioRef.current?.pause();
+      return;
+    }
     setCurrentIndex(0);
     currentIndexRef.current = 0;
-  }, [audioPlaylist?.id]);
+  }, [audioPlaylist?.id, trackSignature]);
 
   // Inicializa o elemento de áudio
   useEffect(() => {

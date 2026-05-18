@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -52,6 +52,23 @@ class CRUDDeviceCommand:
         )
 
     def get_pending(self, db: Session, *, device_id: str) -> List[DeviceCommand]:
+        # Reclaim commands stuck in SENT for > 2 minutes (player may have crashed/restarted)
+        two_mins_ago = datetime.utcnow() - timedelta(minutes=2)
+        stuck = (
+            db.query(DeviceCommand)
+            .filter(
+                DeviceCommand.device_id == device_id,
+                DeviceCommand.status == DeviceCommandStatus.SENT,
+                DeviceCommand.sent_at < two_mins_ago,
+            )
+            .all()
+        )
+        for cmd in stuck:
+            cmd.status = DeviceCommandStatus.PENDING
+            cmd.sent_at = None
+        if stuck:
+            db.commit()
+
         return (
             db.query(DeviceCommand)
             .filter(

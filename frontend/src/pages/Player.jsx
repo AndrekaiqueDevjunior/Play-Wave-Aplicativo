@@ -6,7 +6,12 @@ import {
   getDevicePlaylist,
   sendHeartbeat,
 } from "@/lib/api";
-import { registrarPlayback } from "@/api/dispositivos";
+import {
+  registrarPlayback,
+  buscarComandosPendentes,
+  ackComando,
+  abrirStreamPlaylistUpdates,
+} from "@/api/dispositivos";
 import AudioPlayer from "@/components/audio/AudioPlayer";
 import PairingScreen from "@/components/player/PairingScreen";
 import LoadingScreen from "@/components/player/LoadingScreen";
@@ -18,6 +23,7 @@ import { assetUrl } from "@/utils/mediaUtils";
 const HEARTBEAT_INTERVAL = 30_000;
 const POLL_PAIRING_INTERVAL = 3_000;
 const POLL_PLAYLIST_INTERVAL = 30_000;
+const POLL_COMMANDS_INTERVAL = 10_000;
 const PLAYER_VERSION = "3.1.0";
 
 const LS_CODE  = "pw_player_code";
@@ -67,6 +73,7 @@ export default function Player() {
   const [playlist,    setPlaylist]    = useState([]);
   const [audioPlaylist, setAudioPlaylist] = useState(null);
   const [campaignId, setCampaignId] = useState(null);
+  const [videoMuted, setVideoMuted] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress,   setProgress]    = useState(0);
   const [viewsCount, setViewsCount]  = useState(0);
@@ -76,10 +83,12 @@ export default function Player() {
 
   const pollPairRef      = useRef(null);
   const pollPlaylistRef  = useRef(null);
+  const pollCommandsRef  = useRef(null);
   const heartbeatRef     = useRef(null);
   const progressRef      = useRef(null);
   const startTimeRef     = useRef(null);
   const deviceTokenRef   = useRef(deviceToken);
+  const sseRef           = useRef(null);
 
   // Keep ref in sync so callbacks always have the latest token
   useEffect(() => { deviceTokenRef.current = deviceToken; }, [deviceToken]);
@@ -134,9 +143,8 @@ export default function Player() {
       if (res?.campaign?.id) {
         setCampaignId(res.campaign.id);
       }
-      if (res?.audio_playlist) {
-        setAudioPlaylist(res.audio_playlist);
-      }
+      setVideoMuted(res?.campaign?.video_muted !== false);
+      setAudioPlaylist(res?.audio_playlist || null);
 
       if (medias.length > 0) {
         setPlaylist(medias);
@@ -230,16 +238,128 @@ export default function Player() {
     };
   }, [phase, currentIndex, playlist]);
 
-  // ── 6. Heartbeat ─────────────────────────────────────────────────────────
+  // ── 6. Poll device commands (sync, refresh_playlist, clear_cache, restart) ──
   useEffect(() => {
-    if (!deviceId || !deviceToken || phase !== "playing") return;
+    if (!deviceId || !deviceToken) return;
+    if (phase !== "playing" && phase !== "no_campaign") return;
+
+    const pollCommands = async () => {
+      try {
+        const commands = await buscarComandosPendentes(deviceId, deviceToken);
+        if (!commands || commands.length === 0) return;
+
+        for (const cmd of commands) {
+          console.log("[player] executing command:", cmd.command_type, cmd.id);
+          let success = true;
+          let errorMessage = null;
+
+          try {
+            switch (cmd.command_type) {
+              case "sync":
+                console.log("[player] command: sync");
+                setPhase("loading");
+                break;
+              case "refresh_playlist":
+                console.log("[player] command: refresh_playlist");
+                setPhase("loading");
+                break;
+              case "clear_cache":
+                console.log("[player] command: clear_cache");
+                setPlaylist([]);
+                setPhase("loading");
+                break;
+              case "restart":
+                // Soft restart: reseta o estado do app sem reload da página.
+                // Reload duro mata o "user activation" do navegador e o vídeo
+                // volta a tocar mudo (política de autoplay com som). O soft
+                // restart preserva o ciclo de vida da aba e o som continua.
+                console.log("[player] command: restart (soft reset)");
+                setPlaylist([]);
+                setCurrentIndex(0);
+                setProgress(0);
+                setPhase("loading");
+                break;
+              default:
+                console.warn("[player] unknown command:", cmd.command_type);
+            }
+          } catch (execErr) {
+            success = false;
+            errorMessage = execErr?.message || String(execErr);
+            console.error("[player] command execution failed:", errorMessage);
+          }
+
+          await ackComando(deviceId, cmd.id, deviceToken, success, errorMessage);
+          console.log("[player] command ACK sent:", cmd.id, success ? "success" : "failed");
+        }
+      } catch (err) {
+        console.warn("[player] poll commands error:", err);
+      }
+    };
+
+    pollCommands();
+    pollCommandsRef.current = setInterval(pollCommands, POLL_COMMANDS_INTERVAL);
+    return () => clearInterval(pollCommandsRef.current);
+  }, [deviceId, deviceToken, phase]);
+
+  // ── 6b. SSE — real-time playlist/config updates ──────────────────────────
+  // Conecta após o pareamento e mantém aberto enquanto há credenciais.
+  // EventSource reconecta sozinho em falhas transientes (3s default).
+  useEffect(() => {
+    if (!deviceId || !deviceToken) return;
+
+    const es = abrirStreamPlaylistUpdates(deviceId, deviceToken);
+    if (!es) return;
+    sseRef.current = es;
+
+    const triggerReload = (label) => {
+      console.log("[player] SSE event:", label, "— recarregando playlist");
+      setPhase("loading");
+    };
+
+    const onSnapshot = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (typeof data.video_muted === "boolean") {
+          setVideoMuted(data.video_muted);
+        }
+      } catch (err) {
+        console.warn("[player] SSE snapshot parse error:", err);
+      }
+    };
+
+    const onPlaylistInvalidated = () => triggerReload("playlist_invalidated");
+    const onError = (err) => {
+      // EventSource já tenta reconectar automaticamente.
+      console.warn("[player] SSE error:", err);
+    };
+
+    es.addEventListener("snapshot", onSnapshot);
+    es.addEventListener("playlist_invalidated", onPlaylistInvalidated);
+    es.addEventListener("error", onError);
+
+    return () => {
+      es.removeEventListener("snapshot", onSnapshot);
+      es.removeEventListener("playlist_invalidated", onPlaylistInvalidated);
+      es.removeEventListener("error", onError);
+      es.close();
+      sseRef.current = null;
+    };
+  }, [deviceId, deviceToken]);
+
+  // ── 7. Heartbeat ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!deviceId || !deviceToken) return;
+    if (phase !== "playing" && phase !== "no_campaign") return;
 
     const beat = async () => {
       try {
         const res = await sendHeartbeat(deviceId, deviceToken, {
-          status: "online",
-          current_media_id: playlist[currentIndex]?.id || null,
-          views_count: viewsCount,
+          status: phase === "playing" ? "online" : "waiting",
+          player_version: PLAYER_VERSION,
+          ip_address: null,
+          storage_used: 0,
+          current_campaign_id: campaignId,
+          current_media_name: playlist[currentIndex]?.name || null,
         });
         console.log("[player] heartbeat:", res);
         if (res?.playlist_updated) setPhase("loading");
@@ -248,47 +368,67 @@ export default function Player() {
       }
     };
 
+    beat();
     heartbeatRef.current = setInterval(beat, HEARTBEAT_INTERVAL);
     return () => clearInterval(heartbeatRef.current);
-  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist]);
+  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId]);
 
   // ── Renders ───────────────────────────────────────────────────────────────
+  const renderAudio = () =>
+    audioPlaylist ? <AudioPlayer key="audio" audioPlaylist={audioPlaylist} /> : null;
+
   if (phase === "waiting") {
-    return <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} />;
+    return (
+      <>
+        {renderAudio()}
+        <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} />
+      </>
+    );
   }
 
   if (phase === "loading") {
-    return <LoadingScreen message="Carregando playlist..." />;
+    return (
+      <>
+        {renderAudio()}
+        <LoadingScreen message="Carregando playlist..." />
+      </>
+    );
   }
 
   if (phase === "error") {
     return (
-      <ErrorScreen
-        onRetry={() => {
-          clearPairing();
-          setDeviceId(null);
-          setDeviceToken(null);
-          setPhase("waiting");
-        }}
-      />
+      <>
+        {renderAudio()}
+        <ErrorScreen
+          onRetry={() => {
+            clearPairing();
+            setDeviceId(null);
+            setDeviceToken(null);
+            setPhase("waiting");
+          }}
+        />
+      </>
     );
   }
 
   // Device is paired but no active campaign yet
   if (phase === "no_campaign") {
     return (
-      <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-6">
-        <div className="w-16 h-16 rounded-2xl bg-blue-600/20 flex items-center justify-center">
-          <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
-          </svg>
+      <>
+        {renderAudio()}
+        <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-6">
+          <div className="w-16 h-16 rounded-2xl bg-blue-600/20 flex items-center justify-center">
+            <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
+            </svg>
+          </div>
+          <div className="text-center">
+            <p className="text-lg font-semibold">{deviceName || "Dispositivo pareado"}</p>
+            <p className="text-sm text-white/40 mt-1">Aguardando campanha ativa...</p>
+            <p className="text-xs text-white/20 mt-3">O player verifica automaticamente a cada 30s</p>
+          </div>
         </div>
-        <div className="text-center">
-          <p className="text-lg font-semibold">{deviceName || "Dispositivo pareado"}</p>
-          <p className="text-sm text-white/40 mt-1">Aguardando campanha ativa...</p>
-          <p className="text-xs text-white/20 mt-3">O player verifica automaticamente a cada 30s</p>
-        </div>
-      </div>
+      </>
     );
   }
 
@@ -298,6 +438,7 @@ export default function Player() {
       <MediaRenderer
         media={current}
         progress={progress}
+        videoMuted={videoMuted}
         onEnded={() => setCurrentIndex((prev) => (prev + 1) % playlist.length)}
       />
       <PlayerOSD
@@ -306,7 +447,7 @@ export default function Player() {
         currentIndex={currentIndex}
         deviceName={deviceName}
       />
-      {audioPlaylist && <AudioPlayer audioPlaylist={audioPlaylist} />}
+      {renderAudio()}
     </div>
   );
 }

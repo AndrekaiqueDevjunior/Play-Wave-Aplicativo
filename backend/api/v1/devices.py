@@ -17,6 +17,7 @@ from core.models import (
     AudioPlaylistStatus,
     AudioTrack,
     AudioTrackStatus,
+    Campaign,
     Device,
     DeviceCommand,
     DeviceEvent,
@@ -102,6 +103,57 @@ def _clean_uuid_fields(data: dict) -> dict:
         if data.get(field) == "":
             data[field] = None
     return data
+
+
+def _invalidate_device_playlist_cache(device_id: Optional[str] = None) -> None:
+    from core.config import get_redis_client
+
+    redis_client = get_redis_client()
+    if not redis_client:
+        return
+    try:
+        if device_id:
+            redis_client.delete(f"device_playlist:{device_id}")
+            return
+        for key in redis_client.scan_iter("device_playlist:*"):
+            redis_client.delete(key)
+    except Exception as exc:
+        print(f"[devices] Redis cache invalidation error: {exc}")
+
+
+def _sync_campaigns_for_device(db: Session, *, device: Device, campaign_id: Optional[str]) -> None:
+    device_id = str(device.id)
+    target_campaign = None
+    if campaign_id:
+        target_campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if not target_campaign:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Campanha não encontrada",
+            )
+        if device.tenant_id and target_campaign.tenant_id and str(target_campaign.tenant_id) != str(device.tenant_id):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Campanha não pertence ao tenant do dispositivo",
+            )
+
+    campaigns = db.query(Campaign).filter(Campaign.device_ids.isnot(None)).all()
+    for campaign in campaigns:
+        original_ids = [str(item) for item in (campaign.device_ids or [])]
+        filtered_ids = [item for item in original_ids if item != device_id]
+        if target_campaign and str(campaign.id) == str(target_campaign.id):
+            filtered_ids.append(device_id)
+        if filtered_ids != original_ids:
+            campaign.device_ids = filtered_ids
+            db.add(campaign)
+
+    if target_campaign and not target_campaign.device_ids:
+        target_campaign.device_ids = [device_id]
+        db.add(target_campaign)
+
+    device.current_campaign_id = target_campaign.id if target_campaign else None
+    device.current_campaign = target_campaign.name if target_campaign else None
+    db.add(device)
 
 
 def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
@@ -387,7 +439,9 @@ def get_device_playlist(
             cached = redis_client.get(cache_key)
             if cached:
                 print(f"[playlist] device={device.id} cache hit")
-                return json.loads(cached)
+                cached_resp = json.loads(cached)
+                _sync_device_config_version(db, device, cached_resp)
+                return cached_resp
         except Exception as e:
             print(f"[playlist] Redis error: {e}")
 
@@ -410,6 +464,7 @@ def get_device_playlist(
             "media": [],
             "audio_playlist": _build_audio_playlist(device, db),
         }
+        _sync_device_config_version(db, device, response)
         # Cache empty response for 30 seconds
         if redis_client:
             try:
@@ -449,6 +504,7 @@ def get_device_playlist(
             "name": campaign.name,
             "media_ids": campaign.media_ids or [],
             "media_order": campaign.media_order or [],
+            "video_muted": campaign.video_muted is not False,
             "schedule_all_day": campaign.schedule_all_day,
             "schedule_days": campaign.schedule_days,
             "schedule_start_time": str(campaign.schedule_start_time) if campaign.schedule_start_time else None,
@@ -470,6 +526,8 @@ def get_device_playlist(
         ],
         "audio_playlist": audio_playlist,
     }
+
+    _sync_device_config_version(db, device, response)
 
     # Cache response for 30 seconds (short TTL to allow quick updates)
     if redis_client:
@@ -596,10 +654,15 @@ def update_device(
 
     update_data = _clean_uuid_fields(device_in.model_dump(exclude_unset=True))
     try:
+        next_campaign_id = update_data.pop("current_campaign_id", None)
         for field, value in update_data.items():
             setattr(device, field, value)
+        if "current_campaign_id" in device_in.model_fields_set:
+            _sync_campaigns_for_device(db, device=device, campaign_id=next_campaign_id)
         db.commit()
         db.refresh(device)
+        if any(field in device_in.model_fields_set for field in ("current_campaign_id", "audio_playlist_id")):
+            _invalidate_device_playlist_cache(device_id=str(device.id))
         return device
     except IntegrityError as exc:
         db.rollback()
@@ -730,9 +793,13 @@ def device_heartbeat(
     if body.storage_used is not None:
         device.storage_used = body.storage_used
     if body.current_campaign_id is not None:
-        device.current_campaign_id = body.current_campaign_id or None
-    if body.current_media_name is not None:
-        device.current_campaign = body.current_media_name
+        if body.current_campaign_id:
+            campaign = db.query(Campaign).filter(Campaign.id == body.current_campaign_id).first()
+            device.current_campaign_id = campaign.id if campaign else None
+            device.current_campaign = campaign.name if campaign else None
+        else:
+            device.current_campaign_id = None
+            device.current_campaign = None
     if device.status != "online":
         device.status = "online"
     db.commit()
@@ -743,11 +810,21 @@ def device_heartbeat(
         DeviceCommand.status == "pending",
     ).count()
 
+    current_campaign = None
+    if device.current_campaign_id:
+        current_campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
+    if not current_campaign:
+        current_campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+
+    target_version = current_campaign.config_version if current_campaign else None
+    has_update = device.config_version != target_version
+
     return {
         "ok": True,
         "is_blocked": device.is_blocked,
         "config_version": device.config_version,
-        "has_update": False,
+        "has_update": has_update,
+        "playlist_updated": has_update,
         "pending_commands": pending_count,
         "server_time": datetime.utcnow().isoformat(),
     }
@@ -956,65 +1033,175 @@ def get_pending_commands(
 @router.get("/{device_id}/playlist/updates")
 async def playlist_updates_sse(
     device_id: str,
-    device: Device = Depends(get_device_by_token),
     db: Session = Depends(get_db),
+    x_device_token: Optional[str] = Header(None, alias="X-Device-Token"),
+    token: Optional[str] = Query(None),
 ):
-    """SSE endpoint for real-time playlist updates based on config_version changes."""
-    if str(device.id) != device_id:
-        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+    """SSE: real-time event stream for a device.
 
-    from core.config import get_redis_client
+    Aceita o device token via header `X-Device-Token` ou query `?token=` —
+    EventSource (browser) não permite headers customizados, então o player web
+    autentica pela query string sobre HTTPS.
+
+    Modelo: assina o canal Redis pub/sub `pw:device:{device_id}:events`.
+    Eventos vêm do `services.event_bus` (publicados por endpoints HTTP e
+    tasks Celery). Envia um snapshot inicial (estado atual da campanha) para
+    o player reconciliar caso tenha perdido eventos durante a desconexão.
+
+    Keep-alive (comentário SSE) a cada 25s para manter a conexão viva atrás
+    de proxies (nginx default proxy_read_timeout=60s).
+    """
+    auth_token = x_device_token or token
+    if not auth_token:
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Device token ausente")
+    device = crud_device.get_by_device_token(db, device_token=auth_token)
+    if not device:
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Device token inválido")
+    if device.is_blocked:
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Dispositivo bloqueado")
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Token não corresponde ao dispositivo")
+
+    from core.config import get_async_redis_client
+    from services.event_bus import channel_for_device
     import asyncio
 
-    redis_client = get_redis_client()
-    
+    channel = channel_for_device(str(device.id))
+
+    snapshot_data = _build_snapshot(db, device)
+
     async def event_generator():
-        last_config_version = None
-        
-        while True:
-            try:
-                # Get current campaign and its config_version
-                campaign = None
-                if device.current_campaign_id:
-                    from core.models import Campaign
-                    campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
-                
-                if not campaign:
-                    from crud.entidades.crud_campaign import crud_campaign
-                    campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
-                
-                current_config_version = campaign.config_version if campaign else None
-                
-                # If config_version changed, send update
-                if last_config_version != current_config_version:
-                    last_config_version = current_config_version
-                    yield {
-                        "event": "playlist_update",
-                        "data": json.dumps({
-                            "config_version": current_config_version,
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "campaign_id": str(campaign.id) if campaign else None,
-                        })
-                    }
-                
-                # Wait 5 seconds before checking again
-                await asyncio.sleep(5)
-            except Exception as e:
+        redis_client = get_async_redis_client()
+        if redis_client is None:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": "redis_unavailable"}),
+            }
+            return
+
+        # Snapshot inicial — estado atual de campanha + video_muted para
+        # reconciliação no reconnect.
+        yield {
+            "event": "snapshot",
+            "data": json.dumps(snapshot_data),
+        }
+
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(channel)
+            keepalive_every = 25.0
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=keepalive_every),
+                        timeout=keepalive_every + 1.0,
+                    )
+                except asyncio.TimeoutError:
+                    message = None
+
+                if message is None:
+                    # Keep-alive: comentário SSE não dispara onmessage no client.
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+
+                payload = message.get("data")
+                if not payload:
+                    continue
+                try:
+                    envelope = json.loads(payload) if isinstance(payload, str) else payload
+                except (TypeError, ValueError):
+                    continue
+
+                event_type = envelope.get("type", "message")
                 yield {
-                    "event": "error",
-                    "data": json.dumps({"error": str(e)})
+                    "event": event_type,
+                    "data": json.dumps(envelope),
                 }
-                break
-    
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(exc)}),
+            }
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+            except Exception:  # noqa: BLE001
+                pass
+            for closer in ("aclose", "close"):
+                fn = getattr(pubsub, closer, None)
+                if fn is None:
+                    continue
+                try:
+                    result = fn()
+                    if hasattr(result, "__await__"):
+                        await result
+                    break
+                except Exception:  # noqa: BLE001
+                    pass
+            for closer in ("aclose", "close"):
+                fn = getattr(redis_client, closer, None)
+                if fn is None:
+                    continue
+                try:
+                    result = fn()
+                    if hasattr(result, "__await__"):
+                        await result
+                    break
+                except Exception:  # noqa: BLE001
+                    pass
+
     return StreamingResponse(
-        event_generator(),
+        _sse_format(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )
+
+
+def _sync_device_config_version(db: Session, device: Device, response: dict) -> None:
+    """Mantém device.config_version alinhado com o config_version da campanha servida.
+
+    Sem isso, o heartbeat não consegue sinalizar `has_update` — ele compara a
+    versão guardada no device com a versão atual da campanha.
+    """
+    campaign_payload = response.get("campaign") if isinstance(response, dict) else None
+    target = campaign_payload.get("config_version") if isinstance(campaign_payload, dict) else None
+    if device.config_version != target:
+        device.config_version = target
+        try:
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            print(f"[playlist] config_version sync error: {exc}")
+
+
+def _build_snapshot(db: Session, device: Device) -> dict:
+    """Constrói o snapshot inicial enviado quando o SSE conecta."""
+    campaign = None
+    if device.current_campaign_id:
+        campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
+    if not campaign:
+        campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+
+    return {
+        "campaign_id": str(campaign.id) if campaign else None,
+        "config_version": campaign.config_version if campaign else None,
+        "video_muted": (campaign.video_muted is not False) if campaign else True,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+async def _sse_format(generator):
+    """Converte dicts {event, data} para o formato wire SSE (text/event-stream)."""
+    async for chunk in generator:
+        event = chunk.get("event", "message")
+        data = chunk.get("data", "")
+        yield f"event: {event}\ndata: {data}\n\n"
 
 
 @router.post("/{device_id}/commands/{command_id}/ack")
@@ -1053,4 +1240,3 @@ def revoke_device_token(
     new_token = secrets.token_urlsafe(32)
     crud_device.update(db, db_obj=device, obj_in={"device_token": new_token})
     return {"new_token": new_token}
-

@@ -5,13 +5,137 @@ from uuid import UUID
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import PlaybackLog, User, ViewReport
+from core.models import Campaign, Device, PlaybackLog, User, ViewReport
 from core.schemas_completos import (
     CampaignCreate, CampaignUpdate, CampaignResponse, CampaignStatusEnum
 )
 from crud.entidades import crud_campaign
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+
+
+def _invalidate_device_playlist_cache() -> None:
+    from core.config import get_redis_client
+
+    redis_client = get_redis_client()
+    if not redis_client:
+        return
+    try:
+        for key in redis_client.scan_iter("device_playlist:*"):
+            redis_client.delete(key)
+    except Exception as exc:
+        print(f"[campaigns] Redis cache invalidation error: {exc}")
+
+
+def _broadcast_playlist_invalidated(
+    db: Session,
+    campaign: Campaign,
+    *,
+    reason: str,
+) -> None:
+    """Pub/sub: notifica devices alvo de que a playlist foi alterada."""
+    from services.event_bus import publish_campaign_event
+
+    try:
+        publish_campaign_event(
+            db,
+            campaign,
+            event_type="playlist_invalidated",
+            data={
+                "config_version": campaign.config_version,
+                "reason": reason,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — broadcast é best-effort
+        print(f"[campaigns] broadcast playlist_invalidated failed: {exc}")
+
+
+def _validate_campaign_device_ids(
+    db: Session,
+    *,
+    device_ids: Optional[List[str]],
+    tenant_id: Optional[str],
+) -> None:
+    if not device_ids:
+        return
+
+    normalized_ids = []
+    for device_id in device_ids:
+        if not device_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Lista de dispositivos contém ID vazio",
+            )
+        try:
+            normalized_ids.append(str(UUID(str(device_id))))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"ID de dispositivo inválido: {device_id}",
+            )
+
+    devices = db.query(Device).filter(Device.id.in_(normalized_ids)).all()
+    found_ids = {str(device.id) for device in devices}
+    missing_ids = sorted(set(normalized_ids) - found_ids)
+    if missing_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Dispositivo(s) não encontrado(s): {', '.join(missing_ids)}",
+        )
+
+    if tenant_id:
+        cross_tenant_ids = [
+            str(device.id)
+            for device in devices
+            if str(device.tenant_id) != str(tenant_id)
+        ]
+        if cross_tenant_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Dispositivo(s) não pertencem ao tenant da campanha: "
+                    f"{', '.join(cross_tenant_ids)}"
+                ),
+            )
+
+
+def _sync_devices_for_campaign(db: Session, *, campaign: Campaign) -> None:
+    selected_ids = {str(device_id) for device_id in (campaign.device_ids or [])}
+    campaign_id = str(campaign.id)
+
+    assigned_devices = db.query(Device).filter(Device.current_campaign_id == campaign.id).all()
+    assigned_ids = {str(device.id) for device in assigned_devices}
+
+    devices_by_id = {str(device.id): device for device in assigned_devices}
+    if selected_ids:
+        selected_devices = db.query(Device).filter(Device.id.in_(selected_ids)).all()
+        devices_by_id.update({str(device.id): device for device in selected_devices})
+
+    for device_id, device in devices_by_id.items():
+        if device_id in selected_ids:
+            device.current_campaign_id = campaign.id
+            device.current_campaign = campaign.name
+        elif device_id in assigned_ids:
+            device.current_campaign_id = None
+            device.current_campaign = None
+        db.add(device)
+
+    if selected_ids:
+        other_campaigns = (
+            db.query(Campaign)
+            .filter(Campaign.id != campaign.id)
+            .filter(Campaign.device_ids.isnot(None))
+            .all()
+        )
+        for other_campaign in other_campaigns:
+            original_ids = [str(device_id) for device_id in (other_campaign.device_ids or [])]
+            filtered_ids = [device_id for device_id in original_ids if device_id not in selected_ids]
+            if filtered_ids != original_ids:
+                other_campaign.device_ids = filtered_ids
+                db.add(other_campaign)
+
+    db.commit()
+    db.refresh(campaign)
 
 
 @router.get("/", response_model=List[CampaignResponse])
@@ -96,8 +220,17 @@ def create_campaign(
     # Atribuir tenant se não for admin
     if current_user.role != "admin":
         campaign_in.tenant_id = str(current_user.tenant_id)
+
+    _validate_campaign_device_ids(
+        db,
+        device_ids=campaign_in.device_ids,
+        tenant_id=campaign_in.tenant_id,
+    )
     
     campaign = crud_campaign.create(db, obj_in=campaign_in)
+    _sync_devices_for_campaign(db, campaign=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason="campaign_created")
     return campaign
 
 
@@ -125,10 +258,22 @@ def update_campaign(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para atualizar esta campanha"
         )
+
+    update_data = campaign_in.model_dump(exclude_unset=True)
+    if "device_ids" in update_data:
+        _validate_campaign_device_ids(
+            db,
+            device_ids=campaign_in.device_ids,
+            tenant_id=str(campaign.tenant_id) if campaign.tenant_id else None,
+        )
     
     campaign = crud_campaign.update(db, db_obj=campaign, obj_in=campaign_in)
     # Increment config_version to signal playlist change
     campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
+    if "device_ids" in update_data or "name" in update_data:
+        _sync_devices_for_campaign(db, campaign=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason="campaign_updated")
     return campaign
 
 
@@ -156,9 +301,33 @@ def delete_campaign(
             detail="Sem permissão para remover esta campanha"
         )
     
+    from services.event_bus import publish_device_event
+
+    affected_device_ids = {
+        str(row.id)
+        for row in db.query(Device.id).filter(Device.current_campaign_id == campaign_id).all()
+    }
+    if campaign.device_ids:
+        affected_device_ids.update(str(d) for d in campaign.device_ids if d)
+
     db.query(PlaybackLog).filter(PlaybackLog.campaign_id == campaign_id).delete(synchronize_session=False)
     db.query(ViewReport).filter(ViewReport.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(Device).filter(Device.current_campaign_id == campaign_id).update(
+        {"current_campaign_id": None, "current_campaign": None},
+        synchronize_session=False,
+    )
     crud_campaign.remove(db, id=campaign_id)
+    _invalidate_device_playlist_cache()
+    for device_id in affected_device_ids:
+        try:
+            publish_device_event(
+                device_id,
+                event_type="playlist_invalidated",
+                data={"reason": "campaign_deleted"},
+                campaign_id=campaign_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[campaigns] broadcast delete failed for {device_id}: {exc}")
     return {"message": "Campanha removida com sucesso"}
 
 
@@ -190,6 +359,8 @@ def update_campaign_status(
     campaign = crud_campaign.update_status(db, db_obj=campaign, status=status)
     # Increment config_version to signal playlist change
     campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason=f"status_changed:{status}")
     return {"message": f"Status atualizado para {status}"}
 
 
@@ -354,7 +525,11 @@ def publish_campaign(
         raise HTTPException(status_code=404, detail="Campanha não encontrada")
     if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
-    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+    campaign = crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+    campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason="published")
+    return campaign
 
 
 @router.post("/{campaign_id}/pause", response_model=CampaignResponse)
@@ -368,7 +543,11 @@ def pause_campaign(
         raise HTTPException(status_code=404, detail="Campanha não encontrada")
     if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
-    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "paused"})
+    campaign = crud_campaign.update(db, db_obj=campaign, obj_in={"status": "paused"})
+    campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason="paused")
+    return campaign
 
 
 @router.post("/{campaign_id}/resume", response_model=CampaignResponse)
@@ -382,7 +561,11 @@ def resume_campaign(
         raise HTTPException(status_code=404, detail="Campanha não encontrada")
     if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
-    return crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+    campaign = crud_campaign.update(db, db_obj=campaign, obj_in={"status": "active"})
+    campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
+    _invalidate_device_playlist_cache()
+    _broadcast_playlist_invalidated(db, campaign, reason="resumed")
+    return campaign
 
 
 @router.get("/{campaign_id}/stats")

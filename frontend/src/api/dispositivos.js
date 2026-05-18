@@ -52,7 +52,7 @@
  * POST   /devices/{id}/revoke-token        (admin)
  *   resp: { new_token }
  */
-import { apiFetch } from "./http";
+import { apiFetch, getBaseUrl } from "./http";
 
 // ── TV: Pareamento ─────────────────────────────────────────────────────────
 export const solicitarPareamento = (payload) =>
@@ -125,6 +125,32 @@ export const desbloquearDispositivo = (deviceId) =>
 
 export const revogarTokenDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/revoke-token`, { method: "POST" });
+
+// ── TV: Command queue (player) ───────────────────────────────────────────
+export const buscarComandosPendentes = (deviceId, token) =>
+  apiFetch(`/devices/${deviceId}/commands/pending`, { token });
+
+export const ackComando = (deviceId, commandId, token, success = true, errorMessage = null) =>
+  apiFetch(`/devices/${deviceId}/commands/${commandId}/ack`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ success, error_message: errorMessage }),
+  });
+
+// ── TV: SSE — playlist/config updates em tempo real ──────────────────
+/**
+ * Abre stream Server-Sent Events para receber eventos do device
+ * (playlist_invalidated, snapshot, command). Retorna o EventSource —
+ * o caller deve chamar `.close()` no cleanup.
+ *
+ * Auth via query string (EventSource não suporta headers customizados).
+ */
+export const abrirStreamPlaylistUpdates = (deviceId, deviceToken) => {
+  const base = getBaseUrl();
+  if (!base || !deviceId || !deviceToken) return null;
+  const url = `${base}/devices/${deviceId}/playlist/updates?token=${encodeURIComponent(deviceToken)}`;
+  return new EventSource(url);
+};
 
 // ── TV: Playback log ─────────────────────────────────────────
 export const registrarPlayback = (deviceId, token, payload) =>

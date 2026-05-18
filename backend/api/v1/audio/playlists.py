@@ -15,6 +15,19 @@ from crud.entidades import crud_audio_playlist
 router = APIRouter(prefix="/audio/playlists", tags=["audio-playlists"])
 
 
+def _invalidate_device_playlist_cache() -> None:
+    from core.config import get_redis_client
+
+    redis_client = get_redis_client()
+    if not redis_client:
+        return
+    try:
+        for key in redis_client.scan_iter("device_playlist:*"):
+            redis_client.delete(key)
+    except Exception as exc:
+        print(f"[audio-playlists] Redis cache invalidation error: {exc}")
+
+
 @router.get("/", response_model=List[AudioPlaylistResponse])
 def get_audio_playlists(
     *,
@@ -119,6 +132,7 @@ def create_audio_playlist(
         playlist_in.tenant_id = str(current_user.tenant_id)
     
     playlist = crud_audio_playlist.create(db, obj_in=playlist_in)
+    _invalidate_device_playlist_cache()
     return playlist
 
 
@@ -148,6 +162,7 @@ def update_audio_playlist(
         )
     
     playlist = crud_audio_playlist.update(db, db_obj=playlist, obj_in=playlist_in)
+    _invalidate_device_playlist_cache()
     return playlist
 
 
@@ -176,6 +191,7 @@ def delete_audio_playlist(
         )
     
     crud_audio_playlist.remove(db, id=playlist_id)
+    _invalidate_device_playlist_cache()
     return {"message": "Playlist de áudio removida com sucesso"}
 
 
@@ -205,6 +221,7 @@ def update_playlist_status(
         )
     
     playlist = crud_audio_playlist.update_status(db, db_obj=playlist, status=status)
+    _invalidate_device_playlist_cache()
     return {"message": f"Status atualizado para {status}"}
 
 
@@ -235,6 +252,7 @@ def add_track_to_playlist(
         )
     
     playlist = crud_audio_playlist.add_track(db, playlist_id=playlist_id, track_id=track_id, volume=volume)
+    _invalidate_device_playlist_cache()
     return {"message": "Faixa adicionada à playlist com sucesso"}
 
 
@@ -264,6 +282,7 @@ def remove_track_from_playlist(
         )
     
     playlist = crud_audio_playlist.remove_track(db, playlist_id=playlist_id, track_id=track_id)
+    _invalidate_device_playlist_cache()
     return {"message": "Faixa removida da playlist com sucesso"}
 
 
@@ -293,6 +312,7 @@ def reorder_playlist_tracks(
         )
     
     playlist = crud_audio_playlist.reorder_tracks(db, playlist_id=playlist_id, track_ids=track_ids)
+    _invalidate_device_playlist_cache()
     return {"message": "Faixas reordenadas com sucesso"}
 
 

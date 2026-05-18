@@ -1,19 +1,43 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { resolveMediaType, resolveMediaUrl, assetUrl } from "@/utils/mediaUtils";
 
 const PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='112'%3E%3Crect width='200' height='112' fill='%23111'/%3E%3Ctext x='100' y='62' text-anchor='middle' fill='%23555' font-size='13' font-family='sans-serif'%3ESem preview%3C/text%3E%3C/svg%3E";
 
-export default function MediaRenderer({ media, onEnded, progress }) {
+export default function MediaRenderer({ media, onEnded, progress, videoMuted = true }) {
   const [visible, setVisible] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [needsGesture, setNeedsGesture] = useState(false);
+  const videoRef = useRef(null);
 
   useEffect(() => {
     setVisible(false);
     setImgError(false);
     const t = setTimeout(() => setVisible(true), 80);
     return () => clearTimeout(t);
-  }, [media?.id]);
+  }, [media?.id, videoMuted]);
+
+  // Após o navegador bloquear autoplay com som, registra listener global
+  // one-shot. No primeiro gesto do usuário, des-muta o vídeo atual e retoma.
+  useEffect(() => {
+    if (!needsGesture) return;
+    const unmute = () => {
+      const el = videoRef.current;
+      if (el) {
+        el.muted = false;
+        el.play().catch(() => {});
+      }
+      setNeedsGesture(false);
+    };
+    window.addEventListener("pointerdown", unmute, { once: true });
+    window.addEventListener("keydown", unmute, { once: true });
+    window.addEventListener("touchstart", unmute, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unmute);
+      window.removeEventListener("keydown", unmute);
+      window.removeEventListener("touchstart", unmute);
+    };
+  }, [needsGesture]);
 
   if (!media) return null;
 
@@ -27,11 +51,25 @@ export default function MediaRenderer({ media, onEnded, progress }) {
         return (
           <video
             key={media.id}
+            ref={videoRef}
             src={src}
             autoPlay
-            muted
+            muted={videoMuted}
             playsInline
             className={`w-full h-full object-cover ${fadeClass}`}
+            onCanPlay={(event) => {
+              const el = event.currentTarget;
+              el.muted = videoMuted;
+              el.play().then(() => {
+                if (!videoMuted) setNeedsGesture(false);
+              }).catch(() => {
+                // Autoplay com som é bloqueado sem user activation.
+                // Toca mudo e arma listener pro primeiro gesto desmutar.
+                el.muted = true;
+                el.play().catch(() => {});
+                if (!videoMuted) setNeedsGesture(true);
+              });
+            }}
             onEnded={onEnded}
             onError={onEnded}
           />
@@ -80,6 +118,11 @@ export default function MediaRenderer({ media, onEnded, progress }) {
   return (
     <div className="absolute inset-0">
       {renderContent()}
+      {needsGesture && (
+        <div className="absolute top-4 right-4 px-3 py-1.5 rounded-full bg-black/70 text-white text-xs backdrop-blur-sm pointer-events-none">
+          Clique para ativar o som
+        </div>
+      )}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/10">
         <div
           className="h-full bg-white/40 transition-all duration-1000 ease-linear"

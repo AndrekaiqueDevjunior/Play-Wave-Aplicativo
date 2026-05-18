@@ -62,3 +62,13 @@ def get_redis_client():
     except Exception as e:
         print(f"Failed to connect to Redis: {e}")
         return None
+
+
+def get_async_redis_client():
+    """Get async Redis client connection for use inside async generators (SSE)."""
+    try:
+        import redis.asyncio as aioredis
+        return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    except Exception as e:
+        print(f"Failed to connect to Redis (async): {e}")
+        return None
