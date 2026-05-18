@@ -28,6 +28,11 @@ class UserBase(BaseModel):
     email: EmailStr
     role: str = "operator"
     is_active: bool = True
+    job_title: Optional[str] = None
+    account_status: str = "active"
+    blocked_reason: Optional[str] = None
+    last_changed_by: Optional[str] = None
+    last_changed_at: Optional[datetime] = None
 
 
 class UserCreate(UserBase):

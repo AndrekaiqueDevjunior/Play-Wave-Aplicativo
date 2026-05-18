@@ -15,7 +15,7 @@
  *   body: Campaign (sem id)
  *   resp: Campaign
  *
- * PATCH  /campaigns/{id}                   (admin)
+ * PUT    /campaigns/{id}                   (admin)
  *   body: Partial<Campaign>
  *   resp: Campaign
  *

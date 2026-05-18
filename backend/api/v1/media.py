@@ -8,7 +8,7 @@ from datetime import datetime
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import User
+from core.models import PlaybackLog, User, ViewReport
 from core.schemas_completos import (
     MediaCreate, MediaUpdate, MediaResponse, MediaTypeEnum, MediaStatusEnum
 )
@@ -162,7 +162,7 @@ def create_media(
     """
     # Atribuir tenant se não for admin
     if current_user.role != "admin":
-        media_in.tenant_id = current_user.tenant_id
+        media_in.tenant_id = str(current_user.tenant_id)
     
     media = crud_media.create(db, obj_in=media_in)
     return media
@@ -216,7 +216,7 @@ def upload_media(
         "notes": notes,
     }
     if current_user.role != "admin":
-        media_data["tenant_id"] = current_user.tenant_id
+        media_data["tenant_id"] = str(current_user.tenant_id)
 
     return crud_media.create(db, obj_in=MediaCreate(**media_data))
 
@@ -274,6 +274,9 @@ def delete_media(
             detail="Sem permissão para remover esta mídia"
         )
     
+    db.query(PlaybackLog).filter(PlaybackLog.media_id == media_id).delete(synchronize_session=False)
+    db.query(ViewReport).filter(ViewReport.media_id == media_id).delete(synchronize_session=False)
+
     # Remover arquivo físico se existir
     if media.file_url and media.file_url.startswith("/uploads/"):
         file_path = media.file_url[1:]  # Remove o /

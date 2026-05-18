@@ -10,6 +10,7 @@ import {
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listarCampanhas, criarCampanha, atualizarCampanha } from "@/api/campanhas";
+import { listarAgenda } from "@/api/schedule";
 import { listarDispositivos } from "@/api/dispositivos";
 import { listarMidias } from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
@@ -57,7 +58,7 @@ export default function Agenda() {
 
   const { data: campaigns = [] } = useQuery({
     queryKey: ["campaigns"],
-    queryFn: () => listarCampanhas(),
+    queryFn: () => listarAgenda(),
   });
   const { data: devices = [] } = useQuery({
     queryKey: ["devices"],

@@ -67,12 +67,34 @@ export const registrarPlayback = (token, payload) =>
     body: JSON.stringify(payload),
   });
 
-/** Download CSV de relatório */
-export const exportarRelatorioCSV = (params = {}) => {
+/** Download CSV de relatório (autenticado via JWT) */
+export const exportarRelatorioCSV = async (params = {}) => {
   const BASE_URL = getBaseUrl();
   if (!BASE_URL) return null;
-  const qs = new URLSearchParams(params).toString();
-  window.open(`${BASE_URL}/reports/export/csv${qs ? `?${qs}` : ""}`, "_blank");
+
+  const token =
+    sessionStorage.getItem("pw_access_token") ??
+    localStorage.getItem("pw_access_token");
+
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""))
+  ).toString();
+
+  const res = await fetch(`${BASE_URL}/reports/export/csv${qs ? `?${qs}` : ""}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!res.ok) throw new Error(`Erro ao exportar CSV: HTTP ${res.status}`);
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `relatorio_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 };
 
 export const buscarEventosDispositivo = (params = {}) => {

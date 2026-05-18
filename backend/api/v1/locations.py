@@ -111,7 +111,7 @@ def create_location(
     """
     # Atribuir tenant se não for admin
     if current_user.role != "admin":
-        location_in.tenant_id = current_user.tenant_id
+        location_in.tenant_id = str(current_user.tenant_id)
     
     # Verificar se nome já existe no tenant
     existing_location = crud_location.get_by_name(db, name=location_in.name)

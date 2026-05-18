@@ -232,6 +232,11 @@ class UserBase(BaseSchema):
     email: EmailStr
     role: Optional[UserRoleEnum] = UserRoleEnum.OPERATOR
     is_active: Optional[bool] = True
+    job_title: Optional[str] = Field(None, max_length=255)
+    account_status: Optional[str] = Field("active", max_length=20)
+    blocked_reason: Optional[str] = None
+    last_changed_by: Optional[str] = Field(None, max_length=255)
+    last_changed_at: Optional[datetime] = None
     tenant_id: Optional[str] = None
 
 
@@ -244,6 +249,11 @@ class UserUpdate(BaseSchema):
     email: Optional[EmailStr] = None
     role: Optional[UserRoleEnum] = None
     is_active: Optional[bool] = None
+    job_title: Optional[str] = Field(None, max_length=255)
+    account_status: Optional[str] = Field(None, max_length=20)
+    blocked_reason: Optional[str] = None
+    last_changed_by: Optional[str] = Field(None, max_length=255)
+    last_changed_at: Optional[datetime] = None
     tenant_id: Optional[str] = None
 
 
@@ -355,7 +365,7 @@ class CampaignBase(BaseSchema):
 
 
 class CampaignCreate(CampaignBase):
-    pass
+    tenant_id: Optional[str] = None
 
 
 class CampaignUpdate(BaseSchema):
@@ -384,6 +394,7 @@ class CampaignUpdate(BaseSchema):
 
 class CampaignResponse(CampaignBase, TimestampedSchema):
     id: str
+    tenant_id: Optional[str] = None
     total_views: Optional[int] = 0
     config_version: Optional[str] = None
 
@@ -405,7 +416,7 @@ class MediaBase(BaseSchema):
 
 
 class MediaCreate(MediaBase):
-    pass
+    tenant_id: Optional[str] = None
 
 
 class MediaUpdate(BaseSchema):
@@ -426,6 +437,7 @@ class MediaUpdate(BaseSchema):
 
 class MediaResponse(MediaBase, TimestampedSchema):
     id: str
+    tenant_id: Optional[str] = None
     status: Optional[MediaStatusEnum] = None
 
 
@@ -437,7 +449,7 @@ class LocationBase(BaseSchema):
 
 
 class LocationCreate(LocationBase):
-    pass
+    tenant_id: Optional[str] = None
 
 
 class LocationUpdate(BaseSchema):
@@ -448,6 +460,7 @@ class LocationUpdate(BaseSchema):
 
 class LocationResponse(LocationBase, TimestampedSchema):
     id: str
+    tenant_id: Optional[str] = None
     device_count: Optional[int] = 0
 
 
@@ -464,7 +477,8 @@ class AudioTrackBase(BaseSchema):
 
 
 class AudioTrackCreate(AudioTrackBase):
-    pass
+    tenant_id: Optional[str] = None
+    status: Optional[AudioTrackStatusEnum] = AudioTrackStatusEnum.ACTIVE
 
 
 class AudioTrackUpdate(BaseSchema):
@@ -481,6 +495,7 @@ class AudioTrackUpdate(BaseSchema):
 
 class AudioTrackResponse(AudioTrackBase, TimestampedSchema):
     id: str
+    tenant_id: Optional[str] = None
     status: Optional[AudioTrackStatusEnum] = None
 
 
@@ -500,7 +515,8 @@ class AudioPlaylistBase(BaseSchema):
 
 
 class AudioPlaylistCreate(AudioPlaylistBase):
-    pass
+    tenant_id: Optional[str] = None
+    status: Optional[AudioPlaylistStatusEnum] = AudioPlaylistStatusEnum.ACTIVE
 
 
 class AudioPlaylistUpdate(BaseSchema):
@@ -520,6 +536,7 @@ class AudioPlaylistUpdate(BaseSchema):
 
 class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
     id: str
+    tenant_id: Optional[str] = None
     status: Optional[AudioPlaylistStatusEnum] = None
 
 

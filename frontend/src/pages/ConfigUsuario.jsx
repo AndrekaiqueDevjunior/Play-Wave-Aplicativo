@@ -41,6 +41,7 @@ import {
   listarUsuarios,
   criarUsuario,
   atualizarUsuario,
+  deletarUsuario,
 } from "@/api/usuarios";
 import { criarLog } from "@/api/userLogs";
 import { useToast } from "@/components/ui/use-toast";
@@ -59,6 +60,7 @@ import {
   KeyRound,
   ClipboardList,
   Search,
+  Trash2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -69,17 +71,29 @@ import UserLogDrawer from "@/components/users/UserLogDrawer";
 
 const ROLE_LABELS = {
   admin: "Admin",
-  user: "Operador",
+  operator: "Operador",
   viewer: "Visualizador",
 };
 const ROLE_COLORS = {
   admin: "bg-primary/10 text-primary border-primary/20",
-  user: "bg-amber-100 text-amber-700 border-amber-200",
+  operator: "bg-amber-100 text-amber-700 border-amber-200",
   viewer: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
 async function registrarLog(targetUserId, targetEmail, action, performedBy, details = "") {
-  await criarLog({ target_user_id: targetUserId, target_user_email: targetEmail, action, performed_by: performedBy, details });
+  try {
+    await criarLog({ target_user_id: targetUserId, target_user_email: targetEmail, action, performed_by: performedBy, details });
+  } catch (err) {
+    // O log de auditoria é opcional; não deve bloquear a ação principal.
+    console.warn("Falha ao registrar log de usuário:", err?.message || err);
+  }
+}
+
+function gerarSenhaTemporaria(tamanho = 10) {
+  const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = new Uint32Array(tamanho);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (n) => alfabeto[n % alfabeto.length]).join("");
 }
 
 export default function ConfigUsuarios() {
@@ -90,7 +104,8 @@ export default function ConfigUsuarios() {
   const [filterStatus, setFilterStatus] = useState("all");
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [invite, setInvite] = useState({ name: "", email: "", role: "user" });
+  const [invite, setInvite] = useState({ name: "", email: "", role: "operator" });
+  const [inviteSaving, setInviteSaving] = useState(false);
 
   const [editUser, setEditUser] = useState(null);
   const [blockUser, setBlockUser] = useState(null);
@@ -112,56 +127,81 @@ export default function ConfigUsuarios() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deletarUsuario(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleInvite = async () => {
-    await criarUsuario({ email: invite.email, role: invite.role === "admin" ? "admin" : "user", password: crypto.randomUUID() });
-    await registrarLog(
-      "pending",
-      invite.email,
-      "invite",
-      me?.email || "admin",
-      `Convite para ${invite.name} (${invite.role})`,
-    );
-    toast({
-      title: "Convite enviado!",
-      description: `Convite enviado para ${invite.email}`,
-    });
-    setInviteOpen(false);
-    setInvite({ name: "", email: "", role: "user" });
-    queryClient.invalidateQueries({ queryKey: ["users"] });
+    setInviteSaving(true);
+    try {
+      const password = gerarSenhaTemporaria();
+      const emailNormalizado = invite.email.trim().toLowerCase();
+      const created = await criarUsuario({
+        name: invite.name.trim(),
+        email: emailNormalizado,
+        role: invite.role,
+        password,
+        is_active: true,
+        account_status: "active",
+      });
+      await registrarLog(
+        created?.id || "pending",
+        emailNormalizado,
+        "invite",
+        me?.email || "admin",
+        `Convite para ${invite.name} (${invite.role})`,
+      );
+      try {
+        await navigator.clipboard?.writeText(password);
+      } catch {
+        /* clipboard pode estar indisponível em contexto inseguro */
+      }
+      toast({
+        title: "Usuário criado!",
+        description: `Senha temporária de ${emailNormalizado}: ${password} (copiada para a área de transferência)`,
+      });
+      setInviteOpen(false);
+      setInvite({ name: "", email: "", role: "operator" });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    } catch (err) {
+      toast({
+        title: "Erro ao convidar usuário",
+        description: err?.message || "Não foi possível criar o usuário.",
+        variant: "destructive",
+      });
+    } finally {
+      setInviteSaving(false);
+    }
   };
 
   const handleEdit = async (id, form) => {
     const user = users.find((u) => u.id === id);
-    await updateMutation.mutateAsync({
-      id,
-      data: {
-        job_title: form.job_title,
-        role: form.role,
-        last_changed_by: me?.email || "admin",
-        last_changed_at: new Date().toISOString(),
-      },
-    });
+    const payload = {};
+    if (form.name !== undefined) payload.name = form.name.trim();
+    if (form.email) payload.email = form.email.trim().toLowerCase();
+    if (form.role) payload.role = form.role;
+    if (form.job_title !== undefined) payload.job_title = form.job_title || null;
+    await updateMutation.mutateAsync({ id, data: payload });
     await registrarLog(
       id,
       user?.email,
       "edit",
       me?.email || "admin",
-      `Cargo: ${form.job_title}, Permissão: ${form.role}`,
+      `Nome: ${form.name}, Cargo: ${form.job_title}, Permissão: ${form.role}`,
     );
     toast({ title: "Usuário atualizado!" });
   };
 
   const handleToggleActive = async (user) => {
-    const isActive = user.account_status === "active";
-    const newStatus = isActive ? "inactive" : "active";
+    const isActive = (user.account_status || (user.is_active ? "active" : "inactive")) === "active";
     const action = isActive ? "deactivate" : "activate";
     await updateMutation.mutateAsync({
       id: user.id,
       data: {
-        account_status: newStatus,
-        last_changed_by: me?.email || "admin",
-        last_changed_at: new Date().toISOString(),
+        account_status: isActive ? "inactive" : "active",
+        is_active: !isActive,
       },
     });
     await registrarLog(user.id, user.email, action, me?.email || "admin");
@@ -174,9 +214,8 @@ export default function ConfigUsuarios() {
       id,
       data: {
         account_status: "blocked",
+        is_active: false,
         blocked_reason: reason,
-        last_changed_by: me?.email || "admin",
-        last_changed_at: new Date().toISOString(),
       },
     });
     await registrarLog(id, user?.email, "block", me?.email || "admin", reason);
@@ -188,9 +227,8 @@ export default function ConfigUsuarios() {
       id: user.id,
       data: {
         account_status: "active",
-        blocked_reason: "",
-        last_changed_by: me?.email || "admin",
-        last_changed_at: new Date().toISOString(),
+        is_active: true,
+        blocked_reason: null,
       },
     });
     await registrarLog(user.id, user.email, "unblock", me?.email || "admin");
@@ -212,22 +250,39 @@ export default function ConfigUsuarios() {
     });
   };
 
+  const handleDelete = async (user) => {
+    const label = user.name || user.full_name || user.email;
+    if (!window.confirm(`Remover definitivamente o usuário ${label}?`)) return;
+    try {
+      await deleteMutation.mutateAsync(user.id);
+      await registrarLog(user.id, user.email, "delete", me?.email || "admin", `Usuário removido: ${label}`);
+      toast({ title: "Usuário removido." });
+    } catch (err) {
+      toast({
+        title: "Erro ao remover usuário",
+        description: err?.message || "Não foi possível remover o usuário.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // ── Filtros ───────────────────────────────────────────────────────────────
   const filtered = users.filter((u) => {
     const matchSearch =
       !search ||
-      (u.full_name || "").toLowerCase().includes(search.toLowerCase()) ||
+      (u.name || u.full_name || "").toLowerCase().includes(search.toLowerCase()) ||
       (u.email || "").toLowerCase().includes(search.toLowerCase());
+    const status = u.account_status || (u.is_active ? "active" : "inactive");
     const matchStatus =
-      filterStatus === "all" || (u.account_status || "active") === filterStatus;
+      filterStatus === "all" || status === filterStatus;
     return matchSearch && matchStatus;
   });
 
   const counts = {
     total: users.length,
-    active: users.filter((u) => (u.account_status || "active") === "active")
+    active: users.filter((u) => (u.account_status || (u.is_active ? "active" : "inactive")) === "active")
       .length,
-    inactive: users.filter((u) => u.account_status === "inactive").length,
+    inactive: users.filter((u) => (u.account_status || (u.is_active ? "active" : "inactive")) === "inactive").length,
     blocked: users.filter((u) => u.account_status === "blocked").length,
   };
 
@@ -350,7 +405,7 @@ export default function ConfigUsuarios() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="user">Operador</SelectItem>
+                        <SelectItem value="operator">Operador</SelectItem>
                         <SelectItem value="viewer">Visualizador</SelectItem>
                       </SelectContent>
                     </Select>
@@ -364,10 +419,10 @@ export default function ConfigUsuarios() {
                     </Button>
                     <Button
                       onClick={handleInvite}
-                      disabled={!invite.email || !invite.name}
+                      disabled={inviteSaving || !invite.email || !invite.name}
                     >
                       <Send className="w-4 h-4 mr-2" />
-                      Enviar Convite
+                      {inviteSaving ? "Enviando..." : "Enviar Convite"}
                     </Button>
                   </div>
                 </div>
@@ -415,8 +470,8 @@ export default function ConfigUsuarios() {
                       </TableRow>
                     )}
                     {filtered.map((user) => {
-                      const status = user.account_status || "active";
-                      const initials = (user.full_name || user.email || "?")
+                      const status = user.account_status || (user.is_active ? "active" : "inactive");
+                      const initials = (user.name || user.full_name || user.email || "?")
                         .split(" ")
                         .map((n) => n[0])
                         .join("")
@@ -436,7 +491,7 @@ export default function ConfigUsuarios() {
                               </Avatar>
                               <div>
                                 <p className="text-sm font-medium">
-                                  {user.full_name || "—"}
+                                  {user.name || user.full_name || "—"}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {user.email}
@@ -452,7 +507,7 @@ export default function ConfigUsuarios() {
                           <TableCell>
                             <Badge
                               variant="outline"
-                              className={`text-xs ${ROLE_COLORS[user.role] || ROLE_COLORS.user}`}
+                              className={`text-xs ${ROLE_COLORS[user.role] || ROLE_COLORS.operator}`}
                             >
                               {ROLE_LABELS[user.role] || user.role}
                             </Badge>
@@ -541,6 +596,13 @@ export default function ConfigUsuarios() {
                                     Bloquear (inadimpl.)
                                   </DropdownMenuItem>
                                 )}
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => handleDelete(user)}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  Excluir usuário
+                                </DropdownMenuItem>
                                 {status === "blocked" && (
                                   <DropdownMenuItem
                                     onClick={() => handleUnblock(user)}
@@ -583,7 +645,7 @@ export default function ConfigUsuarios() {
       {logUser && (
         <UserLogDrawer
           userId={logUser.id}
-          userName={logUser.full_name || logUser.email}
+          userName={logUser.name || logUser.full_name || logUser.email}
           open={!!logUser}
           onClose={() => setLogUser(null)}
         />

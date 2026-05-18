@@ -45,9 +45,12 @@ app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 async def response_validation_error_handler(request: Request, exc: ResponseValidationError):
     print(f"[ResponseValidationError] {request.method} {request.url}")
     print(traceback.format_exc())
+    detail = "Erro de serialização da resposta"
+    if settings.DEBUG:
+        detail = f"{detail}: {exc.errors()}"
     return JSONResponse(
         status_code=500,
-        content={"detail": "Erro de serialização da resposta", "errors": str(exc.errors())},
+        content={"detail": detail},
     )
 
 
@@ -55,9 +58,12 @@ async def response_validation_error_handler(request: Request, exc: ResponseValid
 async def unhandled_exception_handler(request: Request, exc: Exception):
     print(f"[UnhandledException] {request.method} {request.url}: {repr(exc)}")
     print(traceback.format_exc())
+    detail = "Erro interno do servidor"
+    if settings.DEBUG:
+        detail = f"Erro interno: {repr(exc)}"
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Erro interno: {repr(exc)}"},
+        content={"detail": detail},
     )
 
 

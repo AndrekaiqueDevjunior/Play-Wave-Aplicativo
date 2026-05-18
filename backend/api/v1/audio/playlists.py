@@ -116,7 +116,7 @@ def create_audio_playlist(
     """
     # Atribuir tenant se não for admin
     if current_user.role != "admin":
-        playlist_in.tenant_id = current_user.tenant_id
+        playlist_in.tenant_id = str(current_user.tenant_id)
     
     playlist = crud_audio_playlist.create(db, obj_in=playlist_in)
     return playlist

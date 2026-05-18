@@ -5,21 +5,32 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Save } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
 
 export default function EditUserDialog({ user, open, onClose, onSave }) {
+  const { toast } = useToast();
   const [form, setForm] = useState({
-    full_name: user?.full_name || '',
+    name: user?.name || user?.full_name || '',
     email: user?.email || '',
     job_title: user?.job_title || '',
-    role: user?.role || 'user',
+    role: user?.role || 'operator',
   });
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(user.id, form);
-    setSaving(false);
-    onClose();
+    try {
+      await onSave(user.id, form);
+      onClose();
+    } catch (err) {
+      toast({
+        title: 'Erro ao salvar',
+        description: err?.message || 'Não foi possível atualizar o usuário.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -29,7 +40,7 @@ export default function EditUserDialog({ user, open, onClose, onSave }) {
         <div className="space-y-4 pt-2">
           <div className="space-y-2">
             <Label>Nome</Label>
-            <Input value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="Nome completo" />
+            <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Nome completo" />
           </div>
           <div className="space-y-2">
             <Label>E-mail</Label>
@@ -45,14 +56,14 @@ export default function EditUserDialog({ user, open, onClose, onSave }) {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="user">Operador</SelectItem>
+                <SelectItem value="operator">Operador</SelectItem>
                 <SelectItem value="viewer">Visualizador</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="outline" onClick={onClose}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving || !form.full_name}>
+            <Button onClick={handleSave} disabled={saving || !form.name}>
               <Save className="w-4 h-4 mr-2" />{saving ? 'Salvando...' : 'Salvar'}
             </Button>
           </div>

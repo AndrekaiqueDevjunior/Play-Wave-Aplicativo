@@ -2,10 +2,26 @@ from core.database import SessionLocal, Base, engine
 from core.models import Plan, User, Tenant, UserRole
 from core.auth import get_password_hash
 from core.config import settings
+from sqlalchemy import text
+
+
+def ensure_user_crud_columns():
+    statements = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_changed_by VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_changed_at TIMESTAMP",
+        "UPDATE users SET account_status = CASE WHEN is_active IS TRUE THEN 'active' ELSE 'inactive' END WHERE account_status IS NULL",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
 
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    ensure_user_crud_columns()
 
     db = SessionLocal()
 

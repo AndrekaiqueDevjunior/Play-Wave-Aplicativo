@@ -36,6 +36,7 @@ import StatusBadge from "@/components/shared/StatusBadge";
 import { listarCampanhas } from "@/api/campanhas";
 import { listarDispositivos } from "@/api/dispositivos";
 import { buscarResumoRelatorio, exportarRelatorioCSV } from "@/api/relatorios";
+import { useToast } from "@/components/ui/use-toast";
 
 function isoDate(date) {
   return date.toISOString().slice(0, 10);
@@ -53,6 +54,8 @@ function statusForBadge(status) {
 }
 
 export default function Relatorios() {
+  const { toast } = useToast();
+  const [isExporting, setIsExporting] = useState(false);
   const today = useMemo(() => new Date(), []);
   const sevenDaysAgo = useMemo(() => {
     const d = new Date();
@@ -94,13 +97,22 @@ export default function Relatorios() {
     : [{ date: "Sem dados", views: 0 }];
   const deviceStatus = (summary.device_status || []).filter((item) => item.value > 0);
 
-  const handleExportCsv = () => exportarRelatorioCSV(reportParams);
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    try {
+      await exportarRelatorioCSV(reportParams);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Erro ao exportar", description: err?.message || "Tente novamente." });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h2 className="text-xl font-bold">Relatórios</h2>
-        <Button variant="outline" size="sm" onClick={handleExportCsv}>
+        <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={isExporting}>
           <Download className="w-4 h-4 mr-2" />
           Exportar CSV
         </Button>

@@ -10,7 +10,20 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import AudioPlaylist, AudioPlaylistStatus, AudioTrack, AudioTrackStatus, Device, Media, User
+from core.models import (
+    AudioPlaylist,
+    AudioPlaylistStatus,
+    AudioTrack,
+    AudioTrackStatus,
+    Device,
+    DeviceEvent,
+    DevicePairingCode,
+    DeviceSession,
+    Media,
+    PlaybackLog,
+    User,
+    ViewReport,
+)
 from core.schemas_completos import (
     DeviceCreate,
     DevicePairingCodeCreate,
@@ -527,6 +540,15 @@ def delete_device(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para remover este dispositivo",
         )
+
+    db.query(PlaybackLog).filter(PlaybackLog.device_id == device_id).delete(synchronize_session=False)
+    db.query(ViewReport).filter(ViewReport.device_id == device_id).delete(synchronize_session=False)
+    db.query(DeviceEvent).filter(DeviceEvent.device_id == device_id).delete(synchronize_session=False)
+    db.query(DeviceSession).filter(DeviceSession.device_id == device_id).delete(synchronize_session=False)
+    db.query(DevicePairingCode).filter(DevicePairingCode.device_id == device_id).update(
+        {"device_id": None},
+        synchronize_session=False,
+    )
     crud_device.remove(db, id=device_id)
     return {"message": "Dispositivo removido com sucesso"}
 
@@ -737,5 +759,4 @@ def revoke_device_token(
     new_token = secrets.token_urlsafe(32)
     crud_device.update(db, db_obj=device, obj_in={"device_token": new_token})
     return {"new_token": new_token}
-
 

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import PlaybackLog, User
+from core.models import PlaybackLog, User, ViewReport
 from core.schemas_completos import (
     CampaignCreate, CampaignUpdate, CampaignResponse, CampaignStatusEnum
 )
@@ -88,7 +88,7 @@ def create_campaign(
     """
     # Atribuir tenant se não for admin
     if current_user.role != "admin":
-        campaign_in.tenant_id = current_user.tenant_id
+        campaign_in.tenant_id = str(current_user.tenant_id)
     
     campaign = crud_campaign.create(db, obj_in=campaign_in)
     return campaign
@@ -147,6 +147,8 @@ def delete_campaign(
             detail="Sem permissão para remover esta campanha"
         )
     
+    db.query(PlaybackLog).filter(PlaybackLog.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(ViewReport).filter(ViewReport.campaign_id == campaign_id).delete(synchronize_session=False)
     crud_campaign.remove(db, id=campaign_id)
     return {"message": "Campanha removida com sucesso"}
 

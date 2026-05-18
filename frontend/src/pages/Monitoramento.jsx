@@ -14,14 +14,29 @@ import { useQuery } from "@tanstack/react-query";
 import { listarDispositivos } from "@/api/dispositivos";
 import moment from "moment";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/use-toast";
 
 const statusPriority = { error: 0, offline: 1, syncing: 2, online: 3 };
 
 export default function Monitoramento() {
-  const { data: devices = [] } = useQuery({
+  const { toast } = useToast();
+  const { data: devices = [], refetch, isFetching } = useQuery({
     queryKey: ["devices"],
     queryFn: () => listarDispositivos(),
   });
+
+  const handleSync = async () => {
+    try {
+      await refetch();
+      toast({ title: "Sincronização concluída" });
+    } catch (err) {
+      toast({
+        title: "Erro ao sincronizar",
+        description: err?.message || "Não foi possível atualizar a lista.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const sortedDevices = [...devices].sort(
     (a, b) => statusPriority[a.status] - statusPriority[b.status],
@@ -40,9 +55,9 @@ export default function Monitoramento() {
             Acompanhe o status de todos os dispositivos
           </p>
         </div>
-        <Button variant="outline">
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Forçar Sincronização
+        <Button variant="outline" onClick={handleSync} disabled={isFetching}>
+          <RefreshCw className={cn("w-4 h-4 mr-2", isFetching && "animate-spin")} />
+          {isFetching ? "Sincronizando..." : "Forçar Sincronização"}
         </Button>
       </div>
 

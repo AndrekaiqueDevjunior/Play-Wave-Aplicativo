@@ -9,17 +9,28 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ShieldOff } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 
 export default function BlockUserDialog({ user, open, onClose, onBlock }) {
+  const { toast } = useToast();
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleBlock = async () => {
     setSaving(true);
-    await onBlock(user.id, reason);
-    setSaving(false);
-    setReason("");
-    onClose();
+    try {
+      await onBlock(user.id, reason);
+      setReason("");
+      onClose();
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao bloquear usuário",
+        description: err?.message || "Tente novamente.",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -35,7 +46,7 @@ export default function BlockUserDialog({ user, open, onClose, onBlock }) {
           <p className="text-sm text-muted-foreground">
             Você está bloqueando{" "}
             <span className="font-semibold text-foreground">
-              {user?.full_name || user?.email}
+              {user?.name || user?.full_name || user?.email}
             </span>
             . O usuário não conseguirá acessar o sistema.
           </p>

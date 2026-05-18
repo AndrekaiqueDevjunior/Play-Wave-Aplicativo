@@ -20,4 +20,7 @@ export * as relatorios from "./relatorios";
 export * as localizacoes from "./localizacoes";
 export * as tenants from "./tenants";
 export * as planos from "./planos";
+export * as usuarios from "./usuarios";
+export * as userLogs from "./userLogs";
+export * as schedule from "./schedule";
 export { isApiConfigurada, verificarSaude, getBaseUrl } from "./http";

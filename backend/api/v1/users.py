@@ -1,11 +1,12 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from uuid import UUID
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import User
+from core.models import User, UserRole
 from core.schemas_completos import (
     UserCreate, UserUpdate, UserResponse, UserRoleEnum
 )
@@ -13,6 +14,20 @@ from core.auth import get_password_hash
 from crud.entidades import crud_user
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+class StatusUpdate(BaseModel):
+    is_active: bool
+
+
+class RoleUpdate(BaseModel):
+    role: UserRoleEnum
+
+
+def _stamp_change(payload: dict, performed_by: User) -> dict:
+    payload["last_changed_by"] = performed_by.email
+    payload["last_changed_at"] = datetime.utcnow()
+    return payload
 
 
 @router.get("/", response_model=List[UserResponse])
@@ -115,11 +130,18 @@ def create_user(
         # Operator não pode criar admin
         if current_user.role == "operator" and user_in.role == UserRoleEnum.ADMIN:
             user_in.role = UserRoleEnum.OPERATOR
-    
-    # Hash da senha
-    user_in.password = get_password_hash(user_in.password)
-    
-    user = crud_user.create(db, obj_in=user_in)
+
+    user_data = user_in.model_dump(exclude_none=True)
+    password = user_data.pop("password")
+    user_data["password_hash"] = get_password_hash(password)
+    user_data.setdefault("account_status", "active")
+    user_data.setdefault("is_active", True)
+    _stamp_change(user_data, current_user)
+
+    user = User(**user_data)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user
 
 
@@ -160,6 +182,11 @@ def update_user(
         str(user.id) != str(current_user.id)):
         user_in.role = UserRoleEnum.OPERATOR
     
+    if user_in.account_status == "blocked":
+        user_in.is_active = False
+    elif user_in.account_status == "active":
+        user_in.is_active = True
+
     # Verificar se novo email já existe
     if user_in.email and user_in.email != user.email:
         if crud_user.email_exists(db, email=user_in.email):
@@ -167,8 +194,10 @@ def update_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email já cadastrado"
             )
-    
-    user = crud_user.update(db, db_obj=user, obj_in=user_in)
+
+    update_data = user_in.model_dump(exclude_unset=True)
+    _stamp_change(update_data, current_user)
+    user = crud_user.update(db, db_obj=user, obj_in=update_data)
     return user
 
 
@@ -218,11 +247,12 @@ def update_user_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     user_id: str,
-    is_active: bool
+    payload: StatusUpdate
 ):
     """
     Atualiza status do usuário (ativo/inativo)
     """
+    is_active = payload.is_active
     user = crud_user.get(db, id=user_id)
     if not user:
         raise HTTPException(
@@ -248,8 +278,13 @@ def update_user_status(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Não pode desativar seu próprio usuário"
         )
-    
-    user = crud_user.update(db, db_obj=user, obj_in={"is_active": is_active})
+
+    payload_data = {
+        "is_active": is_active,
+        "account_status": "active" if is_active else "inactive",
+    }
+    _stamp_change(payload_data, current_user)
+    user = crud_user.update(db, db_obj=user, obj_in=payload_data)
     return {"message": f"Usuário {'ativado' if is_active else 'desativado'} com sucesso"}
 
 
@@ -259,7 +294,7 @@ def update_user_role(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     user_id: str,
-    role: UserRoleEnum
+    payload: RoleUpdate
 ):
     """
     Atualiza papel do usuário (apenas admin)
@@ -269,23 +304,26 @@ def update_user_role(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Apenas administradores podem alterar papéis"
         )
-    
+
+    role = payload.role
     user = crud_user.get(db, id=user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuário não encontrado"
         )
-    
+
     # Não pode alterar próprio papel
     if str(user.id) == str(current_user.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Não pode alterar seu próprio papel"
         )
-    
-    user = crud_user.update(db, db_obj=user, obj_in={"role": role})
-    return {"message": f"Papel atualizado para {role} com sucesso"}
+
+    payload_data = {"role": role}
+    _stamp_change(payload_data, current_user)
+    user = crud_user.update(db, db_obj=user, obj_in=payload_data)
+    return {"message": f"Papel atualizado para {role.value} com sucesso"}
 
 
 @router.get("/statistics/overview")

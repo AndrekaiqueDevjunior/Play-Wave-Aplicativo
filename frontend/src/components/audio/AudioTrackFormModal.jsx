@@ -84,20 +84,30 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
     setLoading(true);
     setError("");
 
-    if (track) {
-      await atualizarFaixa(track.id, form);
-    } else {
-      const duration_seconds = await new Promise((resolve) => {
-        const a = new Audio();
-        a.src = URL.createObjectURL(file);
-        a.onloadedmetadata = () => resolve(Math.round(a.duration));
-        a.onerror = () => resolve(null);
-      });
-      await uploadFaixa(file, { ...form, duration_seconds, mime_type: file.type, file_size: file.size });
-    }
+    try {
+      if (track) {
+        await atualizarFaixa(track.id, form);
+      } else {
+        const duration_seconds = await new Promise((resolve) => {
+          const a = new Audio();
+          a.src = URL.createObjectURL(file);
+          a.onloadedmetadata = () => resolve(Math.round(a.duration));
+          a.onerror = () => resolve(null);
+        });
+        await uploadFaixa(file, {
+          ...form,
+          duration_seconds,
+          mime_type: file.type,
+          file_size: file.size,
+        });
+      }
 
-    setLoading(false);
-    onSaved();
+      onSaved();
+    } catch (err) {
+      setError(err?.message || "Erro ao salvar faixa de áudio.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -188,6 +198,7 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
                 <SelectContent>
                   <SelectItem value="active">Ativo</SelectItem>
                   <SelectItem value="inactive">Inativo</SelectItem>
+                  <SelectItem value="archived">Arquivado</SelectItem>
                 </SelectContent>
               </Select>
             </div>
