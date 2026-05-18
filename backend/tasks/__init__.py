@@ -13,8 +13,11 @@ def recalculate_device_playlists():
     """Recalculate playlists for all devices based on time-based campaign scheduling and invalidate Redis cache."""
     from core.database import SessionLocal
     from core.models import Device
-    from crud.entidades.crud_campaign import crud_campaign
+    from core.models import Campaign
     from core.config import get_redis_client
+    from sqlalchemy import and_, cast
+    from sqlalchemy.dialects.postgresql import JSONB
+    from datetime import datetime
 
     db = SessionLocal()
     redis_client = get_redis_client()
@@ -26,11 +29,21 @@ def recalculate_device_playlists():
             # Get current campaign based on time-based scheduling
             campaign = None
             if device.current_campaign_id:
-                from core.models import Campaign
                 campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
             
             if not campaign:
-                campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+                # Find active campaign targeting this device
+                campaign = (
+                    db.query(Campaign)
+                    .filter(
+                        and_(
+                            cast(Campaign.device_ids, JSONB).contains([str(device.id)]),
+                            Campaign.status == "active",
+                        )
+                    )
+                    .order_by(Campaign.priority.desc())
+                    .first()
+                )
             
             # Get current campaign version
             current_campaign_id = str(campaign.id) if campaign else None
