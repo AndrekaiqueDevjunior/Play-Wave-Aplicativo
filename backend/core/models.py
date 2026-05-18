@@ -140,6 +140,7 @@ class Device(Base):
     audio_playlist = relationship("AudioPlaylist", foreign_keys=[audio_playlist_id], back_populates="devices")
     device_events = relationship("DeviceEvent", back_populates="device")
     device_sessions = relationship("DeviceSession", back_populates="device")
+    device_commands = relationship("DeviceCommand", back_populates="device")
     playback_logs = relationship("PlaybackLog", back_populates="device")
     view_reports = relationship("ViewReport", back_populates="device")
 
@@ -449,6 +450,33 @@ class ViewReport(Base):
     device = relationship("Device", back_populates="view_reports")
     campaign = relationship("Campaign", back_populates="view_reports")
     media = relationship("Media")
+
+
+class DeviceCommandStatus(str, enum.Enum):
+    PENDING = "pending"
+    SENT = "sent"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DeviceCommand(Base):
+    __tablename__ = "device_commands"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    command_type = Column(String(50), nullable=False)
+    payload = Column(JSON, nullable=True)
+    status = Column(SQLEnum(DeviceCommandStatus), default=DeviceCommandStatus.PENDING)
+    requested_by = Column(String(255), nullable=True)
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+    executed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    device = relationship("Device", back_populates="device_commands")
+    tenant = relationship("Tenant")
 
 
 class UserLogAction(str, enum.Enum):

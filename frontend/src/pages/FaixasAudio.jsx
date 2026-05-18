@@ -112,12 +112,12 @@ export default function FaixasAudio() {
             Faixas de Áudio
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Gerencie os arquivos MP3 para Rádio Indoor
+            Gerencie faixas de áudio para Rádio Indoor · MP3, WAV, OGG, OPUS, AAC, FLAC
           </p>
         </div>
         <Button onClick={handleNew}>
           <Upload className="w-4 h-4 mr-2" />
-          Upload MP3
+          Upload de Áudio
         </Button>
       </div>
 
@@ -198,7 +198,7 @@ export default function FaixasAudio() {
             </p>
             <Button className="mt-4" onClick={handleNew}>
               <Upload className="w-4 h-4 mr-2" />
-              Upload MP3
+              Upload de Áudio
             </Button>
           </CardContent>
         </Card>

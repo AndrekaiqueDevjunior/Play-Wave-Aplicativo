@@ -109,8 +109,13 @@ export const buscarMetricasDispositivo = (deviceId) =>
 export const enviarComando = (deviceId, comando) =>
   apiFetch(`/devices/${deviceId}/command`, {
     method: "POST",
-    body: JSON.stringify({ command: comando }),
+    body: JSON.stringify({ command_type: comando }),
   });
+
+export const listarComandosDispositivo = (deviceId, params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/devices/${deviceId}/commands${qs ? `?${qs}` : ""}`);
+};
 
 export const bloquearDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/block`, { method: "POST" });

@@ -16,6 +16,7 @@ from core.models import (
     AudioTrack,
     AudioTrackStatus,
     Device,
+    DeviceCommand,
     DeviceEvent,
     DevicePairingCode,
     DeviceSession,
@@ -25,12 +26,17 @@ from core.models import (
     ViewReport,
 )
 from core.schemas_completos import (
+    DeviceCommandAck,
+    DeviceCommandCreate,
+    DeviceCommandResponse,
     DeviceCreate,
     DevicePairingCodeCreate,
     DeviceResponse,
+    DeviceSessionResponse,
     DeviceStatusEnum,
     DeviceUpdate,
 )
+from crud.entidades.crud_device_command import crud_device_command
 from crud.entidades.crud_campaign import crud_campaign
 from crud.entidades.crud_device import crud_device
 from crud.entidades.crud_device_pairing_code import crud_device_pairing_code
@@ -50,6 +56,8 @@ class HeartbeatBody(BaseModel):
     ip_address: Optional[str] = None
     player_version: Optional[str] = None
     storage_used: Optional[int] = None
+    current_campaign_id: Optional[str] = None
+    current_media_name: Optional[str] = None
 
 
 class PlaybackBody(BaseModel):
@@ -409,7 +417,10 @@ def get_device(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para acessar este dispositivo",
         )
-    return device
+    response = DeviceResponse.model_validate(device)
+    if current_user.role != "admin":
+        response.device_token = None
+    return response
 
 
 @router.post("/", response_model=DeviceResponse, status_code=http_status.HTTP_201_CREATED)
@@ -631,10 +642,33 @@ def device_heartbeat(
         raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
 
     crud_device.update_last_seen(db, db_obj=device, ip_address=body.ip_address)
-    if device.status != "online":
-        crud_device.update_status(db, db_obj=device, status="online")
 
-    return {"status": "ok", "server_time": datetime.utcnow().isoformat()}
+    if body.player_version:
+        device.player_version = body.player_version
+    if body.storage_used is not None:
+        device.storage_used = body.storage_used
+    if body.current_campaign_id is not None:
+        device.current_campaign_id = body.current_campaign_id or None
+    if body.current_media_name is not None:
+        device.current_campaign = body.current_media_name
+    if device.status != "online":
+        device.status = "online"
+    db.commit()
+    db.refresh(device)
+
+    pending_count = db.query(DeviceCommand).filter(
+        DeviceCommand.device_id == device_id,
+        DeviceCommand.status == "pending",
+    ).count()
+
+    return {
+        "ok": True,
+        "is_blocked": device.is_blocked,
+        "config_version": device.config_version,
+        "has_update": False,
+        "pending_commands": pending_count,
+        "server_time": datetime.utcnow().isoformat(),
+    }
 
 
 @router.post("/{device_id}/playback-log")
@@ -707,25 +741,45 @@ def get_device_metrics(
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
 
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    views_today = (
+        db.query(PlaybackLog)
+        .filter(
+            PlaybackLog.device_id == device_id,
+            PlaybackLog.created_at >= today_start,
+        )
+        .count()
+    )
+
+    uptime_seconds = None
+    if device.last_seen_at:
+        delta = datetime.utcnow() - device.last_seen_at
+        if delta.total_seconds() < 300:
+            if device.last_connection:
+                uptime_seconds = int((datetime.utcnow() - device.last_connection).total_seconds())
+
     return {
-        "last_seen_at": device.last_seen_at,
+        "views_today": views_today,
+        "uptime_seconds": uptime_seconds,
+        "last_seen": device.last_seen_at,
+        "current_media": device.current_campaign,
         "status": device.status.value if hasattr(device.status, "value") else device.status,
-        "storage_used": getattr(device, "storage_used", None),
-        "player_version": getattr(device, "player_version", None),
-        "ip_address": getattr(device, "ip_address", None),
+        "storage_used": device.storage_used,
+        "player_version": device.player_version,
+        "ip_address": device.ip_address,
     }
 
 
 # ─── Admin: Send command ──────────────────────────────────────────────────────
 
-class CommandBody(BaseModel):
-    command: str
+VALID_COMMANDS = {"restart", "sync", "clear_cache", "screenshot", "refresh_playlist"}
 
 
-@router.post("/{device_id}/command")
-def send_device_command(
+@router.get("/{device_id}/sessions", response_model=List[DeviceSessionResponse])
+def list_device_sessions(
     device_id: str,
-    body: CommandBody,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -735,11 +789,105 @@ def send_device_command(
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    valid_commands = {"restart", "sync", "clear_cache", "screenshot"}
-    if body.command not in valid_commands:
-        raise HTTPException(status_code=400, detail=f"Comando inválido. Válidos: {valid_commands}")
+    sessions = (
+        db.query(DeviceSession)
+        .filter(DeviceSession.device_id == device_id)
+        .order_by(DeviceSession.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return sessions
 
-    return {"queued": True}
+
+@router.post("/{device_id}/command", response_model=DeviceCommandResponse)
+def send_device_command(
+    device_id: str,
+    body: DeviceCommandCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    if body.command_type not in VALID_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Comando inválido. Válidos: {sorted(VALID_COMMANDS)}",
+        )
+
+    cmd = crud_device_command.create(
+        db,
+        device_id=device_id,
+        tenant_id=str(device.tenant_id) if device.tenant_id else None,
+        command_type=body.command_type,
+        requested_by=current_user.email,
+        payload=body.payload,
+    )
+    return cmd
+
+
+@router.get("/{device_id}/commands", response_model=List[DeviceCommandResponse])
+def list_device_commands(
+    device_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    return crud_device_command.get_by_device(db, device_id=device_id, skip=skip, limit=limit)
+
+
+@router.get("/{device_id}/commands/pending")
+def get_pending_commands(
+    device_id: str,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+
+    commands = crud_device_command.get_pending(db, device_id=device_id)
+    for cmd in commands:
+        crud_device_command.mark_sent(db, obj=cmd)
+
+    return [
+        {
+            "id": str(cmd.id),
+            "command_type": cmd.command_type,
+            "payload": cmd.payload,
+            "requested_at": cmd.requested_at,
+        }
+        for cmd in commands
+    ]
+
+
+@router.post("/{device_id}/commands/{command_id}/ack")
+def ack_device_command(
+    device_id: str,
+    command_id: str,
+    body: DeviceCommandAck,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+
+    cmd = crud_device_command.get(db, command_id=command_id)
+    if not cmd or str(cmd.device_id) != device_id:
+        raise HTTPException(status_code=404, detail="Comando não encontrado")
+
+    cmd = crud_device_command.ack(db, obj=cmd, success=body.success, error_message=body.error_message)
+    return {"ok": True, "status": cmd.status}
 
 
 # ─── Admin: Revoke device token ───────────────────────────────────────────────

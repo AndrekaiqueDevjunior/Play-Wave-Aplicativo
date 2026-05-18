@@ -164,3 +164,12 @@ config.local.py
 settings.local.py
 secrets.json
 config/secrets.json
+
+# ===========================================
+# ARQUIVOS LOCAIS / SENSÍVEIS
+# ===========================================
+icones e favicon.ico/
+*.jpeg
+*.jpg
+!frontend/src/assets/**/*.jpg
+!frontend/src/assets/**/*.jpeg

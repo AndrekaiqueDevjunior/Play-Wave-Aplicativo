@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { uploadFaixa, atualizarFaixa } from "@/api/audio";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -18,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, Music, Loader2 } from "lucide-react";
+import { Upload, Music, Loader2, FileAudio } from "lucide-react";
 
 const CATEGORY_LABELS = {
   music: "Música",
@@ -28,7 +30,25 @@ const CATEGORY_LABELS = {
   other: "Outro",
 };
 
-const MAX_SIZE_MB = 50;
+const MAX_SIZE_MB = 100;
+
+const ACCEPTED_TYPES = [
+  "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
+  "audio/wave", "audio/ogg", "audio/opus", "audio/m4a",
+  "audio/x-m4a", "audio/mp4", "audio/aac", "audio/flac",
+  "audio/webm", "audio/x-flac",
+  "video/mpeg",
+];
+
+const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|opus|m4a|aac|flac|weba|mp4|mpeg|mpg)$/i;
+
+const ACCEPT_ATTR = [
+  ".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac",
+  ".flac", ".weba", ".mp4", ".mpeg", ".mpg",
+  ...ACCEPTED_TYPES,
+].join(",");
+
+const FORMAT_DESC = "MP3, MPEG, WAV, OGG, OPUS (WhatsApp), M4A, AAC, FLAC · máx. 100 MB";
 
 export default function AudioTrackFormModal({ track, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -57,12 +77,16 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
   function handleFile(e) {
     const f = e.target.files[0];
     if (!f) return;
-    if (!f.type.includes("audio")) {
-      setError("Apenas arquivos de áudio são permitidos.");
+    const isAudio =
+      f.type.startsWith("audio/") ||
+      ACCEPTED_TYPES.includes(f.type) ||
+      AUDIO_EXTENSIONS.test(f.name);
+    if (!isAudio) {
+      setError("Formato não suportado. Use: MP3, MPEG, WAV, OGG, OPUS, M4A, AAC ou FLAC.");
       return;
     }
     if (f.size > MAX_SIZE_MB * 1024 * 1024) {
-      setError(`Arquivo muito grande. Máximo: ${MAX_SIZE_MB}MB`);
+      setError(`Arquivo muito grande. Máximo: ${MAX_SIZE_MB} MB`);
       return;
     }
     setError("");
@@ -77,7 +101,7 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
       return;
     }
     if (!track && !file) {
-      setError("Selecione um arquivo MP3.");
+      setError("Selecione um arquivo de áudio.");
       return;
     }
 
@@ -111,33 +135,51 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
   }
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
+    <Sheet open onOpenChange={onClose}>
+      <SheetContent side="right" className="w-full sm:max-w-[480px] flex flex-col p-0 overflow-y-auto">
+        <SheetHeader className="px-6 pt-6 pb-4 border-b">
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <FileAudio className="w-4 h-4 text-primary" />
             {track ? "Editar Faixa" : "Upload de Áudio"}
-          </DialogTitle>
-        </DialogHeader>
+          </SheetTitle>
+          <SheetDescription className="text-xs">
+            {track
+              ? "Edite as informações da faixa de áudio."
+              : "Envie arquivos de áudio para o Rádio Indoor."}
+          </SheetDescription>
+        </SheetHeader>
 
-        <div className="space-y-4">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           {/* Upload */}
           {!track && (
-            <div>
-              <Label>Arquivo MP3 *</Label>
-              <label className="mt-1.5 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-lg p-6 cursor-pointer hover:border-primary transition-colors">
-                <Music className="w-8 h-8 text-muted-foreground" />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Arquivo de Áudio *
+              </Label>
+              <label className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-border rounded-xl p-8 cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
                 {file ? (
-                  <span className="text-sm font-medium text-foreground">
-                    {file.name}
-                  </span>
+                  <>
+                    <Music className="w-8 h-8 text-primary" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-foreground">{file.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {(file.size / (1024 * 1024)).toFixed(1)} MB · {file.type || "áudio"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-primary underline">Trocar arquivo</span>
+                  </>
                 ) : (
-                  <span className="text-sm text-muted-foreground">
-                    Clique para selecionar MP3 (máx. {MAX_SIZE_MB}MB)
-                  </span>
+                  <>
+                    <Upload className="w-8 h-8 text-muted-foreground" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium">Arraste ou clique para selecionar</p>
+                      <p className="text-xs text-muted-foreground mt-1">{FORMAT_DESC}</p>
+                    </div>
+                  </>
                 )}
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept={ACCEPT_ATTR}
                   className="hidden"
                   onChange={handleFile}
                 />
@@ -145,54 +187,51 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
             </div>
           )}
 
-          <div>
-            <Label>Nome *</Label>
+          <Separator />
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Nome *</Label>
             <Input
-              className="mt-1.5"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Ex: Música ambiente 1"
             />
           </div>
 
-          <div>
-            <Label>Descrição</Label>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Descrição</Label>
             <Textarea
-              className="mt-1.5"
               value={form.description}
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={2}
+              className="resize-none text-sm"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Categoria</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Categoria</Label>
               <Select
                 value={form.category}
                 onValueChange={(v) => setForm({ ...form, category: v })}
               >
-                <SelectTrigger className="mt-1.5">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {Object.entries(CATEGORY_LABELS).map(([v, l]) => (
-                    <SelectItem key={v} value={v}>
-                      {l}
-                    </SelectItem>
+                    <SelectItem key={v} value={v}>{l}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Status</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Status</Label>
               <Select
                 value={form.status}
                 onValueChange={(v) => setForm({ ...form, status: v })}
               >
-                <SelectTrigger className="mt-1.5">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -207,25 +246,19 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+        <SheetFooter className="px-6 py-4 border-t bg-muted/30 flex-row gap-2">
+          <Button type="button" variant="outline" onClick={onClose} className="flex-1">
             Cancelar
           </Button>
-          <Button onClick={handleSave} disabled={loading}>
+          <Button onClick={handleSave} disabled={loading} className="flex-1">
             {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Salvando...
-              </>
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Salvando...</>
             ) : (
-              <>
-                <Upload className="w-4 h-4 mr-2" />
-                {track ? "Salvar" : "Fazer Upload"}
-              </>
+              <><Upload className="w-4 h-4 mr-2" />{track ? "Salvar" : "Fazer Upload"}</>
             )}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }

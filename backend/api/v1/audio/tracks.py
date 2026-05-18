@@ -205,8 +205,11 @@ def upload_audio_track(
         "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
         "audio/wave", "audio/x-pn-wav", "audio/ogg", "audio/m4a",
         "audio/x-m4a", "audio/mp4", "audio/aac",
+        "audio/opus", "audio/flac", "audio/x-flac", "audio/webm",
+        "audio/x-opus", "audio/ogg; codecs=opus",
+        "video/mpeg",
     ]
-    allowed_extensions = {".mp3", ".wav", ".ogg", ".m4a", ".aac"}
+    allowed_extensions = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".opus", ".flac", ".weba", ".mpeg", ".mpg"}
     content_type = (file.content_type or "").lower()
     extension = os.path.splitext(file.filename or "")[1].lower()
     

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { buscarDispositivo, atualizarDispositivo } from "@/api/dispositivos";
+import { buscarDispositivo, atualizarDispositivo, listarComandosDispositivo } from "@/api/dispositivos";
 import {
   sendDeviceCommand,
   getDeviceMetrics,
@@ -52,6 +52,13 @@ export default function DispositivoDetalhe() {
     refetchInterval: 30_000,
   });
 
+  const { data: commandHistory, refetch: refetchCommands } = useQuery({
+    queryKey: ["device-commands", id],
+    queryFn: () => listarComandosDispositivo(id, { limit: 30 }),
+    enabled: isApiConfigured() && !!id,
+    refetchInterval: 15_000,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data) => atualizarDispositivo(id, data),
     onSuccess: () =>
@@ -70,8 +77,11 @@ export default function DispositivoDetalhe() {
       message: `Comando "${label}" enviado${result?.queued_at ? " — aguardando TV" : ""}`,
     };
     setSyncLog((prev) => [entry, ...prev]);
-    if (command === "sync" || command === "reload_playlist") {
+    if (command === "sync" || command === "refresh_playlist") {
       await updateMutation.mutateAsync({ status: "syncing" });
+    }
+    if (isApiConfigured()) {
+      queryClient.invalidateQueries({ queryKey: ["device-commands", id] });
     }
     toast({
       title: label,
@@ -145,19 +155,34 @@ export default function DispositivoDetalhe() {
 
   const commands = [
     { command: "sync", label: "Sincronizar", icon: RefreshCw },
-    { command: "reload_playlist", label: "Atualizar Playlist", icon: Download },
+    { command: "refresh_playlist", label: "Atualizar Playlist", icon: Download },
     { command: "clear_cache", label: "Limpar Cache", icon: Trash2 },
     { command: "restart", label: "Reiniciar Player", icon: Monitor },
   ];
 
-  const allLogs = [
-    ...syncLog,
-    {
-      date: "—",
-      status: "info",
-      message: "Histórico de sessões anteriores indisponível sem backend.",
-    },
-  ];
+  const statusLabel = { pending: "Pendente", sent: "Enviado", executed: "Executado", failed: "Falhou", cancelled: "Cancelado" };
+  const statusIcon = { executed: "success", failed: "error", pending: "info", sent: "info", cancelled: "info" };
+
+  const apiLogs = (commandHistory || []).map((c) => ({
+    date: moment(c.requested_at).format("DD/MM HH:mm"),
+    status: statusIcon[c.status] || "info",
+    message: `${c.command_type} — ${statusLabel[c.status] || c.status}${c.error_message ? `: ${c.error_message}` : ""}`,
+    origin: c.requested_by || "admin",
+  }));
+
+  const allLogs =
+    apiLogs.length > 0
+      ? apiLogs
+      : [
+          ...syncLog,
+          {
+            date: "—",
+            status: "info",
+            message: isApiConfigured()
+              ? "Nenhum comando enviado ainda."
+              : "Histórico de sessões anteriores indisponível sem backend.",
+          },
+        ];
 
   return (
     <div className="space-y-6">

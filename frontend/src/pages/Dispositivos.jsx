@@ -42,8 +42,8 @@ import {
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
-import DeviceFormModal from "@/components/devices/DeviceFormModal";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import DeviceEditDrawer from "@/components/devices/DeviceEditDrawer";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   listarDispositivos,
   criarDispositivo,
@@ -191,6 +191,8 @@ export default function Dispositivos() {
               <SelectItem value="online">Online</SelectItem>
               <SelectItem value="offline">Offline</SelectItem>
               <SelectItem value="syncing">Sincronizando</SelectItem>
+              <SelectItem value="waiting_pairing">Aguardando Pareamento</SelectItem>
+              <SelectItem value="blocked">Bloqueado</SelectItem>
               <SelectItem value="error">Erro</SelectItem>
             </SelectContent>
           </Select>
@@ -285,7 +287,17 @@ export default function Dispositivos() {
                           : "—"}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-sm">
-                        {device.current_campaign || "—"}
+                        {device.current_campaign ? (
+                          <Link
+                            to={`/campanhas`}
+                            className="text-primary hover:underline font-medium truncate max-w-[140px] block"
+                            title={device.current_campaign}
+                          >
+                            {device.current_campaign}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
@@ -314,16 +326,12 @@ export default function Dispositivos() {
                               onClick={() =>
                                 handleChangeStatus(
                                   device,
-                                  device.status === "online"
-                                    ? "offline"
-                                    : "online",
+                                  device.status === "online" ? "offline" : "online",
                                 )
                               }
                             >
                               <Power className="w-4 h-4 mr-2" />
-                              {device.status === "online"
-                                ? "Marcar Offline"
-                                : "Marcar Online"}
+                              {device.status === "online" ? "Marcar Offline" : "Marcar Online"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => handleToggleActive(device)}
@@ -351,7 +359,7 @@ export default function Dispositivos() {
         )}
       </Card>
 
-      <DeviceFormModal
+      <DeviceEditDrawer
         open={modalOpen}
         onClose={() => {
           setModalOpen(false);

@@ -15,6 +15,7 @@ from .crud_device_event import crud_device_event
 from .crud_playback_log import crud_playback_log
 from .crud_view_report import crud_view_report
 from .crud_user_log import crud_user_log
+from .crud_device_command import crud_device_command
 
 # Exportar todos os CRUDs
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "crud_device_event",
     "crud_playback_log",
     "crud_view_report",
-    "crud_user_log"
+    "crud_user_log",
+    "crud_device_command",
 ]

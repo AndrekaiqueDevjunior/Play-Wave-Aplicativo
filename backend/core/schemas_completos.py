@@ -334,6 +334,47 @@ class DeviceResponse(DeviceBase, TimestampedSchema):
     current_campaign_id: Optional[str] = None
 
 
+class DeviceCommandStatusEnum(str, Enum):
+    PENDING = "pending"
+    SENT = "sent"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DeviceCommandCreate(BaseSchema):
+    command_type: str = Field(..., description="sync | refresh_playlist | clear_cache | restart")
+    payload: Optional[Dict[str, Any]] = None
+
+
+class DeviceCommandResponse(BaseSchema):
+    id: str
+    device_id: str
+    command_type: str
+    payload: Optional[Dict[str, Any]] = None
+    status: DeviceCommandStatusEnum
+    requested_by: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    executed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class DeviceCommandAck(BaseSchema):
+    success: bool
+    error_message: Optional[str] = None
+
+
+class DeviceSessionResponse(BaseSchema):
+    id: str
+    device_id: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
 # Campaign Schemas
 class MediaOrderItem(BaseSchema):
     media_id: str
