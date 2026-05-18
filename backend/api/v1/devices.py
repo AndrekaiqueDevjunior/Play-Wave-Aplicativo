@@ -1,6 +1,8 @@
 import secrets
+import json
 from datetime import datetime, timedelta
 from typing import List, Optional
+from fastapi.responses import StreamingResponse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi import status as http_status
@@ -949,6 +951,70 @@ def get_pending_commands(
         }
         for cmd in commands
     ]
+
+
+@router.get("/{device_id}/playlist/updates")
+async def playlist_updates_sse(
+    device_id: str,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    """SSE endpoint for real-time playlist updates based on config_version changes."""
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+
+    from core.config import get_redis_client
+    import asyncio
+
+    redis_client = get_redis_client()
+    
+    async def event_generator():
+        last_config_version = None
+        
+        while True:
+            try:
+                # Get current campaign and its config_version
+                campaign = None
+                if device.current_campaign_id:
+                    from core.models import Campaign
+                    campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
+                
+                if not campaign:
+                    from crud.entidades.crud_campaign import crud_campaign
+                    campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+                
+                current_config_version = campaign.config_version if campaign else None
+                
+                # If config_version changed, send update
+                if last_config_version != current_config_version:
+                    last_config_version = current_config_version
+                    yield {
+                        "event": "playlist_update",
+                        "data": json.dumps({
+                            "config_version": current_config_version,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "campaign_id": str(campaign.id) if campaign else None,
+                        })
+                    }
+                
+                # Wait 5 seconds before checking again
+                await asyncio.sleep(5)
+            except Exception as e:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": str(e)})
+                }
+                break
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @router.post("/{device_id}/commands/{command_id}/ack")

@@ -156,6 +156,15 @@ class CRUDCampaign(CRUDBase[Campaign, CampaignCreate, CampaignUpdate]):
             db.refresh(campaign)
         return campaign
     
+    def increment_config_version(self, db: Session, *, db_obj: Campaign) -> Campaign:
+        """Increment config_version to signal playlist change to players."""
+        import uuid
+        db_obj.config_version = str(uuid.uuid4())
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+    
     def get_statistics(self, db: Session, *, tenant_id: str = None) -> dict:
         query = db.query(Campaign)
         if tenant_id:

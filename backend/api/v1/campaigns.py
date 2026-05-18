@@ -127,6 +127,8 @@ def update_campaign(
         )
     
     campaign = crud_campaign.update(db, db_obj=campaign, obj_in=campaign_in)
+    # Increment config_version to signal playlist change
+    campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
     return campaign
 
 
@@ -186,6 +188,8 @@ def update_campaign_status(
         )
     
     campaign = crud_campaign.update_status(db, db_obj=campaign, status=status)
+    # Increment config_version to signal playlist change
+    campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
     return {"message": f"Status atualizado para {status}"}
 
 
