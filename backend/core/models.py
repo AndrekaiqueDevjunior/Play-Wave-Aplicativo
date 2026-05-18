@@ -97,11 +97,13 @@ class DeviceType(str, enum.Enum):
 
 
 class DeviceOS(str, enum.Enum):
-    ANDROID_TV = "Android TV"
-    WINDOWS = "Windows"
-    WEB_PLAYER = "Web Player"
-    IOS = "iOS"
-    LINUX = "Linux"
+    ANDROID_TV = "android_tv"
+    WINDOWS = "windows"
+    WEB_PLAYER = "web_player"
+    IOS = "ios"
+    LINUX = "linux"
+    TIZEN = "tizen"
+    WEBOS = "webos"
 
 
 class Device(Base):
