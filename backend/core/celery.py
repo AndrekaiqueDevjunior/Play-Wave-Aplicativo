@@ -25,5 +25,9 @@ app.conf.update(
             "task": "tasks.daily_device_stats",
             "schedule": 86400.0,
         },
+        "recalculate-device-playlists-every-30s": {
+            "task": "tasks.recalculate_device_playlists",
+            "schedule": 30.0,
+        },
     },
 )

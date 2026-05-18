@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, cast
 from sqlalchemy.dialects.postgresql import JSONB
@@ -38,9 +39,67 @@ class CRUDCampaign(CRUDBase[Campaign, CampaignCreate, CampaignUpdate]):
             cast(Campaign.device_ids, JSONB).contains([device_id])
         ).all()
 
+    def _is_campaign_currently_active(self, campaign: Campaign) -> bool:
+        """Check if a campaign is active based on current time."""
+        now = datetime.utcnow()
+
+        # Check date range (start_date and end_date)
+        if campaign.start_date and campaign.start_date > now:
+            return False
+        if campaign.end_date and campaign.end_date < now:
+            return False
+
+        # If schedule_all_day is True, skip time-of-day checks
+        if campaign.schedule_all_day:
+            # Still check schedule_days if specified
+            if campaign.schedule_days:
+                current_weekday = now.strftime("%a").lower()
+                # Map English weekday abbreviations to Portuguese
+                day_map = {
+                    "mon": "seg", "tue": "ter", "wed": "qua",
+                    "thu": "qui", "fri": "sex", "sat": "sab", "sun": "dom"
+                }
+                pt_day = day_map.get(current_weekday, "")
+                if pt_day not in campaign.schedule_days:
+                    return False
+            return True
+
+        # Check time-of-day schedule
+        if campaign.schedule_start_time or campaign.schedule_end_time:
+            current_time = now.time()
+
+            if campaign.schedule_start_time:
+                try:
+                    start_time = datetime.strptime(campaign.schedule_start_time, "%H:%M").time()
+                    if current_time < start_time:
+                        return False
+                except (ValueError, TypeError):
+                    pass  # Invalid format, skip check
+
+            if campaign.schedule_end_time:
+                try:
+                    end_time = datetime.strptime(campaign.schedule_end_time, "%H:%M").time()
+                    if current_time > end_time:
+                        return False
+                except (ValueError, TypeError):
+                    pass  # Invalid format, skip check
+
+        # Check schedule_days
+        if campaign.schedule_days:
+            current_weekday = now.strftime("%a").lower()
+            day_map = {
+                "mon": "seg", "tue": "ter", "wed": "qua",
+                "thu": "qui", "fri": "sex", "sat": "sab", "sun": "dom"
+            }
+            pt_day = day_map.get(current_weekday, "")
+            if pt_day not in campaign.schedule_days:
+                return False
+
+        return True
+
     def get_active_for_device(self, db: Session, *, device_id: str) -> Optional[Campaign]:
-        """Return the highest-priority active campaign that targets this device."""
-        return (
+        """Return the highest-priority active campaign that targets this device and is currently valid based on time."""
+        campaigns = (
             db.query(Campaign)
             .filter(
                 and_(
@@ -49,8 +108,15 @@ class CRUDCampaign(CRUDBase[Campaign, CampaignCreate, CampaignUpdate]):
                 )
             )
             .order_by(Campaign.priority.desc())
-            .first()
+            .all()
         )
+        
+        # Filter by time-based scheduling
+        for campaign in campaigns:
+            if self._is_campaign_currently_active(campaign):
+                return campaign
+        
+        return None
     
     def get_by_media(self, db: Session, *, media_id: str) -> List[Campaign]:
         return db.query(Campaign).filter(

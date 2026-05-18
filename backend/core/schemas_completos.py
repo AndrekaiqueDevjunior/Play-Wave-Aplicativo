@@ -440,12 +440,53 @@ class CampaignUpdate(BaseSchema):
     target_groups: Optional[List[str]] = None
 
 
+# AudioPlaylist Schemas
+class AudioPlaylistBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    volume_default: Optional[float] = Field(0.7, ge=0.0, le=1.0)
+    loop_enabled: Optional[bool] = True
+    shuffle_enabled: Optional[bool] = False
+    schedule_enabled: Optional[bool] = False
+    schedule_start_time: Optional[str] = Field(None, max_length=10)
+    schedule_end_time: Optional[str] = Field(None, max_length=10)
+    schedule_days: Optional[List[str]] = None
+    track_ids: Optional[List[str]] = None
+    track_volumes: Optional[Dict[str, float]] = None
+
+
+class AudioPlaylistCreate(AudioPlaylistBase):
+    tenant_id: Optional[str] = None
+    status: Optional[AudioPlaylistStatusEnum] = AudioPlaylistStatusEnum.ACTIVE
+
+
+class AudioPlaylistUpdate(BaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: Optional[AudioPlaylistStatusEnum] = None
+    volume_default: Optional[float] = Field(None, ge=0.0, le=1.0)
+    loop_enabled: Optional[bool] = None
+    shuffle_enabled: Optional[bool] = None
+    schedule_enabled: Optional[bool] = None
+    schedule_start_time: Optional[str] = Field(None, max_length=10)
+    schedule_end_time: Optional[str] = Field(None, max_length=10)
+    schedule_days: Optional[List[str]] = None
+    track_ids: Optional[List[str]] = None
+    track_volumes: Optional[Dict[str, float]] = None
+
+
+class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
+    id: str
+    tenant_id: Optional[str] = None
+    status: Optional[AudioPlaylistStatusEnum] = None
+
+
 class CampaignResponse(CampaignBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     total_views: Optional[int] = 0
     config_version: Optional[str] = None
-    audio_playlist: Optional["AudioPlaylistResponse"] = None
+    audio_playlist: Optional[AudioPlaylistResponse] = None
 
 
 # Media Schemas
@@ -546,47 +587,6 @@ class AudioTrackResponse(AudioTrackBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[AudioTrackStatusEnum] = None
-
-
-# AudioPlaylist Schemas
-class AudioPlaylistBase(BaseSchema):
-    name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
-    volume_default: Optional[float] = Field(0.7, ge=0.0, le=1.0)
-    loop_enabled: Optional[bool] = True
-    shuffle_enabled: Optional[bool] = False
-    schedule_enabled: Optional[bool] = False
-    schedule_start_time: Optional[str] = Field(None, max_length=10)
-    schedule_end_time: Optional[str] = Field(None, max_length=10)
-    schedule_days: Optional[List[str]] = None
-    track_ids: Optional[List[str]] = None
-    track_volumes: Optional[Dict[str, float]] = None
-
-
-class AudioPlaylistCreate(AudioPlaylistBase):
-    tenant_id: Optional[str] = None
-    status: Optional[AudioPlaylistStatusEnum] = AudioPlaylistStatusEnum.ACTIVE
-
-
-class AudioPlaylistUpdate(BaseSchema):
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    status: Optional[AudioPlaylistStatusEnum] = None
-    volume_default: Optional[float] = Field(None, ge=0.0, le=1.0)
-    loop_enabled: Optional[bool] = None
-    shuffle_enabled: Optional[bool] = None
-    schedule_enabled: Optional[bool] = None
-    schedule_start_time: Optional[str] = Field(None, max_length=10)
-    schedule_end_time: Optional[str] = Field(None, max_length=10)
-    schedule_days: Optional[List[str]] = None
-    track_ids: Optional[List[str]] = None
-    track_volumes: Optional[Dict[str, float]] = None
-
-
-class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
-    id: str
-    tenant_id: Optional[str] = None
-    status: Optional[AudioPlaylistStatusEnum] = None
 
 
 # DevicePairingCode Schemas

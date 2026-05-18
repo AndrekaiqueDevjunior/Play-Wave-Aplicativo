@@ -8,6 +8,60 @@ logger = get_task_logger(__name__)
 OFFLINE_THRESHOLD_MINUTES = 5
 
 
+@shared_task(name="tasks.recalculate_device_playlists")
+def recalculate_device_playlists():
+    """Recalculate playlists for all devices based on time-based campaign scheduling and invalidate Redis cache."""
+    from core.database import SessionLocal
+    from core.models import Device
+    from crud.entidades.crud_campaign import crud_campaign
+    from core.config import get_redis_client
+
+    db = SessionLocal()
+    redis_client = get_redis_client()
+    try:
+        devices = db.query(Device).filter(Device.is_active == True).all()
+        updated_count = 0
+        
+        for device in devices:
+            # Get current campaign based on time-based scheduling
+            campaign = None
+            if device.current_campaign_id:
+                from core.models import Campaign
+                campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
+            
+            if not campaign:
+                campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+            
+            # Get current campaign version
+            current_campaign_id = str(campaign.id) if campaign else None
+            current_config_version = campaign.config_version if campaign else None
+            
+            # Invalidate Redis cache for this device
+            cache_key = f"device_playlist:{device.id}"
+            if redis_client:
+                try:
+                    redis_client.delete(cache_key)
+                    logger.info("Invalidated cache for device %s", device.id)
+                except Exception as e:
+                    logger.error("Failed to invalidate cache for device %s: %s", device.id, e)
+            
+            logger.info(
+                "Device %s: campaign=%s, config_version=%s",
+                device.id,
+                current_campaign_id,
+                current_config_version
+            )
+            updated_count += 1
+        
+        logger.info("recalculate_device_playlists: processed %d devices", updated_count)
+        return {"processed": updated_count}
+    except Exception as exc:
+        logger.error("recalculate_device_playlists failed: %s", exc)
+        raise
+    finally:
+        db.close()
+
+
 @shared_task(name="tasks.daily_device_stats")
 def daily_device_stats():
     """Pre-compute daily playback view counts per device and log them."""

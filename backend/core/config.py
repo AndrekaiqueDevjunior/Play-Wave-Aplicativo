@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
+import redis
 
 
 class Settings(BaseSettings):
@@ -52,3 +53,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_redis_client():
+    """Get Redis client connection."""
+    try:
+        return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    except Exception as e:
+        print(f"Failed to connect to Redis: {e}")
+        return None

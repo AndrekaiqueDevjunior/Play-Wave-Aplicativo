@@ -374,6 +374,21 @@ def get_device_playlist(
 
     crud_device.update_last_seen(db, db_obj=device)
 
+    # Check Redis cache first
+    from core.config import get_redis_client
+    import json
+    redis_client = get_redis_client()
+    cache_key = f"device_playlist:{device_id}"
+    
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                print(f"[playlist] device={device.id} cache hit")
+                return json.loads(cached)
+        except Exception as e:
+            print(f"[playlist] Redis error: {e}")
+
     # 1. Try explicit current_campaign_id on device
     campaign = None
     if device.current_campaign_id:
@@ -387,12 +402,19 @@ def get_device_playlist(
 
     if not campaign:
         print(f"[playlist] device={device.id} no active campaign found")
-        return {
+        response = {
             "device_name": device.name,
             "campaign": None,
             "media": [],
             "audio_playlist": _build_audio_playlist(device, db),
         }
+        # Cache empty response for 30 seconds
+        if redis_client:
+            try:
+                redis_client.setex(cache_key, 30, json.dumps(response))
+            except Exception as e:
+                print(f"[playlist] Redis set error: {e}")
+        return response
 
     media_order = campaign.media_order or []
     ordered_ids = [
@@ -418,7 +440,7 @@ def get_device_playlist(
             # Otherwise use device's playlist
             audio_playlist = _build_audio_playlist(device, db)
 
-    return {
+    response = {
         "device_name": device.name,
         "campaign": {
             "id": str(campaign.id),
@@ -446,6 +468,15 @@ def get_device_playlist(
         ],
         "audio_playlist": audio_playlist,
     }
+
+    # Cache response for 30 seconds (short TTL to allow quick updates)
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 30, json.dumps(response))
+        except Exception as e:
+            print(f"[playlist] Redis set error: {e}")
+
+    return response
 
 
 @router.get("/{device_id}", response_model=DeviceResponse)
