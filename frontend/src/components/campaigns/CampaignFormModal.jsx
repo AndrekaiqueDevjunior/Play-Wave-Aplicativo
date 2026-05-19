@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { assetUrl } from "@/utils/mediaUtils";
+import MediaThumb from "@/components/media/MediaThumb";
 import {
   Dialog,
   DialogContent,
@@ -383,32 +383,9 @@ export default function CampaignFormModal({
                             : "border-border hover:border-primary/30",
                         )}
                       >
-                        {/* Thumbnail or type icon */}
-                        <div className="w-14 h-9 rounded overflow-hidden bg-muted flex items-center justify-center shrink-0">
-                          {m.thumbnail_url ? (
-                            <img
-                              src={assetUrl(m.thumbnail_url)}
-                              alt={m.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.style.display = "none";
-                              }}
-                            />
-                          ) : m.type === "image" && m.file_url ? (
-                            <img
-                              src={assetUrl(m.file_url)}
-                              alt={m.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.style.display = "none";
-                                e.currentTarget.nextSibling &&
-                                  (e.currentTarget.nextSibling.style.display =
-                                    "flex");
-                              }}
-                            />
-                          ) : (
-                            <MediaTypeIcon type={m.type} />
-                          )}
+                        {/* Thumbnail (mostra primeiro frame para vídeos) */}
+                        <div className="w-14 h-9 rounded overflow-hidden bg-muted shrink-0">
+                          <MediaThumb media={m} />
                         </div>
 
                         <div className="flex-1 min-w-0">

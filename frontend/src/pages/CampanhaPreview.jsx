@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Maximize, Pause, Play, SkipForward } from "lucide-react";
@@ -7,12 +7,21 @@ import { Card } from "@/components/ui/card";
 import { buscarCampanha } from "@/api/campanhas";
 import { listarMidias } from "@/api/midias";
 import { resolveMediaType, resolveMediaUrl, assetUrl } from "@/utils/mediaUtils";
+import MediaThumb from "@/components/media/MediaThumb";
 
 export default function CampanhaPreview() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const stageRef = useRef(null);
+
+  const enterFullscreen = () => {
+    const el = stageRef.current;
+    if (!el) return;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+    if (req) req.call(el).catch(() => {});
+  };
 
   const { data: campaign, isLoading: loadingCampaign } = useQuery({
     queryKey: ["campaign", id],
@@ -62,13 +71,21 @@ export default function CampanhaPreview() {
       <div className="flex justify-center">
         <div className="w-full max-w-4xl">
           <Card className="overflow-hidden bg-black">
-            <div className="relative aspect-video flex items-center justify-center bg-black">
+            <div ref={stageRef} className="relative aspect-video flex items-center justify-center bg-black">
               {currentMedia ? (
                 (() => {
                   const mType = resolveMediaType(currentMedia);
                   const mSrc  = resolveMediaUrl(currentMedia);
                   if (mType === "video") return (
-                    <video key={currentMedia.id} src={mSrc} className="w-full h-full object-cover" controls autoPlay />
+                    <video
+                      key={currentMedia.id}
+                      src={mSrc}
+                      className="w-full h-full object-cover"
+                      controls
+                      autoPlay
+                      loop
+                      playsInline
+                    />
                   );
                   if (mType === "audio") return (
                     <div className="flex flex-col items-center gap-4 p-8 text-white">
@@ -142,7 +159,13 @@ export default function CampanhaPreview() {
             >
               <SkipForward className="w-4 h-4" />
             </Button>
-            <Button variant="outline" size="icon">
+            <Button
+              variant="outline"
+              size="icon"
+              disabled={medias.length === 0}
+              onClick={enterFullscreen}
+              title="Tela cheia"
+            >
               <Maximize className="w-4 h-4" />
             </Button>
           </div>
@@ -152,29 +175,13 @@ export default function CampanhaPreview() {
               <div
                 key={media.id}
                 onClick={() => setCurrentIndex(index)}
-                className={`shrink-0 w-20 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-colors bg-muted flex items-center justify-center ${
+                className={`shrink-0 w-20 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-colors bg-muted ${
                   index === currentIndex
                     ? "border-primary"
                     : "border-transparent opacity-60 hover:opacity-100"
                 }`}
               >
-                {media.thumbnail_url || (resolveMediaType(media) === "image" && media.file_url) ? (
-                  <img
-                    src={assetUrl(media.thumbnail_url || media.file_url)}
-                    alt={media.name}
-                    className="w-full h-full object-cover"
-                    onError={(e) => { e.currentTarget.style.display = "none"; }}
-                  />
-                ) : (
-                  <span className="text-base text-center">
-                    {resolveMediaType(media) === "video" ? "🎬"
-                      : resolveMediaType(media) === "audio" ? "🎵"
-                      : resolveMediaType(media) === "youtube" ? "▶️"
-                      : resolveMediaType(media) === "vimeo" ? "🎥"
-                      : resolveMediaType(media) === "external_url" ? "🔗"
-                      : "🖼"}
-                  </span>
-                )}
+                <MediaThumb media={media} />
               </div>
             ))}
           </div>

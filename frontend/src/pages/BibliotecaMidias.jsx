@@ -45,6 +45,7 @@ import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import MediaFormModal from "@/components/media/MediaFormModal";
+import MediaThumb from "@/components/media/MediaThumb";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   listarMidias,
@@ -230,17 +231,10 @@ export default function BibliotecaMidias() {
                 className="overflow-hidden group hover:shadow-md transition-shadow"
               >
                 <div className="relative aspect-video bg-muted overflow-hidden">
-                  {media.thumbnail_url || media.file_url ? (
-                    <img
-                      src={assetUrl(media.thumbnail_url || media.file_url)}
-                      alt={media.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <TypeIcon className="w-10 h-10 text-muted-foreground/40" />
-                    </div>
-                  )}
+                  <MediaThumb
+                    media={media}
+                    className="group-hover:scale-105 transition-transform duration-300"
+                  />
                   <div className="absolute top-2 left-2">
                     <Badge
                       variant="secondary"
@@ -364,17 +358,7 @@ export default function BibliotecaMidias() {
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-8 rounded bg-muted overflow-hidden shrink-0">
-                          {media.thumbnail_url || media.file_url ? (
-                            <img
-                              src={assetUrl(media.thumbnail_url || media.file_url)}
-                              alt={media.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <TypeIcon className="w-4 h-4 text-muted-foreground" />
-                            </div>
-                          )}
+                          <MediaThumb media={media} />
                         </div>
                         <p className="text-sm font-medium truncate max-w-[200px]">
                           {media.name}
