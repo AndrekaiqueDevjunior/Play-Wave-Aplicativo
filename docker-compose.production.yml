@@ -1,0 +1,358 @@
+# =============================================================================
+# PlayWave — Stack de Produção
+# Domínio: playwave.com.br
+# Servidor: 2.24.81.194
+# =============================================================================
+# Diferenças vs docker-compose.yml (dev):
+#   - Nenhum serviço interno expõe portas no host (apenas via rede Docker)
+#   - Apenas Nginx expõe 80/443 ao host
+#   - SSL via Let's Encrypt (Certbot)
+#   - CORS configurado para o domínio real
+#   - Frontend buildado com VITE_API_URL apontando ao domínio HTTPS
+#   - Logs em INFO, DEBUG=false
+#   - Restart policy: always
+#   - Limites de recursos (CPU/RAM) por serviço
+# =============================================================================
+
+services:
+  # ===========================================
+  # POSTGRESQL
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: playwave-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: playwave
+      POSTGRES_USER: playwave
+      POSTGRES_PASSWORD: 'Z7xK9mP2qR8nV4wY'
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playwave -d playwave"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ===========================================
+  # REDIS
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: playwave-redis
+    restart: always
+    command: redis-server --requirepass R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE", "--no-auth-warning", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+
+  # ===========================================
+  # RABBITMQ
+  # ===========================================
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: playwave-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: playwave
+      RABBITMQ_DEFAULT_PASS: T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE
+      RABBITMQ_DEFAULT_VHOST: playwave
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ===========================================
+  # BACKEND — FastAPI
+  # ===========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: playwave-backend
+    restart: always
+    environment:
+      # Database
+      DATABASE_URL: postgresql://playwave:Z7xK9mP2qR8nV4wY@postgres:5432/playwave
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: playwave
+      DATABASE_USER: playwave
+      DATABASE_PASSWORD: Z7xK9mP2qR8nV4wY
+
+      # Redis
+      REDIS_URL: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE
+      REDIS_DB: 0
+
+      # RabbitMQ
+      RABBITMQ_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: playwave
+      RABBITMQ_PASSWORD: T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE
+      RABBITMQ_VHOST: playwave
+
+      # Celery
+      CELERY_BROKER_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
+      CELERY_RESULT_BACKEND: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      CELERY_TASK_SERIALIZER: json
+      CELERY_RESULT_SERIALIZER: json
+      CELERY_ACCEPT_CONTENT: '["json"]'
+      CELERY_TIMEZONE: America/Sao_Paulo
+      CELERY_ENABLE_UTC: true
+
+      # Security — TROCAR em produção!
+      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+
+      # Application
+      DEBUG: "false"
+      ENVIRONMENT: production
+      API_V1_STR: /api/v1
+      PROJECT_NAME: Play Wave API
+      VERSION: 1.0.0
+
+      # CORS — domínio público + origens do APK Capacitor
+      # Android (androidScheme=https) envia Origin: https://localhost
+      # iOS envia Origin: capacitor://localhost
+      ALLOWED_ORIGINS: "https://playwave.com.br,https://www.playwave.com.br,https://localhost,capacitor://localhost"
+
+      # Seed inicial
+      ADMIN_INITIAL_EMAIL: admin@playwave.com
+      ADMIN_INITIAL_PASSWORD: "&2p0Kw45A&lLNX4bM%gpH*cy"
+      OPERATOR_INITIAL_EMAIL: operador@playwave.com
+      OPERATOR_INITIAL_PASSWORD: Troque@456!
+
+      # Upload
+      UPLOAD_DIR: uploads
+      MAX_FILE_SIZE: 524288000
+      ALLOWED_IMAGE_TYPES: '["image/jpeg","image/png","image/gif","image/webp"]'
+      ALLOWED_VIDEO_TYPES: '["video/mp4","video/avi","video/mov","video/webm"]'
+      ALLOWED_AUDIO_TYPES: '["audio/mp3","audio/wav","audio/ogg","audio/m4a","audio/aac"]'
+
+      # Log
+      LOG_LEVEL: INFO
+      LOG_FORMAT: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+      # Cache
+      CACHE_TTL: "3600"
+      CACHE_PREFIX: "playwave:"
+
+      # Rate Limiting
+      RATE_LIMIT_PER_MINUTE: 120
+      RATE_LIMIT_BURST: 200
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/alembic:/app/alembic
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ===========================================
+  # CELERY WORKER
+  # ===========================================
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: playwave-celery-worker
+    restart: always
+    command: celery -A core.celery worker --loglevel=info --concurrency=4
+    environment:
+      DATABASE_URL: postgresql://playwave:Z7xK9mP2qR8nV4wY@postgres:5432/playwave
+      REDIS_URL: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      RABBITMQ_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
+      CELERY_BROKER_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
+      CELERY_RESULT_BACKEND: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      CELERY_TIMEZONE: America/Sao_Paulo
+      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      UPLOAD_DIR: uploads
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - playwave-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ===========================================
+  # CELERY BEAT
+  # ===========================================
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: playwave-celery-beat
+    restart: always
+    command: celery -A core.celery beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://playwave:Z7xK9mP2qR8nV4wY@postgres:5432/playwave
+      REDIS_URL: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      CELERY_BROKER_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
+      CELERY_RESULT_BACKEND: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
+      CELERY_TIMEZONE: America/Sao_Paulo
+      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      UPLOAD_DIR: uploads
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - playwave-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================
+  # FRONTEND — React/Vite buildado
+  # ===========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: https://playwave.com.br
+        VITE_WS_URL:  wss://playwave.com.br/ws
+    container_name: playwave-frontend
+    restart: always
+    depends_on:
+      - backend
+    networks:
+      - playwave-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================
+  # NGINX — Reverse Proxy + SSL
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: playwave-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # CERTBOT — Let's Encrypt (renovação automática)
+  # ===========================================
+  certbot:
+    image: certbot/certbot:latest
+    container_name: playwave-certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/certbot/www:/var/www/certbot
+      - ./nginx/certbot/conf:/etc/letsencrypt
+    entrypoint: >
+      /bin/sh -c 'trap exit TERM;
+        while :; do
+          certbot renew --webroot -w /var/www/certbot --quiet;
+          sleep 12h & wait $${!};
+        done'
+    networks:
+      - playwave-network
+
+# ===========================================
+# VOLUMES
+# ===========================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+# ===========================================
+# REDE INTERNA
+# ===========================================
+networks:
+  playwave-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

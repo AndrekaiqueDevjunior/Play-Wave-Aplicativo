@@ -402,6 +402,7 @@ class CampaignBase(BaseSchema):
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
     schedule_end_time: Optional[str] = Field(None, max_length=10)
+    loop_count: Optional[int] = Field(None, ge=1)
     target_groups: Optional[List[str]] = None
 
     @field_validator('start_date', 'end_date', mode='before')
@@ -438,6 +439,9 @@ class CampaignUpdate(BaseSchema):
     schedule_all_day: Optional[bool] = None
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
+    schedule_end_time: Optional[str] = Field(None, max_length=10)
+    loop_count: Optional[int] = Field(None, ge=1)
+    target_groups: Optional[List[str]] = None
 
     @field_validator('start_date', 'end_date', mode='before')
     @classmethod
@@ -452,8 +456,6 @@ class CampaignUpdate(BaseSchema):
         if v == "":
             return None
         return v
-    schedule_end_time: Optional[str] = Field(None, max_length=10)
-    target_groups: Optional[List[str]] = None
 
 
 # AudioPlaylist Schemas

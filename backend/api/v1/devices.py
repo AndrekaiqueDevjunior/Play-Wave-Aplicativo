@@ -509,6 +509,9 @@ def get_device_playlist(
             "schedule_days": campaign.schedule_days,
             "schedule_start_time": str(campaign.schedule_start_time) if campaign.schedule_start_time else None,
             "schedule_end_time": str(campaign.schedule_end_time) if campaign.schedule_end_time else None,
+            "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
+            "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
+            "loop_count": campaign.loop_count,
             "config_version": campaign.config_version,
         },
         "media": [

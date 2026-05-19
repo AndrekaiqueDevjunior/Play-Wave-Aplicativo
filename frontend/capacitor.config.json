@@ -1,0 +1,43 @@
+{
+  "appId":   "com.playwave.player",
+  "appName": "PlayWave Player",
+  "webDir":  "dist",
+  "bundledWebRuntime": false,
+
+  "server": {
+    "url":            "https://playwave.com.br/player",
+    "androidScheme": "https",
+    "cleartext":     true
+  },
+
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration":   3000,
+      "launchAutoHide":       true,
+      "backgroundColor":      "#000000",
+      "androidSplashResourceName": "splash",
+      "showSpinner":          false,
+      "androidScaleType":     "CENTER_CROP"
+    },
+    "KeepAwake": {
+      "keepAwake": true
+    },
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style":           "Dark",
+      "backgroundColor": "#000000"
+    }
+  },
+
+  "android": {
+    "buildOptions": {
+      "keystorePath":         "release.keystore",
+      "keystoreAlias":        "playwave",
+      "releaseType":          "APK"
+    },
+    "webContentsDebuggingEnabled": true,
+    "allowMixedContent":           true,
+    "captureInput":                true,
+    "webviewSelectionGranularity": "character"
+  }
+}

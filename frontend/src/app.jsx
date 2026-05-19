@@ -57,7 +57,15 @@ import Apresentacao from "@/pages/Apresentacao";
 // Login
 import Login from "@/pages/Login";
 
+function isNativePlayerShell() {
+  if (typeof window === "undefined") return false;
+  const platform = window.Capacitor?.getPlatform?.();
+  return Boolean(platform && platform !== "web");
+}
+
 function App() {
+  const nativePlayerShell = isNativePlayerShell();
+
   return (
     // Router envolve tudo — AuthProvider pode usar useNavigate() com segurança
     <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -68,6 +76,7 @@ function App() {
             <Route path="/login" element={<Login />} />
 
             {/* Player de TV — autenticação de device, sem layout admin */}
+            {nativePlayerShell && <Route path="/" element={<Player />} />}
             <Route path="/player" element={<Player />} />
             <Route path="/apresentacao" element={<Apresentacao />} />
 

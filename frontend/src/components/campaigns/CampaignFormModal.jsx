@@ -34,6 +34,7 @@ const DEFAULT_FORM = {
   priority: 1,
   start_date: "",
   end_date: "",
+  loop_count: "",
   media_ids: [],
   audio_playlist_id: "",
   video_muted: true,
@@ -47,10 +48,16 @@ const DEFAULT_FORM = {
 
 const NO_AUDIO_PLAYLIST = "__none__";
 
+// Input type="date" só guarda data; datetime-local preserva hora.
+// Backend recebe "YYYY-MM-DDTHH:MM" e Pydantic converte para datetime.
 const toDateInputValue = (value) => {
-  if (!value) return "";
-  if (typeof value === "string") return value.slice(0, 10);
-  return "";
+  if (!value || typeof value !== "string") return "";
+  return value.slice(0, 10);
+};
+const toDateTimeInputValue = (value) => {
+  if (!value || typeof value !== "string") return "";
+  // Aceita "YYYY-MM-DDTHH:MM[:SS...]" ou "YYYY-MM-DD".
+  return value.slice(0, 16);
 };
 
 function MediaTypeIcon({ type }) {
@@ -94,7 +101,8 @@ export default function CampaignFormModal({
         status: campaign.status || "draft",
         priority: campaign.priority || 1,
         start_date: toDateInputValue(campaign.start_date),
-        end_date: toDateInputValue(campaign.end_date),
+        end_date: toDateTimeInputValue(campaign.end_date),
+        loop_count: campaign.loop_count != null ? String(campaign.loop_count) : "",
         media_ids: Array.isArray(campaign.media_ids) ? campaign.media_ids : [],
         audio_playlist_id: campaign.audio_playlist_id || "",
         video_muted: campaign.video_muted !== false,
@@ -147,6 +155,7 @@ export default function CampaignFormModal({
           )
         : form.device_ids;
 
+      const loopCountInt = parseInt(form.loop_count, 10);
       await onSave({
         ...form,
         priority: Number(form.priority),
@@ -154,6 +163,7 @@ export default function CampaignFormModal({
         video_muted: form.video_muted !== false,
         start_date: form.start_date || null,
         end_date: form.end_date || null,
+        loop_count: Number.isFinite(loopCountInt) && loopCountInt > 0 ? loopCountInt : null,
         device_ids: normalizedDeviceIds,
       });
     } finally {
@@ -286,12 +296,15 @@ export default function CampaignFormModal({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Data Fim</Label>
+                    <Label>Data e hora de término</Label>
                     <Input
-                      type="date"
+                      type="datetime-local"
                       value={form.end_date}
                       onChange={(e) => set("end_date", e.target.value)}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Em branco = sem data de término. O player para cravado neste instante.
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -324,10 +337,12 @@ export default function CampaignFormModal({
                   </p>
                 </div>
                 <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <div>
-                    <Label>Som dos vídeos</Label>
+                  <div className="pr-3">
+                    <Label>Som embutido dos vídeos</Label>
                     <p className="text-xs text-muted-foreground">
-                      Permite tocar o áudio embutido nos vídeos desta campanha.
+                      {form.video_muted
+                        ? "Vídeos mutados. O som vem da rádio indoor acima (se houver)."
+                        : "Vídeos tocam com a trilha de áudio do próprio arquivo. Desligue a rádio indoor para evitar áudio duplicado."}
                     </p>
                   </div>
                   <Switch
@@ -511,7 +526,7 @@ export default function CampaignFormModal({
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Início</Label>
+                        <Label>Início diário</Label>
                         <Input
                           type="time"
                           value={form.schedule_start_time}
@@ -521,7 +536,7 @@ export default function CampaignFormModal({
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Fim</Label>
+                        <Label>Fim diário</Label>
                         <Input
                           type="time"
                           value={form.schedule_end_time}
@@ -533,6 +548,23 @@ export default function CampaignFormModal({
                     </div>
                   </>
                 )}
+
+                <div className="border-t pt-4 space-y-2">
+                  <Label>Número de repetições da playlist</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={form.loop_count}
+                    placeholder="Em branco = loop infinito"
+                    onChange={(e) => set("loop_count", e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Quantas vezes a fila completa deve ser repetida. O player para no
+                    que acontecer primeiro: este contador, a hora diária de fim, ou a
+                    data de término definida na aba Informações.
+                  </p>
+                </div>
               </div>
             )}
           </div>

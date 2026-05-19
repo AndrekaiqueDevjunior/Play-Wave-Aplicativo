@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   isApiConfigured,
   pairRequest,
@@ -6,6 +6,7 @@ import {
   getDevicePlaylist,
   sendHeartbeat,
 } from "@/lib/api";
+import { getBaseUrl } from "@/api/http";
 import {
   registrarPlayback,
   buscarComandosPendentes,
@@ -19,16 +20,16 @@ import ErrorScreen from "@/components/player/ErrorScreen";
 import MediaRenderer from "@/components/player/MediaRenderer";
 import PlayerOSD from "@/components/player/PlayerOSD";
 import { assetUrl } from "@/utils/mediaUtils";
+import { PairingStorage, PlaylistCache } from "@/player-core/storage";
+import { executeCommand } from "@/player-core/commands";
+import Platform, { acquireWakeLock, releaseWakeLock } from "@/player-core/platform";
+import { startWatchdog, stopWatchdog, notifyHeartbeatOk, useOnlineStatus } from "@/player-core/network";
 
 const HEARTBEAT_INTERVAL = 30_000;
 const POLL_PAIRING_INTERVAL = 3_000;
 const POLL_PLAYLIST_INTERVAL = 30_000;
 const POLL_COMMANDS_INTERVAL = 10_000;
 const PLAYER_VERSION = "3.1.0";
-
-const LS_CODE  = "pw_player_code";
-const LS_ID    = "pw_player_device_id";
-const LS_TOKEN = "pw_player_device_token";
 
 function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -38,26 +39,53 @@ function generateCode() {
   );
 }
 
-function loadSavedPairing() {
-  return {
-    code:  localStorage.getItem(LS_CODE)  || null,
-    id:    localStorage.getItem(LS_ID)    || null,
-    token: localStorage.getItem(LS_TOKEN) || null,
-  };
+function getDebugMode() {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("debug") === "true" || localStorage.getItem("pw_player_debug") === "true";
 }
 
-function savePairing(code, id, token) {
-  localStorage.setItem(LS_CODE,  code);
-  localStorage.setItem(LS_ID,    id);
-  localStorage.setItem(LS_TOKEN, token);
-}
+function PlayerDebugOverlay({ data }) {
+  if (!data?.enabled) return null;
+  const rows = [
+    ["device", data.deviceId || "-"],
+    ["pairing", data.pairingCode || "-"],
+    ["platform", `${data.platform} / capacitor=${data.isCapacitor ? "yes" : "no"}`],
+    ["phase", data.phase],
+    ["online", String(data.isOnline)],
+    ["campaign", data.campaignId || "-"],
+    ["index", `${data.currentIndex + 1}/${data.totalItems}`],
+    ["loops", data.schedule?.loopCount
+      ? `${data.loopsCompleted}/${data.schedule.loopCount}`
+      : `${data.loopsCompleted}/∞`],
+    ["stopAt", data.schedule?.endDate || data.schedule?.scheduleEndTime || "-"],
+    ["media", data.media ? `${data.media.type} - ${data.media.name}` : "-"],
+    ["url", data.media?.file_url || "-"],
+    ["next", data.nextMedia ? `${data.nextMedia.type} - ${data.nextMedia.name}` : "-"],
+    ["lastSync", data.lastSync || "-"],
+    ["videoEvent", data.video?.event || "-"],
+    ["ready/network", `${data.video?.readyState ?? "-"} / ${data.video?.networkState ?? "-"}`],
+    ["play", data.video?.paused === false ? "playing" : "not playing"],
+    ["videoError", data.video?.error?.name || data.lastError?.event || "-"],
+  ];
 
-function clearPairing() {
-  [LS_CODE, LS_ID, LS_TOKEN].forEach((k) => localStorage.removeItem(k));
+  return (
+    <div className="fixed left-2 top-2 z-50 max-w-[92vw] w-[460px] rounded bg-black/80 p-3 text-[11px] leading-snug text-lime-100 font-mono pointer-events-none">
+      <div className="mb-1 text-white font-semibold">PLAYWAVE DEBUG</div>
+      {rows.map(([key, value]) => (
+        <div key={key} className="grid grid-cols-[90px_1fr] gap-2 border-t border-white/10 py-0.5">
+          <span className="text-white/50">{key}</span>
+          <span className="truncate">{String(value)}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function Player() {
-  const saved = loadSavedPairing();
+  const saved = PairingStorage.load();
+  const isOnline = useOnlineStatus();
+  const debugMode = useMemo(getDebugMode, []);
 
   // Generate or reuse pairing code
   const [pairingCode] = useState(() => saved.code || generateCode());
@@ -77,9 +105,16 @@ export default function Player() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress,   setProgress]    = useState(0);
   const [viewsCount, setViewsCount]  = useState(0);
+  // Critérios de parada da campanha — preenchidos pelo /playlist
+  // schedule: { endDate?: ISO, scheduleEndTime?: "HH:MM", loopCount?: number }
+  const [campaignSchedule, setCampaignSchedule] = useState(null);
+  const [loopsCompleted, setLoopsCompleted] = useState(0);
   const [apiStatus,  setApiStatus]   = useState(
     isApiConfigured() ? "connecting" : "no_api",
   );
+  const [videoDebug, setVideoDebug] = useState(null);
+  const [lastError, setLastError] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
 
   const pollPairRef      = useRef(null);
   const pollPlaylistRef  = useRef(null);
@@ -89,9 +124,34 @@ export default function Player() {
   const startTimeRef     = useRef(null);
   const deviceTokenRef   = useRef(deviceToken);
   const sseRef           = useRef(null);
+  const failedMediaIdsRef = useRef(new Set());
 
   // Keep ref in sync so callbacks always have the latest token
   useEffect(() => { deviceTokenRef.current = deviceToken; }, [deviceToken]);
+
+  // ── 0. Inicialização da plataforma ────────────────────────────────────────
+  useEffect(() => {
+    const apiBase = getBaseUrl();
+    console.log("[player] platform:", Platform.name, "online:", isOnline, "api:", apiBase || "(relative)");
+    // Sanity-check: APK/Capacitor com base em localhost = APK foi compilado com .env de dev.
+    // No celular, localhost aponta para o próprio aparelho — API e mídia nunca carregam.
+    if (Platform.isCapacitor && /localhost|127\.0\.0\.1/.test(apiBase)) {
+      console.error(
+        "[player] FATAL_CONFIG: VITE_API_URL aponta para localhost dentro de APK Capacitor.",
+        "Recompile com .env.production apontando para o domínio público (npm run build:apk).",
+        { apiBase },
+      );
+    }
+    acquireWakeLock();
+    startWatchdog(120_000, () => {
+      console.warn("[player] watchdog triggered — forcing reload of playlist");
+      setPhase("loading");
+    });
+    return () => {
+      releaseWakeLock();
+      stopWatchdog();
+    };
+  }, []);
 
   // ── 1. Register pairing code ─────────────────────────────────────────────
   useEffect(() => {
@@ -111,7 +171,7 @@ export default function Player() {
         console.log("[player] pairing poll:", res);
         if (res?.status === "paired" && res.device_id && res.device_token) {
           clearInterval(pollPairRef.current);
-          savePairing(pairingCode, res.device_id, res.device_token);
+          PairingStorage.save(pairingCode, res.device_id, res.device_token);
           setDeviceId(res.device_id);
           setDeviceToken(res.device_token);
           deviceTokenRef.current = res.device_token;
@@ -139,18 +199,27 @@ export default function Player() {
         ...m,
         file_url: assetUrl(m.file_url),
       }));
+      setLastSync(new Date().toISOString());
 
       if (res?.campaign?.id) {
         setCampaignId(res.campaign.id);
       }
       setVideoMuted(res?.campaign?.video_muted !== false);
       setAudioPlaylist(res?.audio_playlist || null);
+      setCampaignSchedule(res?.campaign ? {
+        endDate: res.campaign.end_date || null,
+        scheduleEndTime: res.campaign.schedule_end_time || null,
+        loopCount: res.campaign.loop_count ?? null,
+      } : null);
+      setLoopsCompleted(0);
 
       if (medias.length > 0) {
+        failedMediaIdsRef.current.clear();
         setPlaylist(medias);
         setCurrentIndex(0);
         setProgress(0);
         setPhase("playing");
+        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(() => {});
         return true;
       }
       return false;
@@ -168,18 +237,27 @@ export default function Player() {
         console.log("[player] no media yet, entering no_campaign phase");
         setPhase("no_campaign");
       }
-    }).catch((err) => {
+    }).catch(async (err) => {
       const msg = err?.message || "";
       const isAuthError = msg.includes("401") || msg.includes("403") || msg.includes("Token");
       if (isAuthError) {
         console.error("[player] auth error, clearing saved pairing:", msg);
-        clearPairing();
+        PairingStorage.clear();
         setDeviceId(null);
         setDeviceToken(null);
         setPhase("waiting");
       } else {
-        console.error("[player] playlist load failed (server error), entering no_campaign:", msg);
-        setPhase("no_campaign");
+        console.error("[player] playlist load failed — trying cache, then no_campaign:", msg);
+        const cached = await PlaylistCache.get(deviceId).catch(() => null);
+        if (cached?.medias?.length > 0) {
+          console.log("[player] using cached playlist (", cached.medias.length, "items)");
+          setPlaylist(cached.medias);
+          setCurrentIndex(0);
+          setProgress(0);
+          setPhase("playing");
+        } else {
+          setPhase("no_campaign");
+        }
       }
     });
   }, [phase, deviceId, deviceToken, loadPlaylist]);
@@ -203,6 +281,107 @@ export default function Player() {
     return () => clearInterval(pollPlaylistRef.current);
   }, [phase, deviceId, deviceToken, loadPlaylist]);
 
+  const selectNextPlayableIndex = useCallback((fromIndex) => {
+    if (playlist.length <= 1) return 0;
+    for (let step = 1; step <= playlist.length; step += 1) {
+      const nextIndex = (fromIndex + step) % playlist.length;
+      const nextMedia = playlist[nextIndex];
+      if (nextMedia && !failedMediaIdsRef.current.has(nextMedia.id)) {
+        return nextIndex;
+      }
+    }
+    failedMediaIdsRef.current.clear();
+    return (fromIndex + 1) % playlist.length;
+  }, [playlist]);
+
+  const advanceMedia = useCallback((reason = "advance") => {
+    if (!playlist.length) return;
+    const currentMedia = playlist[currentIndex];
+    const duration = (currentMedia?.duration || 10) * 1000;
+    const failed = String(reason).startsWith("failed");
+
+    if (currentMedia && campaignId && deviceToken) {
+      registrarPlayback(deviceId, deviceToken, {
+        campaign_id: campaignId,
+        media_id: currentMedia.id,
+        started_at: new Date(Date.now() - duration).toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: duration,
+        status: failed ? "failed" : "completed",
+      }).catch(() => {});
+    }
+
+    setCurrentIndex((prev) => {
+      const next = selectNextPlayableIndex(prev);
+      // Detecta volta completa da playlist: chegou no fim e voltou para 0 (ou retornou ao primeiro válido).
+      if (next <= prev) {
+        setLoopsCompleted((n) => n + 1);
+      }
+      return next;
+    });
+    setViewsCount((prev) => prev + 1);
+  }, [campaignId, currentIndex, deviceId, deviceToken, playlist, selectNextPlayableIndex]);
+
+  const handleMediaError = useCallback((payload) => {
+    const currentMedia = playlist[currentIndex];
+    const errorPayload = {
+      ...payload,
+      currentIndex,
+      media_id: currentMedia?.id || payload?.media?.id || null,
+      timestamp: new Date().toISOString(),
+    };
+    console.error("[player] media failed, skipping:", errorPayload);
+    setLastError(errorPayload);
+    if (currentMedia?.id) failedMediaIdsRef.current.add(currentMedia.id);
+    setTimeout(() => advanceMedia(`failed:${payload?.event || "media_error"}`), 500);
+  }, [advanceMedia, currentIndex, playlist]);
+
+  // ── 5a. Stop condition: end_date / schedule_end_time / loop_count ────────
+  // Programa um setTimeout cravado para o instante de parada e força recarga.
+  // O backend reavaliará e retornará vazio se a campanha tiver expirado.
+  useEffect(() => {
+    if (phase !== "playing" || !campaignSchedule) return;
+
+    // 1) Parada por loop_count atingido → força reload imediato
+    if (campaignSchedule.loopCount && loopsCompleted >= campaignSchedule.loopCount) {
+      console.log("[player] loop_count atingido:", loopsCompleted, "/", campaignSchedule.loopCount);
+      setPhase("loading");
+      return;
+    }
+
+    // 2) Calcula o instante absoluto de parada (menor entre end_date e schedule_end_time hoje)
+    const now = Date.now();
+    const stopAtCandidates = [];
+
+    if (campaignSchedule.endDate) {
+      const endDateMs = Date.parse(campaignSchedule.endDate);
+      if (Number.isFinite(endDateMs) && endDateMs > now) stopAtCandidates.push(endDateMs);
+    }
+
+    if (campaignSchedule.scheduleEndTime) {
+      const match = /^(\d{1,2}):(\d{2})/.exec(campaignSchedule.scheduleEndTime);
+      if (match) {
+        const today = new Date();
+        today.setHours(Number(match[1]), Number(match[2]), 0, 0);
+        const stopToday = today.getTime();
+        if (stopToday > now) stopAtCandidates.push(stopToday);
+      }
+    }
+
+    if (stopAtCandidates.length === 0) return;
+
+    const stopAt = Math.min(...stopAtCandidates);
+    const delay = Math.min(stopAt - now, 2_147_483_000); // cap setTimeout 32-bit
+    console.log("[player] stop scheduled for", new Date(stopAt).toISOString(), `(in ${Math.round(delay / 1000)}s)`);
+
+    const timer = setTimeout(() => {
+      console.log("[player] stop time reached — reloading playlist for re-evaluation");
+      setPhase("loading");
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [phase, campaignSchedule, loopsCompleted]);
+
   // ── 5. Progress + media advance ──────────────────────────────────────────
   useEffect(() => {
     if (phase !== "playing" || playlist.length === 0) return;
@@ -215,28 +394,13 @@ export default function Player() {
       setProgress(Math.min(elapsed / duration, 1));
     }, 250);
 
-    const advance = setTimeout(() => {
-      const prevIndex = currentIndex;
-      const prevMedia = playlist[prevIndex];
-      if (prevMedia && campaignId && deviceToken) {
-        registrarPlayback(deviceId, deviceToken, {
-          campaign_id: campaignId,
-          media_id: prevMedia.id,
-          started_at: new Date(Date.now() - duration).toISOString(),
-          ended_at: new Date().toISOString(),
-          duration_ms: duration,
-          status: "completed",
-        }).catch(() => {});
-      }
-      setCurrentIndex((prev) => (prev + 1) % playlist.length);
-      setViewsCount((prev) => prev + 1);
-    }, duration);
+    const advance = setTimeout(() => advanceMedia("duration_elapsed"), duration);
 
     return () => {
       clearInterval(progressRef.current);
       clearTimeout(advance);
     };
-  }, [phase, currentIndex, playlist]);
+  }, [phase, currentIndex, playlist, advanceMedia]);
 
   // ── 6. Poll device commands (sync, refresh_playlist, clear_cache, restart) ──
   useEffect(() => {
@@ -253,40 +417,15 @@ export default function Player() {
           let success = true;
           let errorMessage = null;
 
-          try {
-            switch (cmd.command_type) {
-              case "sync":
-                console.log("[player] command: sync");
-                setPhase("loading");
-                break;
-              case "refresh_playlist":
-                console.log("[player] command: refresh_playlist");
-                setPhase("loading");
-                break;
-              case "clear_cache":
-                console.log("[player] command: clear_cache");
-                setPlaylist([]);
-                setPhase("loading");
-                break;
-              case "restart":
-                // Soft restart: reseta o estado do app sem reload da página.
-                // Reload duro mata o "user activation" do navegador e o vídeo
-                // volta a tocar mudo (política de autoplay com som). O soft
-                // restart preserva o ciclo de vida da aba e o som continua.
-                console.log("[player] command: restart (soft reset)");
-                setPlaylist([]);
-                setCurrentIndex(0);
-                setProgress(0);
-                setPhase("loading");
-                break;
-              default:
-                console.warn("[player] unknown command:", cmd.command_type);
-            }
-          } catch (execErr) {
-            success = false;
-            errorMessage = execErr?.message || String(execErr);
-            console.error("[player] command execution failed:", errorMessage);
-          }
+          const result = await executeCommand(cmd, {
+            deviceId,
+            setPhase,
+            setPlaylist,
+            setCurrentIndex,
+            setProgress,
+          });
+          success = result.success;
+          errorMessage = result.errorMessage;
 
           await ackComando(deviceId, cmd.id, deviceToken, success, errorMessage);
           console.log("[player] command ACK sent:", cmd.id, success ? "success" : "failed");
@@ -361,6 +500,7 @@ export default function Player() {
           current_campaign_id: campaignId,
           current_media_name: playlist[currentIndex]?.name || null,
         });
+        notifyHeartbeatOk();
         console.log("[player] heartbeat:", res);
         if (res?.playlist_updated) setPhase("loading");
       } catch (err) {
@@ -386,20 +526,69 @@ export default function Player() {
     />
   );
 
+  const current = playlist[currentIndex] || null;
+  const nextMedia = playlist.length ? playlist[(currentIndex + 1) % playlist.length] : null;
+  const debugData = {
+    enabled: debugMode,
+    deviceId,
+    pairingCode,
+    platform: Platform.name,
+    isCapacitor: Platform.isCapacitor,
+    isOnline,
+    phase,
+    campaignId,
+    currentIndex,
+    totalItems: playlist.length,
+    schedule: campaignSchedule,
+    loopsCompleted,
+    media: current,
+    nextMedia,
+    video: videoDebug,
+    lastError,
+    lastSync,
+  };
+
   if (phase === "waiting") {
     return (
       <>
         {renderAudio()}
         <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} />
+        <PlayerDebugOverlay data={debugData} />
       </>
     );
   }
 
   if (phase === "loading") {
+    if (current) {
+      return (
+        <div className="fixed inset-0 bg-black">
+          <MediaRenderer
+            media={current}
+            progress={progress}
+            videoMuted={videoMuted}
+            onDebug={setVideoDebug}
+            onError={handleMediaError}
+            onEnded={advanceMedia}
+          />
+          <PlayerOSD
+            media={current}
+            totalItems={playlist.length}
+            currentIndex={currentIndex}
+            deviceName={deviceName}
+          />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-white text-sm">
+            Sincronizando playlist...
+          </div>
+          <PlayerDebugOverlay data={debugData} />
+          {renderAudio()}
+        </div>
+      );
+    }
     return (
       <>
         {renderAudio()}
         <LoadingScreen message="Carregando playlist..." />
+        <PlayerDebugOverlay data={debugData} />
       </>
     );
   }
@@ -410,12 +599,13 @@ export default function Player() {
         {renderAudio()}
         <ErrorScreen
           onRetry={() => {
-            clearPairing();
+            PairingStorage.clear();
             setDeviceId(null);
             setDeviceToken(null);
             setPhase("waiting");
           }}
         />
+        <PlayerDebugOverlay data={debugData} />
       </>
     );
   }
@@ -437,18 +627,20 @@ export default function Player() {
             <p className="text-xs text-white/20 mt-3">O player verifica automaticamente a cada 30s</p>
           </div>
         </div>
+        <PlayerDebugOverlay data={debugData} />
       </>
     );
   }
 
-  const current = playlist[currentIndex];
   return (
     <div className="fixed inset-0 bg-black">
       <MediaRenderer
         media={current}
         progress={progress}
         videoMuted={videoMuted}
-        onEnded={() => setCurrentIndex((prev) => (prev + 1) % playlist.length)}
+        onDebug={setVideoDebug}
+        onError={handleMediaError}
+        onEnded={advanceMedia}
       />
       <PlayerOSD
         media={current}
@@ -456,6 +648,7 @@ export default function Player() {
         currentIndex={currentIndex}
         deviceName={deviceName}
       />
+      <PlayerDebugOverlay data={debugData} />
       {renderAudio()}
     </div>
   );

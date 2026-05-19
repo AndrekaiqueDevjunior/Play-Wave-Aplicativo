@@ -189,6 +189,7 @@ class Campaign(Base):
     schedule_days = Column(JSON, nullable=True)
     schedule_start_time = Column(String(10), nullable=True)
     schedule_end_time = Column(String(10), nullable=True)
+    loop_count = Column(Integer, nullable=True)
     total_views = Column(Integer, default=0)
     target_groups = Column(JSON, nullable=True)
     config_version = Column(String(100), nullable=True)
