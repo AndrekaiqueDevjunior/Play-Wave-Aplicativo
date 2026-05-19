@@ -37,7 +37,7 @@ const DEFAULT_FORM = {
 // para esses tipos. external_url (link/iframe) usa duration como tempo.
 const TYPES_USING_DURATION = new Set(["image", "external_url"]);
 
-export default function MediaFormModal({ open, onClose, onSave, media }) {
+export default function MediaFormModal({ open, onClose, onSave, onUploaded, media }) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -110,32 +110,43 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      let file_url = form.file_url;
-      let file_size = media?.file_size || 0;
-
-      if (file && mode === "upload") {
-        setUploading(true);
-        try {
-          const uploaded = await uploadMidia(file, { name: form.name, type: form.type });
-          file_url = uploaded?.file_url || "";
-          file_size = file.size;
-        } finally {
-          setUploading(false);
-        }
-      }
-
       const tags = form.tags
         ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
         : [];
       const usesDuration = TYPES_USING_DURATION.has(form.type);
+      const durationValue = usesDuration ? Number(form.duration) || null : null;
+
+      // ── Caminho UPLOAD: cria via /media/upload com TODOS os campos ─────
+      // (antes o modal criava o registro via upload e DEPOIS chamava onSave,
+      //  que criava um SEGUNDO registro via /media — gerando duplicatas.)
+      if (file && mode === "upload" && !media) {
+        setUploading(true);
+        try {
+          const uploaded = await uploadMidia(file, {
+            name: form.name,
+            type: form.type,
+            description: form.description || undefined,
+            category: form.category || undefined,
+            tags: tags.length ? tags.join(",") : undefined,
+            duration: durationValue,
+            notes: form.notes || undefined,
+          });
+          if (onUploaded) onUploaded(uploaded);
+        } finally {
+          setUploading(false);
+        }
+        return;
+      }
+
+      // ── Caminho URL EXTERNA ou EDIT: chama onSave ──────────────────────
       await onSave({
         name: form.name,
         description: form.description,
         type: form.type,
-        file_url,
-        thumbnail_url: file_url,
-        duration: usesDuration ? Number(form.duration) || null : null,
-        file_size,
+        file_url: form.file_url,
+        thumbnail_url: form.file_url,
+        duration: durationValue,
+        file_size: media?.file_size || 0,
         tags,
         notes: form.notes,
         category: form.category,

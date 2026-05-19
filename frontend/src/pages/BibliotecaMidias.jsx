@@ -431,6 +431,15 @@ export default function BibliotecaMidias() {
           setEditMedia(null);
         }}
         onSave={handleSave}
+        onUploaded={(uploaded) => {
+          queryClient.invalidateQueries({ queryKey: ["media"] });
+          toast({
+            title: "Mídia enviada!",
+            description: `${uploaded?.name || "Arquivo"} foi adicionado.`,
+          });
+          setModalOpen(false);
+          setEditMedia(null);
+        }}
         media={editMedia}
       />
       <ConfirmDialog
