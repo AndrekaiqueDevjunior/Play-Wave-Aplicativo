@@ -297,7 +297,14 @@ export default function Player() {
   const advanceMedia = useCallback((reason = "advance") => {
     if (!playlist.length) return;
     const currentMedia = playlist[currentIndex];
-    const duration = (currentMedia?.duration || 10) * 1000;
+    // Para playback log: usa tempo real desde o startTime quando duration não
+    // foi definida (vídeo/áudio com duração natural).
+    const elapsedMs = startTimeRef.current
+      ? Math.max(Date.now() - startTimeRef.current, 0)
+      : 0;
+    const duration = currentMedia?.duration && currentMedia.duration > 0
+      ? currentMedia.duration * 1000
+      : elapsedMs;
     const failed = String(reason).startsWith("failed");
 
     if (currentMedia && campaignId && deviceToken) {
@@ -385,10 +392,22 @@ export default function Player() {
   // ── 5. Progress + media advance ──────────────────────────────────────────
   useEffect(() => {
     if (phase !== "playing" || playlist.length === 0) return;
-    const duration = (playlist[currentIndex]?.duration || 10) * 1000;
+    const media = playlist[currentIndex];
+    // Vídeo/áudio sem duration definida tocam até o fim natural — o avanço
+    // vem do onEnded do <video>/<audio>. Para esses casos não programamos
+    // timer manual nem barra de progresso.
+    const usesNaturalDuration =
+      (media?.type === "video" || media?.type === "audio") &&
+      (media?.duration == null || media?.duration <= 0);
+
     startTimeRef.current = Date.now();
     setProgress(0);
 
+    if (usesNaturalDuration) {
+      return undefined;
+    }
+
+    const duration = (media?.duration || 10) * 1000;
     progressRef.current = setInterval(() => {
       const elapsed = Date.now() - startTimeRef.current;
       setProgress(Math.min(elapsed / duration, 1));

@@ -44,7 +44,8 @@ export default function MidiaUpload() {
     await uploadMidia(file, {
       name: form.name,
       type: isVideo ? "video" : "image",
-      duration: form.duration,
+      // Vídeo: sem duration manual — toca até o fim natural do arquivo.
+      duration: isVideo ? null : form.duration,
       notes: form.notes,
       tags: JSON.stringify(tags),
       status: "available",

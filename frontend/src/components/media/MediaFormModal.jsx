@@ -32,6 +32,11 @@ const DEFAULT_FORM = {
   category: "",
 };
 
+// image precisa de tempo de exibição. video/audio tocam até o fim natural
+// do arquivo (onEnded dispara o avanço) — duration manual é descartada
+// para esses tipos. external_url (link/iframe) usa duration como tempo.
+const TYPES_USING_DURATION = new Set(["image", "external_url"]);
+
 export default function MediaFormModal({ open, onClose, onSave, media }) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [file, setFile] = useState(null);
@@ -122,13 +127,14 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
       const tags = form.tags
         ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
         : [];
+      const usesDuration = TYPES_USING_DURATION.has(form.type);
       await onSave({
         name: form.name,
         description: form.description,
         type: form.type,
         file_url,
         thumbnail_url: file_url,
-        duration: Number(form.duration),
+        duration: usesDuration ? Number(form.duration) || null : null,
         file_size,
         tags,
         notes: form.notes,
@@ -276,15 +282,30 @@ export default function MediaFormModal({ open, onClose, onSave, media }) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Duração (s)</Label>
-              <Input
-                type="number"
-                min="1"
-                value={form.duration}
-                onChange={(e) => set("duration", e.target.value)}
-              />
-            </div>
+            {TYPES_USING_DURATION.has(form.type) ? (
+              <div className="space-y-2">
+                <Label>Duração (s)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={form.duration}
+                  onChange={(e) => set("duration", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tempo de exibição em tela.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Duração</Label>
+                <div className="h-10 px-3 rounded-md border border-input bg-muted/40 flex items-center text-sm text-muted-foreground">
+                  Até o fim do arquivo
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {form.type === "video" ? "Vídeo" : "Áudio"} toca em loop dentro da campanha — o player avança quando o arquivo termina.
+                </p>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
