@@ -1,5 +1,6 @@
-import secrets
 import json
+import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi.responses import StreamingResponse
@@ -18,8 +19,11 @@ from core.models import (
     AudioTrack,
     AudioTrackStatus,
     Campaign,
+    CampaignPlaylistItem,
+    DESTRUCTIVE_COMMAND_TYPES,
     Device,
     DeviceCommand,
+    DeviceCommandStatus,
     DeviceEvent,
     DevicePairingCode,
     DeviceSession,
@@ -60,7 +64,11 @@ class HeartbeatBody(BaseModel):
     player_version: Optional[str] = None
     storage_used: Optional[int] = None
     current_campaign_id: Optional[str] = None
+    current_config_version: Optional[str] = None
+    current_media_id: Optional[str] = None
     current_media_name: Optional[str] = None
+    last_error: Optional[str] = None
+    playback_status: Optional[str] = None
 
 
 class PlaybackBody(BaseModel):
@@ -88,6 +96,11 @@ def get_device_by_token(
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Dispositivo bloqueado",
+        )
+    if getattr(device, "requires_repairing", False):
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Dispositivo requer novo pareamento",
         )
     return device
 
@@ -154,6 +167,177 @@ def _sync_campaigns_for_device(db: Session, *, device: Device, campaign_id: Opti
     device.current_campaign_id = target_campaign.id if target_campaign else None
     device.current_campaign = target_campaign.name if target_campaign else None
     db.add(device)
+
+
+def _remove_device_from_campaigns(db: Session, *, device_id: str) -> None:
+    campaigns = db.query(Campaign).filter(Campaign.device_ids.isnot(None)).all()
+    changed = False
+
+    for campaign in campaigns:
+        original_ids = [str(item) for item in (campaign.device_ids or [])]
+        next_ids = [item for item in original_ids if item != device_id]
+        if next_ids != original_ids:
+            campaign.device_ids = next_ids
+            campaign.config_version = str(uuid.uuid4())
+            db.add(campaign)
+            changed = True
+
+    if changed:
+        db.commit()
+
+
+def _playlist_cache_key(device_id: str) -> str:
+    return f"device_playlist:{device_id}"
+
+
+def _get_redis_client():
+    from core.config import get_redis_client
+
+    return get_redis_client()
+
+
+def _campaign_payload(campaign: Campaign) -> dict:
+    return {
+        "id": str(campaign.id),
+        "name": campaign.name,
+        "media_ids": campaign.media_ids or [],
+        "media_order": campaign.media_order or [],
+        "video_muted": campaign.video_muted is not False,
+        "schedule_all_day": campaign.schedule_all_day,
+        "schedule_days": campaign.schedule_days,
+        "schedule_start_time": str(campaign.schedule_start_time) if campaign.schedule_start_time else None,
+        "schedule_end_time": str(campaign.schedule_end_time) if campaign.schedule_end_time else None,
+        "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
+        "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
+        "loop_count": campaign.loop_count,
+        "config_version": campaign.config_version,
+    }
+
+
+def _media_playback_duration(
+    media: Media,
+    *,
+    item_override: Optional[int] = None,
+) -> Optional[int]:
+    media_type = media.type.value if hasattr(media.type, "value") else media.type
+    if item_override and item_override > 0:
+        return item_override
+    if media.display_duration_seconds and media.display_duration_seconds > 0:
+        return media.display_duration_seconds
+    if media_type in ("image", "external_url"):
+        return media.duration or 15
+    return None
+
+
+def _media_is_valid_for_player(media: Media, *, now: Optional[datetime] = None) -> bool:
+    status_value = media.status.value if hasattr(media.status, "value") else media.status
+    if status_value != "available" or media.is_active is False:
+        return False
+    now = now or datetime.utcnow()
+    if media.starts_at and media.starts_at > now:
+        return False
+    if media.ends_at and media.ends_at < now:
+        return False
+    return True
+
+
+def _item_window_active(
+    item: CampaignPlaylistItem, *, now: Optional[datetime] = None
+) -> bool:
+    if not item.is_active:
+        return False
+    now = now or datetime.utcnow()
+    if item.starts_at and item.starts_at > now:
+        return False
+    if item.ends_at and item.ends_at < now:
+        return False
+    return True
+
+
+def _resolve_playlist_entries(
+    db: Session, *, campaign: Campaign
+) -> List[tuple[Optional[CampaignPlaylistItem], str]]:
+    """Resolve campaign playlist as ordered (item, media_id) tuples.
+
+    Prefers relational campaign_playlist_items; falls back to legacy
+    media_order/media_ids JSON for campaigns not yet backfilled or migrated.
+    """
+    items = (
+        db.query(CampaignPlaylistItem)
+        .filter(CampaignPlaylistItem.campaign_id == campaign.id)
+        .order_by(CampaignPlaylistItem.order_index, CampaignPlaylistItem.created_at)
+        .all()
+    )
+    if items:
+        return [(item, str(item.media_id)) for item in items]
+
+    legacy_order = campaign.media_order or []
+    legacy_ids = [
+        item.get("media_id") if isinstance(item, dict) else item
+        for item in legacy_order
+    ] or (campaign.media_ids or [])
+    return [(None, str(mid)) for mid in legacy_ids if mid]
+
+
+def _build_media_payload(
+    db: Session,
+    *,
+    campaign: Campaign,
+) -> List[dict]:
+    entries = _resolve_playlist_entries(db, campaign=campaign)
+    if not entries:
+        return []
+
+    media_ids = {media_id for _, media_id in entries}
+    media_items = db.query(Media).filter(Media.id.in_(media_ids)).all()
+    media_by_id = {str(media.id): media for media in media_items}
+
+    payload: List[dict] = []
+    now = datetime.utcnow()
+    for item, media_id in entries:
+        media = media_by_id.get(media_id)
+        if not media or not _media_is_valid_for_player(media, now=now):
+            continue
+        if item is not None and not _item_window_active(item, now=now):
+            continue
+
+        media_type = media.type.value if hasattr(media.type, "value") else media.type
+        item_duration = item.display_duration_seconds if item else None
+        effective_duration = _media_playback_duration(media, item_override=item_duration)
+        play_until_end = media_type in ("video", "audio") and not effective_duration
+
+        starts_at = (item.starts_at if item and item.starts_at else media.starts_at)
+        ends_at = (item.ends_at if item and item.ends_at else media.ends_at)
+
+        media_entry = {
+            "id": str(media.id),
+            "media_id": str(media.id),
+            "name": media.name,
+            "type": media_type,
+            "file_url": media.file_url,
+            "thumbnail_url": media.thumbnail_url,
+            "duration": effective_duration,
+            "duration_seconds": media.duration_seconds,
+            "display_duration_seconds": effective_duration,
+            "play_until_end": play_until_end,
+            "file_version": media.file_version or 1,
+            "file_hash": media.file_hash,
+            "mime_type": media.mime_type,
+            "status": media.status.value if hasattr(media.status, "value") else media.status,
+            "starts_at": starts_at.isoformat() if starts_at else None,
+            "ends_at": ends_at.isoformat() if ends_at else None,
+        }
+        if item is not None:
+            media_entry["item_id"] = str(item.id)
+            media_entry["repeat_count"] = item.repeat_count or 1
+            repeat = item.repeat_count or 1
+        else:
+            repeat = 1
+
+        for _ in range(max(repeat, 1)):
+            payload.append(media_entry)
+
+    return payload
 
 
 def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
@@ -230,6 +414,40 @@ def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
         "loop": playlist.loop_enabled,
         "shuffle": playlist.shuffle_enabled,
         "tracks": ordered,
+    }
+
+
+def _resolve_player_campaign(db: Session, *, device: Device) -> Optional[Campaign]:
+    if device.current_campaign_id:
+        campaign = crud_campaign.get(db, id=str(device.current_campaign_id))
+        if campaign:
+            return campaign
+    return crud_campaign.get_active_for_device(db, device_id=str(device.id))
+
+
+def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
+    campaign = _resolve_player_campaign(db, device=device)
+    if not campaign:
+        return {
+            "device_name": device.name,
+            "campaign": None,
+            "media": [],
+            "audio_playlist": _build_audio_playlist(device, db),
+        }
+
+    audio_playlist = None
+    if campaign.audio_playlist_id:
+        playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
+        if playlist and playlist.status == AudioPlaylistStatus.ACTIVE:
+            audio_playlist = _build_audio_playlist_from_model(playlist, db)
+    elif device.audio_playlist_id:
+        audio_playlist = _build_audio_playlist(device, db)
+
+    return {
+        "device_name": device.name,
+        "campaign": _campaign_payload(campaign),
+        "media": _build_media_payload(db, campaign=campaign),
+        "audio_playlist": audio_playlist,
     }
 
 
@@ -386,6 +604,17 @@ def check_pairing_status(code: str, db: Session = Depends(get_db)):
             pairing.used_at = datetime.utcnow()
             db.commit()
             return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
+        if pairing.status == "waiting" and device_for_code and not device_for_code.device_token:
+            device_for_code.device_token = secrets.token_urlsafe(32)
+            device_for_code.requires_repairing = False
+            device_for_code.status = "online"
+            device_for_code.paired_at = datetime.utcnow()
+            pairing.status = "paired"
+            pairing.device_id = device_for_code.id
+            pairing.used_at = datetime.utcnow()
+            db.commit()
+            db.refresh(device_for_code)
+            return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
 
         result: dict = {"status": pairing.status, "device_id": None, "device_token": None}
         if pairing.status == "paired" and pairing.device_id:
@@ -410,6 +639,8 @@ def check_pairing_status(code: str, db: Session = Depends(get_db)):
 
     if device.status == "waiting_pairing":
         device.device_token = secrets.token_urlsafe(32)
+        device.requires_repairing = False
+        device.paired_at = datetime.utcnow()
         db.commit()
         db.refresh(device)
         return {"status": "paired", "device_id": str(device.id), "device_token": device.device_token}
@@ -426,113 +657,21 @@ def get_device_playlist(
     if str(device.id) != device_id:
         raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
 
-    crud_device.update_last_seen(db, db_obj=device)
-
-    # Check Redis cache first
-    from core.config import get_redis_client
-    import json
-    redis_client = get_redis_client()
-    cache_key = f"device_playlist:{device_id}"
+    redis_client = _get_redis_client()
+    cache_key = _playlist_cache_key(device_id)
     
     if redis_client:
         try:
             cached = redis_client.get(cache_key)
             if cached:
-                print(f"[playlist] device={device.id} cache hit")
-                cached_resp = json.loads(cached)
-                _sync_device_config_version(db, device, cached_resp)
-                return cached_resp
+                return json.loads(cached)
         except Exception as e:
             print(f"[playlist] Redis error: {e}")
 
-    # 1. Try explicit current_campaign_id on device
-    campaign = None
-    if device.current_campaign_id:
-        campaign = crud_campaign.get(db, id=str(device.current_campaign_id))
-        print(f"[playlist] device={device.id} current_campaign_id={device.current_campaign_id} found={campaign is not None}")
-
-    # 2. Fallback: find active campaign that targets this device via device_ids
-    if not campaign:
-        campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
-        print(f"[playlist] device={device.id} fallback campaign={campaign.id if campaign else None}")
-
-    if not campaign:
-        print(f"[playlist] device={device.id} no active campaign found")
-        response = {
-            "device_name": device.name,
-            "campaign": None,
-            "media": [],
-            "audio_playlist": _build_audio_playlist(device, db),
-        }
-        _sync_device_config_version(db, device, response)
-        # Cache empty response for 30 seconds
-        if redis_client:
-            try:
-                redis_client.setex(cache_key, 30, json.dumps(response))
-            except Exception as e:
-                print(f"[playlist] Redis set error: {e}")
-        return response
-
-    media_order = campaign.media_order or []
-    ordered_ids = [
-        item.get("media_id") if isinstance(item, dict) else item
-        for item in media_order
-    ] or campaign.media_ids or []
-
-    media_by_id: dict = {}
-    if ordered_ids:
-        media_items = db.query(Media).filter(Media.id.in_(ordered_ids)).all()
-        media_by_id = {str(m.id): m for m in media_items}
-
-    # Use campaign's audio playlist if set, otherwise fall back to device's
-    audio_playlist_source = campaign.audio_playlist_id or device.audio_playlist_id
-    audio_playlist = None
-    if audio_playlist_source:
-        # If campaign has its own playlist, build from campaign
-        if campaign.audio_playlist_id:
-            playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
-            if playlist and playlist.status == AudioPlaylistStatus.ACTIVE:
-                audio_playlist = _build_audio_playlist_from_model(playlist, db)
-        else:
-            # Otherwise use device's playlist
-            audio_playlist = _build_audio_playlist(device, db)
-
-    response = {
-        "device_name": device.name,
-        "campaign": {
-            "id": str(campaign.id),
-            "name": campaign.name,
-            "media_ids": campaign.media_ids or [],
-            "media_order": campaign.media_order or [],
-            "video_muted": campaign.video_muted is not False,
-            "schedule_all_day": campaign.schedule_all_day,
-            "schedule_days": campaign.schedule_days,
-            "schedule_start_time": str(campaign.schedule_start_time) if campaign.schedule_start_time else None,
-            "schedule_end_time": str(campaign.schedule_end_time) if campaign.schedule_end_time else None,
-            "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
-            "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
-            "loop_count": campaign.loop_count,
-            "config_version": campaign.config_version,
-        },
-        "media": [
-            {
-                "id": str(m.id),
-                "name": m.name,
-                "type": m.type.value if hasattr(m.type, "value") else m.type,
-                "file_url": m.file_url,
-                "duration": m.duration or 10,
-                "mime_type": m.mime_type,
-                "status": m.status.value if hasattr(m.status, "value") else m.status,
-            }
-            for media_id in ordered_ids
-            if (m := media_by_id.get(str(media_id)))
-        ],
-        "audio_playlist": audio_playlist,
-    }
+    response = _build_player_playlist_response(db, device=device)
 
     _sync_device_config_version(db, device, response)
 
-    # Cache response for 30 seconds (short TTL to allow quick updates)
     if redis_client:
         try:
             redis_client.setex(cache_key, 30, json.dumps(response))
@@ -648,7 +787,8 @@ def update_device(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para atualizar este dispositivo",
         )
-    if device_in.pairing_code and device_in.pairing_code != device.pairing_code:
+    pairing_code_changed = bool(device_in.pairing_code and device_in.pairing_code != device.pairing_code)
+    if pairing_code_changed:
         if crud_device.get_by_pairing_code(db, pairing_code=device_in.pairing_code):
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,
@@ -660,11 +800,27 @@ def update_device(
         next_campaign_id = update_data.pop("current_campaign_id", None)
         for field, value in update_data.items():
             setattr(device, field, value)
+        if pairing_code_changed:
+            device.device_token = None
+            device.requires_repairing = True
+            device.pairing_version = (device.pairing_version or 1) + 1
+            device.token_version = (device.token_version or 1) + 1
+            device.status = "waiting_pairing"
+            db.query(DeviceSession).filter(
+                DeviceSession.device_id == device.id,
+                DeviceSession.is_active == True,
+            ).update(
+                {
+                    "is_active": False,
+                    "revoked_at": datetime.utcnow(),
+                },
+                synchronize_session=False,
+            )
         if "current_campaign_id" in device_in.model_fields_set:
             _sync_campaigns_for_device(db, device=device, campaign_id=next_campaign_id)
         db.commit()
         db.refresh(device)
-        if any(field in device_in.model_fields_set for field in ("current_campaign_id", "audio_playlist_id")):
+        if any(field in device_in.model_fields_set for field in ("current_campaign_id", "audio_playlist_id", "pairing_code")):
             _invalidate_device_playlist_cache(device_id=str(device.id))
         return device
     except IntegrityError as exc:
@@ -699,6 +855,8 @@ def delete_device(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para remover este dispositivo",
         )
+
+    _remove_device_from_campaigns(db, device_id=device_id)
 
     db.query(PlaybackLog).filter(PlaybackLog.device_id == device_id).delete(synchronize_session=False)
     db.query(ViewReport).filter(ViewReport.device_id == device_id).delete(synchronize_session=False)
@@ -779,6 +937,60 @@ def unblock_device(
     return {"message": "Dispositivo desbloqueado com sucesso"}
 
 
+@router.post("/{device_id}/pairing-code/regenerate", response_model=DeviceResponse)
+def regenerate_pairing_code(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    device_id: str,
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Dispositivo não encontrado",
+        )
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Sem permissão para atualizar este dispositivo",
+        )
+
+    next_code = None
+    for _ in range(10):
+        candidate = "TV-" + secrets.token_hex(2).upper()
+        if not crud_device.get_by_pairing_code(db, pairing_code=candidate):
+            next_code = candidate
+            break
+    if not next_code:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível gerar código único de pareamento",
+        )
+
+    device.pairing_code = next_code
+    device.device_token = None
+    device.requires_repairing = True
+    device.pairing_version = (device.pairing_version or 1) + 1
+    device.token_version = (device.token_version or 1) + 1
+    device.status = "waiting_pairing"
+    db.query(DeviceSession).filter(
+        DeviceSession.device_id == device.id,
+        DeviceSession.is_active == True,
+    ).update(
+        {
+            "is_active": False,
+            "revoked_at": datetime.utcnow(),
+        },
+        synchronize_session=False,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    _invalidate_device_playlist_cache(device_id=str(device.id))
+    return device
+
+
 @router.post("/{device_id}/heartbeat")
 def device_heartbeat(
     device_id: str,
@@ -789,12 +1001,15 @@ def device_heartbeat(
     if str(device.id) != device_id:
         raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
 
-    crud_device.update_last_seen(db, db_obj=device, ip_address=body.ip_address)
-
+    device.last_seen_at = datetime.utcnow()
+    if body.ip_address:
+        device.ip_address = body.ip_address
     if body.player_version:
         device.player_version = body.player_version
     if body.storage_used is not None:
         device.storage_used = body.storage_used
+    if body.current_config_version:
+        device.config_version = body.current_config_version
     if body.current_campaign_id is not None:
         if body.current_campaign_id:
             campaign = db.query(Campaign).filter(Campaign.id == body.current_campaign_id).first()
@@ -805,20 +1020,15 @@ def device_heartbeat(
             device.current_campaign = None
     if device.status != "online":
         device.status = "online"
+    db.add(device)
     db.commit()
-    db.refresh(device)
 
     pending_count = db.query(DeviceCommand).filter(
         DeviceCommand.device_id == device_id,
         DeviceCommand.status == "pending",
     ).count()
 
-    current_campaign = None
-    if device.current_campaign_id:
-        current_campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
-    if not current_campaign:
-        current_campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
-
+    current_campaign = _resolve_player_campaign(db, device=device)
     target_version = current_campaign.config_version if current_campaign else None
     has_update = device.config_version != target_version
 
@@ -934,7 +1144,21 @@ def get_device_metrics(
 
 # ─── Admin: Send command ──────────────────────────────────────────────────────
 
-VALID_COMMANDS = {"restart", "sync", "clear_cache", "screenshot", "refresh_playlist"}
+VALID_COMMANDS = {
+    "sync",
+    "refresh_playlist",
+    "clear_cache",
+    "reload_player",
+    "restart_app",
+    "restart",
+    "restart_device",
+    "shutdown_device",
+    "screenshot",
+    "take_screenshot",
+    "set_volume",
+    "mute",
+    "unmute",
+}
 
 
 @router.get("/{device_id}/sessions", response_model=List[DeviceSessionResponse])
@@ -981,6 +1205,13 @@ def send_device_command(
             detail=f"Comando inválido. Válidos: {sorted(VALID_COMMANDS)}",
         )
 
+    # SPEC 003 — comandos destrutivos exigem usuario identificado para auditoria.
+    if body.command_type in DESTRUCTIVE_COMMAND_TYPES and not getattr(current_user, "email", None):
+        raise HTTPException(
+            status_code=403,
+            detail="Comandos destrutivos exigem usuário autenticado com e-mail registrado.",
+        )
+
     cmd = crud_device_command.create(
         db,
         device_id=device_id,
@@ -988,7 +1219,57 @@ def send_device_command(
         command_type=body.command_type,
         requested_by=current_user.email,
         payload=body.payload,
+        expires_in_seconds=body.expires_in_seconds,
     )
+
+    # SPEC 003 — notificar player em tempo real para nao esperar polling 10s.
+    try:
+        from services.event_bus import publish_device_event
+
+        publish_device_event(
+            str(device.id),
+            event_type="command:new",
+            data={
+                "command_id": str(cmd.id),
+                "command_type": cmd.command_type,
+                "is_destructive": cmd.is_destructive,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — SSE eh best-effort
+        print(f"[devices] command:new publish failed for {device.id}: {exc}")
+
+    return cmd
+
+
+@router.post("/{device_id}/commands/{command_id}/cancel", response_model=DeviceCommandResponse)
+def cancel_device_command(
+    device_id: str,
+    command_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancela comando ainda nao executado.
+
+    Permitido apenas para comandos em PENDING ou SENT. Comandos em
+    RECEIVED/EXECUTING ja sao responsabilidade do player.
+    """
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    cmd = crud_device_command.get(db, command_id=command_id)
+    if not cmd or str(cmd.device_id) != device_id:
+        raise HTTPException(status_code=404, detail="Comando não encontrado")
+
+    if cmd.status not in (DeviceCommandStatus.PENDING, DeviceCommandStatus.SENT):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Comando em estado {cmd.status} não pode ser cancelado.",
+        )
+
+    cmd = crud_device_command.cancel(db, obj=cmd)
     return cmd
 
 
@@ -1019,10 +1300,7 @@ def get_pending_commands(
         raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
 
     commands = crud_device_command.get_pending(db, device_id=device_id)
-    for cmd in commands:
-        crud_device_command.mark_sent(db, obj=cmd)
-
-    return [
+    response = [
         {
             "id": str(cmd.id),
             "command_type": cmd.command_type,
@@ -1031,6 +1309,9 @@ def get_pending_commands(
         }
         for cmd in commands
     ]
+    crud_device_command.mark_many_sent(db, commands=commands)
+
+    return response
 
 
 @router.get("/{device_id}/playlist/updates")
@@ -1185,11 +1466,7 @@ def _sync_device_config_version(db: Session, device: Device, response: dict) -> 
 
 def _build_snapshot(db: Session, device: Device) -> dict:
     """Constrói o snapshot inicial enviado quando o SSE conecta."""
-    campaign = None
-    if device.current_campaign_id:
-        campaign = db.query(Campaign).filter(Campaign.id == device.current_campaign_id).first()
-    if not campaign:
-        campaign = crud_campaign.get_active_for_device(db, device_id=str(device.id))
+    campaign = _resolve_player_campaign(db, device=device)
 
     return {
         "campaign_id": str(campaign.id) if campaign else None,
@@ -1222,7 +1499,51 @@ def ack_device_command(
     if not cmd or str(cmd.device_id) != device_id:
         raise HTTPException(status_code=404, detail="Comando não encontrado")
 
-    cmd = crud_device_command.ack(db, obj=cmd, success=body.success, error_message=body.error_message)
+    # `body.result` agora eh um CommandAckResult (Pydantic) ou None.
+    # Serializa para dict antes de persistir no campo JSON.
+    result_payload = None
+    if body.result is not None:
+        result_payload = body.result.model_dump(mode="json", exclude_none=True)
+
+    cmd = crud_device_command.ack(
+        db,
+        obj=cmd,
+        success=body.success,
+        error_message=body.error_message,
+        result=result_payload,
+    )
+    return {"ok": True, "status": cmd.status}
+
+
+@router.post("/{device_id}/commands/{command_id}/received")
+def mark_device_command_received(
+    device_id: str,
+    command_id: str,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+    cmd = crud_device_command.get(db, command_id=command_id)
+    if not cmd or str(cmd.device_id) != device_id:
+        raise HTTPException(status_code=404, detail="Comando não encontrado")
+    cmd = crud_device_command.mark_received(db, obj=cmd)
+    return {"ok": True, "status": cmd.status}
+
+
+@router.post("/{device_id}/commands/{command_id}/started")
+def mark_device_command_started(
+    device_id: str,
+    command_id: str,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+    cmd = crud_device_command.get(db, command_id=command_id)
+    if not cmd or str(cmd.device_id) != device_id:
+        raise HTTPException(status_code=404, detail="Comando não encontrado")
+    cmd = crud_device_command.mark_executing(db, obj=cmd)
     return {"ok": True, "status": cmd.status}
 
 

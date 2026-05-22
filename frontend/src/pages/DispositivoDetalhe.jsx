@@ -16,12 +16,19 @@ import {
   Clock,
   Wifi,
   WifiOff,
-  AlertCircle,
-  CheckCircle2,
+  AlertTriangle,
+  KeyRound,
+  RotateCcw,
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { buscarDispositivo, atualizarDispositivo, listarComandosDispositivo } from "@/api/dispositivos";
+import {
+  buscarDispositivo,
+  atualizarDispositivo,
+  listarComandosDispositivo,
+  regenerarCodigoPareamento,
+  cancelarComando,
+} from "@/api/dispositivos";
 import {
   sendDeviceCommand,
   getDeviceMetrics,
@@ -30,6 +37,13 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import moment from "moment";
+import {
+  COMMANDS_BY_GROUP,
+  commandLabel,
+  isDestructive,
+} from "@/utils/deviceCommands";
+import CommandHistoryTimeline from "@/components/devices/CommandHistoryTimeline";
+import DestructiveCommandConfirmDialog from "@/components/devices/DestructiveCommandConfirmDialog";
 
 export default function DispositivoDetalhe() {
   const { id } = useParams();
@@ -37,7 +51,10 @@ export default function DispositivoDetalhe() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [commandLoading, setCommandLoading] = useState(null);
+  const [pairingLoading, setPairingLoading] = useState(false);
   const [syncLog, setSyncLog] = useState([]);
+  const [pendingDestructive, setPendingDestructive] = useState(null); // { command, label }
+  const [cancellingId, setCancellingId] = useState(null);
 
   const { data: device, isLoading } = useQuery({
     queryKey: ["device", id],
@@ -56,7 +73,8 @@ export default function DispositivoDetalhe() {
     queryKey: ["device-commands", id],
     queryFn: () => listarComandosDispositivo(id, { limit: 30 }),
     enabled: isApiConfigured() && !!id,
-    refetchInterval: 15_000,
+    // SPEC 003 — 5s para feedback rápido durante operações destrutivas.
+    refetchInterval: 5_000,
   });
 
   const updateMutation = useMutation({
@@ -66,10 +84,29 @@ export default function DispositivoDetalhe() {
   });
 
   const handleCommand = async (command, label) => {
+    // SPEC 003 — comandos destrutivos passam por modal de confirmação.
+    if (isDestructive(command)) {
+      setPendingDestructive({ command, label });
+      return;
+    }
+    await sendCommand(command, label);
+  };
+
+  const sendCommand = async (command, label) => {
     setCommandLoading(command);
     let result = null;
     if (isApiConfigured()) {
-      result = await sendDeviceCommand(id, command);
+      try {
+        result = await sendDeviceCommand(id, command);
+      } catch (err) {
+        toast({
+          title: `Falha ao enviar "${label}"`,
+          description: err?.message || "Erro desconhecido.",
+          variant: "destructive",
+        });
+        setCommandLoading(null);
+        return;
+      }
     }
     const entry = {
       date: moment().format("DD/MM HH:mm"),
@@ -92,6 +129,30 @@ export default function DispositivoDetalhe() {
     setCommandLoading(null);
   };
 
+  const confirmDestructive = async () => {
+    if (!pendingDestructive) return;
+    const { command, label } = pendingDestructive;
+    await sendCommand(command, label);
+    setPendingDestructive(null);
+  };
+
+  const handleCancelCommand = async (commandId) => {
+    setCancellingId(commandId);
+    try {
+      await cancelarComando(id, commandId);
+      toast({ title: "Comando cancelado", description: "O comando foi cancelado antes da execução." });
+      queryClient.invalidateQueries({ queryKey: ["device-commands", id] });
+    } catch (err) {
+      toast({
+        title: "Falha ao cancelar",
+        description: err?.message || "Comando pode já ter sido executado.",
+        variant: "destructive",
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   const handleToggleActive = async () => {
     if (!device) return;
     await updateMutation.mutateAsync({ is_active: !device.is_active });
@@ -100,6 +161,31 @@ export default function DispositivoDetalhe() {
         ? "Dispositivo desativado"
         : "Dispositivo ativado",
     });
+  };
+
+  const handleRegeneratePairing = async () => {
+    if (!device) return;
+    const confirmed = window.confirm(
+      "Regenerar o código de pareamento vai derrubar o player atual e exigir novo pareamento nesta TV. Continuar?",
+    );
+    if (!confirmed) return;
+    setPairingLoading(true);
+    try {
+      const updated = await regenerarCodigoPareamento(id);
+      queryClient.invalidateQueries({ queryKey: ["device", id] });
+      toast({
+        title: "Código regenerado",
+        description: `Novo código: ${updated?.pairing_code || "gerado"}. O player antigo precisará parear novamente.`,
+      });
+    } catch (error) {
+      toast({
+        title: "Erro ao regenerar código",
+        description: error?.message || "Não foi possível regenerar o pareamento.",
+        variant: "destructive",
+      });
+    } finally {
+      setPairingLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -153,36 +239,20 @@ export default function DispositivoDetalhe() {
     { label: "Grupo", value: device.group || "—" },
   ];
 
-  const commands = [
-    { command: "sync", label: "Sincronizar", icon: RefreshCw },
-    { command: "refresh_playlist", label: "Atualizar Playlist", icon: Download },
-    { command: "clear_cache", label: "Limpar Cache", icon: Trash2 },
-    { command: "restart", label: "Reiniciar Player", icon: Monitor },
-  ];
+  // SPEC 003 — Ícones por command_type.
+  const COMMAND_ICONS = {
+    sync: RefreshCw,
+    refresh_playlist: Download,
+    clear_cache: Trash2,
+    reload_player: RotateCcw,
+    restart_app: Monitor,
+    restart_device: Power,
+    shutdown_device: Power,
+  };
 
-  const statusLabel = { pending: "Pendente", sent: "Enviado", executed: "Executado", failed: "Falhou", cancelled: "Cancelado" };
-  const statusIcon = { executed: "success", failed: "error", pending: "info", sent: "info", cancelled: "info" };
-
-  const apiLogs = (commandHistory || []).map((c) => ({
-    date: moment(c.requested_at).format("DD/MM HH:mm"),
-    status: statusIcon[c.status] || "info",
-    message: `${c.command_type} — ${statusLabel[c.status] || c.status}${c.error_message ? `: ${c.error_message}` : ""}`,
-    origin: c.requested_by || "admin",
-  }));
-
-  const allLogs =
-    apiLogs.length > 0
-      ? apiLogs
-      : [
-          ...syncLog,
-          {
-            date: "—",
-            status: "info",
-            message: isApiConfigured()
-              ? "Nenhum comando enviado ainda."
-              : "Histórico de sessões anteriores indisponível sem backend.",
-          },
-        ];
+  const devicePlatform = device?.player_version
+    ? `${device.os || "?"} (player ${device.player_version})`
+    : device?.os || null;
 
   return (
     <div className="space-y-6">
@@ -256,38 +326,69 @@ export default function DispositivoDetalhe() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {commands.map(({ command, label, icon: Icon }) => (
+      <div className="space-y-3">
+        <CommandGroup
+          title="Operacional"
+          subtitle="Recarrega dados sem interromper o player."
+          commands={COMMANDS_BY_GROUP.operational}
+          icons={COMMAND_ICONS}
+          commandLoading={commandLoading}
+          onCommand={handleCommand}
+        />
+        <CommandGroup
+          title="Reset do app"
+          subtitle="Reinicia o app do player."
+          commands={COMMANDS_BY_GROUP.reset}
+          icons={COMMAND_ICONS}
+          commandLoading={commandLoading}
+          onCommand={handleCommand}
+          variant="warn"
+        />
+        <CommandGroup
+          title="Energia (físico)"
+          subtitle="Operações no SO. Requer permissão adequada por plataforma."
+          commands={COMMANDS_BY_GROUP.power}
+          icons={COMMAND_ICONS}
+          commandLoading={commandLoading}
+          onCommand={handleCommand}
+          variant="destructive"
+        />
+
+        <div className="flex flex-wrap gap-2 pt-1 border-t border-border">
           <Button
-            key={command}
             variant="outline"
             size="sm"
-            disabled={commandLoading === command}
-            onClick={() => handleCommand(command, label)}
+            disabled={pairingLoading}
+            onClick={handleRegeneratePairing}
           >
-            <Icon
-              className={cn(
-                "w-4 h-4 mr-2",
-                commandLoading === command && "animate-spin",
-              )}
-            />
-            {commandLoading === command ? "Enviando..." : label}
+            <KeyRound className={cn("w-4 h-4 mr-2", pairingLoading && "animate-spin")} />
+            {pairingLoading ? "Regenerando..." : "Regenerar Pareamento"}
           </Button>
-        ))}
-        <Button
-          variant="outline"
-          size="sm"
-          className={
-            device.is_active
-              ? "text-destructive border-destructive/30"
-              : "text-emerald-600 border-emerald-300"
-          }
-          onClick={handleToggleActive}
-        >
-          <Power className="w-4 h-4 mr-2" />
-          {device.is_active ? "Desativar" : "Ativar"}
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={
+              device.is_active
+                ? "text-destructive border-destructive/30"
+                : "text-emerald-600 border-emerald-300"
+            }
+            onClick={handleToggleActive}
+          >
+            <Power className="w-4 h-4 mr-2" />
+            {device.is_active ? "Desativar" : "Ativar"}
+          </Button>
+        </div>
       </div>
+
+      <DestructiveCommandConfirmDialog
+        open={!!pendingDestructive}
+        onOpenChange={(open) => !open && setPendingDestructive(null)}
+        commandType={pendingDestructive?.command}
+        deviceName={device.name}
+        devicePlatform={devicePlatform}
+        onConfirm={confirmDestructive}
+        loading={commandLoading === pendingDestructive?.command}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
@@ -314,13 +415,13 @@ export default function DispositivoDetalhe() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Log de Comandos</CardTitle>
+              <CardTitle className="text-base">Histórico de Comandos</CardTitle>
               {isApiConfigured() ? (
                 <Badge
                   variant="outline"
                   className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200"
                 >
-                  FastAPI ativo
+                  Tempo real (5s)
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-xs">
@@ -330,34 +431,61 @@ export default function DispositivoDetalhe() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-0">
-              {allLogs.map((entry, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-3 py-2.5 border-b border-border last:border-0"
-                >
-                  {entry.status === "success" && (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                  )}
-                  {entry.status === "error" && (
-                    <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                  )}
-                  {entry.status === "info" && (
-                    <div className="w-4 h-4 shrink-0" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm">{entry.message}</p>
-                    {entry.date !== "—" && (
-                      <p className="text-xs text-muted-foreground">
-                        {entry.date}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CommandHistoryTimeline
+              commands={commandHistory || []}
+              onCancel={isApiConfigured() ? handleCancelCommand : undefined}
+              cancellingId={cancellingId}
+            />
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bloco de botões agrupados por categoria — Operacional / Reset / Energia.
+ */
+function CommandGroup({ title, subtitle, commands, icons, commandLoading, onCommand, variant }) {
+  const groupClass = {
+    destructive: "border-red-200 bg-red-50/30",
+    warn: "border-amber-200 bg-amber-50/30",
+  }[variant] || "border-border";
+
+  const buttonClass = {
+    destructive: "text-red-700 border-red-300 hover:bg-red-50",
+    warn: "text-amber-800 border-amber-300 hover:bg-amber-50",
+  }[variant] || "";
+
+  return (
+    <div className={`border rounded-lg p-3 ${groupClass}`}>
+      <div className="mb-2">
+        <h4 className="text-sm font-semibold">{title}</h4>
+        {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {commands.map(({ command, label, tooltip }) => {
+          const Icon = icons[command] || RefreshCw;
+          return (
+            <Button
+              key={command}
+              variant="outline"
+              size="sm"
+              disabled={commandLoading === command}
+              onClick={() => onCommand(command, label)}
+              title={tooltip}
+              className={buttonClass}
+            >
+              <Icon
+                className={cn(
+                  "w-4 h-4 mr-2",
+                  commandLoading === command && "animate-spin",
+                )}
+              />
+              {commandLoading === command ? "Enviando..." : label}
+            </Button>
+          );
+        })}
       </div>
     </div>
   );

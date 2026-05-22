@@ -113,6 +113,9 @@ class Device(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
     name = Column(String(255), nullable=False)
     pairing_code = Column(String(50), unique=True, nullable=False, index=True)
+    pairing_version = Column(Integer, default=1)
+    token_version = Column(Integer, default=1)
+    requires_repairing = Column(Boolean, default=False)
     device_type = Column(SQLEnum(DeviceType), default=DeviceType.TV)
     location = Column(String(255), nullable=True)
     group = Column(String(255), nullable=True)
@@ -201,6 +204,41 @@ class Campaign(Base):
     playback_logs = relationship("PlaybackLog", back_populates="campaign")
     view_reports = relationship("ViewReport", back_populates="campaign")
     audio_playlist = relationship("AudioPlaylist", foreign_keys=[audio_playlist_id])
+    playlist_items = relationship(
+        "CampaignPlaylistItem",
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="CampaignPlaylistItem.order_index",
+    )
+
+
+class CampaignPlaylistItem(Base):
+    __tablename__ = "campaign_playlist_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    campaign_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    media_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    order_index = Column(Integer, nullable=False, default=0)
+    display_duration_seconds = Column(Integer, nullable=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    repeat_count = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    campaign = relationship("Campaign", back_populates="playlist_items")
+    media = relationship("Media")
 
 
 class MediaType(str, enum.Enum):
@@ -228,18 +266,49 @@ class Media(Base):
     type = Column(SQLEnum(MediaType), nullable=False)
     mime_type = Column(String(100), nullable=True)
     duration = Column(Integer, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    display_duration_seconds = Column(Integer, nullable=True)
     file_size = Column(Integer, nullable=True)
+    file_hash = Column(String(128), nullable=True)
+    file_version = Column(Integer, default=1)
     resolution = Column(String(50), nullable=True)
     status = Column(SQLEnum(MediaStatus), default=MediaStatus.AVAILABLE)
+    is_active = Column(Boolean, default=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    extra_metadata = Column(JSON, nullable=True)
     tags = Column(JSON, nullable=True)
     notes = Column(Text, nullable=True)
     category = Column(String(100), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="media")
     playback_logs = relationship("PlaybackLog")
     view_reports = relationship("ViewReport")
+    versions = relationship("MediaVersion", back_populates="media", cascade="all, delete-orphan")
+
+
+class MediaVersion(Base):
+    __tablename__ = "media_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    media_id = Column(UUID(as_uuid=True), ForeignKey("media.id"), nullable=False, index=True)
+    file_url = Column(String(500), nullable=False)
+    thumbnail_url = Column(String(500), nullable=True)
+    file_name = Column(String(255), nullable=True)
+    mime_type = Column(String(100), nullable=True)
+    file_size = Column(Integer, nullable=True)
+    file_hash = Column(String(128), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    version_number = Column(Integer, nullable=False, default=1)
+    is_current = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    media = relationship("Media", back_populates="versions")
 
 
 class Location(Base):
@@ -461,9 +530,24 @@ class ViewReport(Base):
 class DeviceCommandStatus(str, enum.Enum):
     PENDING = "pending"
     SENT = "sent"
+    RECEIVED = "received"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
     EXECUTED = "executed"
     FAILED = "failed"
+    EXPIRED = "expired"
     CANCELLED = "cancelled"
+
+
+DESTRUCTIVE_COMMAND_TYPES = frozenset(
+    {
+        "restart_app",
+        "restart_device",
+        "shutdown_device",
+        "factory_reset",
+        "reboot",
+    }
+)
 
 
 class DeviceCommand(Base):
@@ -478,8 +562,13 @@ class DeviceCommand(Base):
     requested_by = Column(String(255), nullable=True)
     requested_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True)
     executed_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    result = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)
+    is_destructive = Column(Boolean, nullable=False, default=False)
 
     device = relationship("Device", back_populates="device_commands")
     tenant = relationship("Tenant")

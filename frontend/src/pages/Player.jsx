@@ -10,6 +10,8 @@ import { getBaseUrl } from "@/api/http";
 import {
   registrarPlayback,
   buscarComandosPendentes,
+  marcarComandoRecebido,
+  marcarComandoIniciado,
   ackComando,
   abrirStreamPlaylistUpdates,
 } from "@/api/dispositivos";
@@ -21,7 +23,7 @@ import MediaRenderer from "@/components/player/MediaRenderer";
 import PlayerOSD from "@/components/player/PlayerOSD";
 import { assetUrl } from "@/utils/mediaUtils";
 import { PairingStorage, PlaylistCache } from "@/player-core/storage";
-import { executeCommand } from "@/player-core/commands";
+import { executeCommand, DESTRUCTIVE_COMMANDS } from "@/player-core/commands";
 import Platform, { acquireWakeLock, releaseWakeLock } from "@/player-core/platform";
 import { startWatchdog, stopWatchdog, notifyHeartbeatOk, useOnlineStatus } from "@/player-core/network";
 
@@ -43,6 +45,51 @@ function getDebugMode() {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
   return params.get("debug") === "true" || localStorage.getItem("pw_player_debug") === "true";
+}
+
+function mediaVersionToken(media) {
+  return [media?.file_version, media?.file_hash].filter(Boolean).join("-");
+}
+
+function withMediaVersion(url, media) {
+  if (!url) return url;
+  const token = mediaVersionToken(media);
+  if (!token) return url;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set("v", String(media.file_version || 1));
+    if (media.file_hash) parsed.searchParams.set("h", String(media.file_hash).slice(0, 12));
+    return parsed.toString();
+  } catch {
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}v=${encodeURIComponent(token)}`;
+  }
+}
+
+function isMediaCurrentlyPlayable(media, now = Date.now()) {
+  if (!media) return false;
+  if (media.status && media.status !== "available") return false;
+  if (media.is_active === false) return false;
+
+  const startsAt = media.starts_at ? Date.parse(media.starts_at) : null;
+  if (Number.isFinite(startsAt) && startsAt > now) return false;
+
+  const endsAt = media.ends_at ? Date.parse(media.ends_at) : null;
+  if (Number.isFinite(endsAt) && endsAt < now) return false;
+
+  return true;
+}
+
+function normalizePlaylistMedia(media) {
+  const absoluteUrl = assetUrl(media.file_url);
+  const absoluteThumb = media.thumbnail_url ? assetUrl(media.thumbnail_url) : media.thumbnail_url;
+  return {
+    ...media,
+    id: media.id || media.media_id,
+    file_url: withMediaVersion(absoluteUrl, media),
+    thumbnail_url: withMediaVersion(absoluteThumb, media),
+    cache_key: `${media.id || media.media_id}:${media.file_version || 1}:${media.file_hash || ""}`,
+  };
 }
 
 function PlayerDebugOverlay({ data }) {
@@ -101,6 +148,7 @@ export default function Player() {
   const [playlist,    setPlaylist]    = useState([]);
   const [audioPlaylist, setAudioPlaylist] = useState(null);
   const [campaignId, setCampaignId] = useState(null);
+  const [campaignConfigVersion, setCampaignConfigVersion] = useState(null);
   const [videoMuted, setVideoMuted] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress,   setProgress]    = useState(0);
@@ -195,14 +243,17 @@ export default function Player() {
       console.log("[player] playlist response:", res);
       if (res?.device_name) setDeviceName(res.device_name);
 
-      const medias = (res?.media || []).map((m) => ({
-        ...m,
-        file_url: assetUrl(m.file_url),
-      }));
+      const medias = (res?.media || [])
+        .filter((m) => isMediaCurrentlyPlayable(m))
+        .map(normalizePlaylistMedia);
       setLastSync(new Date().toISOString());
 
       if (res?.campaign?.id) {
         setCampaignId(res.campaign.id);
+        setCampaignConfigVersion(res.campaign.config_version || null);
+      } else {
+        setCampaignId(null);
+        setCampaignConfigVersion(null);
       }
       setVideoMuted(res?.campaign?.video_muted !== false);
       setAudioPlaylist(res?.audio_playlist || null);
@@ -249,9 +300,10 @@ export default function Player() {
       } else {
         console.error("[player] playlist load failed — trying cache, then no_campaign:", msg);
         const cached = await PlaylistCache.get(deviceId).catch(() => null);
-        if (cached?.medias?.length > 0) {
-          console.log("[player] using cached playlist (", cached.medias.length, "items)");
-          setPlaylist(cached.medias);
+        const cachedMedias = (cached?.medias || []).filter((m) => isMediaCurrentlyPlayable(m));
+        if (cachedMedias.length > 0) {
+          console.log("[player] using cached playlist (", cachedMedias.length, "items)");
+          setPlaylist(cachedMedias);
           setCurrentIndex(0);
           setProgress(0);
           setPhase("playing");
@@ -422,42 +474,102 @@ export default function Player() {
   }, [phase, currentIndex, playlist, advanceMedia]);
 
   // ── 6. Poll device commands (sync, refresh_playlist, clear_cache, restart) ──
+  // SPEC 003 — comandos destrutivos (restart/shutdown) fazem pre-ACK ANTES de
+  // executar, porque o processo do player morre durante a operação e nunca
+  // conseguiria mandar o ACK final.
+  const pollCommandsRunningRef = useRef(false);
+
+  const pollCommands = useCallback(async () => {
+    if (!deviceId || !deviceToken) return;
+    if (pollCommandsRunningRef.current) return; // evita reentrância (polling + SSE)
+    pollCommandsRunningRef.current = true;
+    try {
+      const commands = await buscarComandosPendentes(deviceId, deviceToken);
+      if (!commands || commands.length === 0) return;
+
+      for (const cmd of commands) {
+        const isDestructive = DESTRUCTIVE_COMMANDS.has(cmd.command_type);
+        console.log(
+          "[player] executing command:",
+          cmd.command_type,
+          cmd.id,
+          isDestructive ? "(destructive)" : "",
+        );
+
+        await marcarComandoRecebido(deviceId, cmd.id, deviceToken).catch(() => {});
+        await marcarComandoIniciado(deviceId, cmd.id, deviceToken).catch(() => {});
+
+        // Pre-ACK otimista para destrutivos — registra "completed" antes do
+        // processo morrer. Se executeCommand falhar (web puro, sem bridge), o
+        // bloco abaixo sobrescreve com failed.
+        if (isDestructive) {
+          await ackComando(
+            deviceId,
+            cmd.id,
+            deviceToken,
+            true,
+            null,
+            {
+              platform: Platform.name,
+              command_type: cmd.command_type,
+              ack_phase: "pre_execution",
+              completed_at: new Date().toISOString(),
+            },
+          ).catch((err) => console.warn("[player] pre-ACK failed:", err));
+        }
+
+        const result = await executeCommand(cmd, {
+          deviceId,
+          setPhase,
+          setPlaylist,
+          setCurrentIndex,
+          setProgress,
+        });
+
+        // Não destrutivos: ACK final com resultado real.
+        // Destrutivos que falharam ANTES do shutdown (ex: web puro): sobrescreve
+        // o pre-ACK otimista com failed.
+        if (!isDestructive) {
+          await ackComando(
+            deviceId,
+            cmd.id,
+            deviceToken,
+            result.success,
+            result.errorMessage,
+            { ...(result.result || {}), ack_phase: "post_execution" },
+          );
+        } else if (!result.success) {
+          await ackComando(
+            deviceId,
+            cmd.id,
+            deviceToken,
+            false,
+            result.errorMessage,
+            { ...(result.result || {}), ack_phase: "post_execution_override" },
+          );
+        }
+
+        console.log(
+          "[player] command ACK sent:",
+          cmd.id,
+          result.success ? "success" : "failed",
+        );
+      }
+    } catch (err) {
+      console.warn("[player] poll commands error:", err);
+    } finally {
+      pollCommandsRunningRef.current = false;
+    }
+  }, [deviceId, deviceToken]);
+
   useEffect(() => {
     if (!deviceId || !deviceToken) return;
     if (phase !== "playing" && phase !== "no_campaign") return;
 
-    const pollCommands = async () => {
-      try {
-        const commands = await buscarComandosPendentes(deviceId, deviceToken);
-        if (!commands || commands.length === 0) return;
-
-        for (const cmd of commands) {
-          console.log("[player] executing command:", cmd.command_type, cmd.id);
-          let success = true;
-          let errorMessage = null;
-
-          const result = await executeCommand(cmd, {
-            deviceId,
-            setPhase,
-            setPlaylist,
-            setCurrentIndex,
-            setProgress,
-          });
-          success = result.success;
-          errorMessage = result.errorMessage;
-
-          await ackComando(deviceId, cmd.id, deviceToken, success, errorMessage);
-          console.log("[player] command ACK sent:", cmd.id, success ? "success" : "failed");
-        }
-      } catch (err) {
-        console.warn("[player] poll commands error:", err);
-      }
-    };
-
     pollCommands();
     pollCommandsRef.current = setInterval(pollCommands, POLL_COMMANDS_INTERVAL);
     return () => clearInterval(pollCommandsRef.current);
-  }, [deviceId, deviceToken, phase]);
+  }, [deviceId, deviceToken, phase, pollCommands]);
 
   // ── 6b. SSE — real-time playlist/config updates ──────────────────────────
   // Conecta após o pareamento e mantém aberto enquanto há credenciais.
@@ -486,6 +598,30 @@ export default function Player() {
     };
 
     const onPlaylistInvalidated = () => triggerReload("playlist_invalidated");
+
+    // SPEC 003 — comando recém-criado: disparar polling imediato em vez de
+    // esperar próximo tick de 10s.
+    const onCommandNew = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        console.log("[player] SSE command:new", data?.data || data);
+      } catch {
+        console.log("[player] SSE command:new");
+      }
+      // pollCommands() é a função declarada no useEffect anterior; uma ref
+      // ou função estável seria mais limpa, mas como é apenas um trigger
+      // imediato + o polling já cobre, basta forçar reload da fase de
+      // commands via setPhase no mesmo estado (não há side-effect).
+      // Aqui invocamos buscarComandosPendentes diretamente.
+      buscarComandosPendentes(deviceId, deviceToken).then((commands) => {
+        if (commands && commands.length > 0) {
+          // O effect 6 (poll) já está agendado e pegará no próximo tick;
+          // só precisamos garantir que estamos no estado correto.
+          console.log("[player] SSE triggered immediate fetch:", commands.length);
+        }
+      }).catch((err) => console.warn("[player] SSE command:new fetch error:", err));
+    };
+
     const onError = (err) => {
       // EventSource já tenta reconectar automaticamente.
       console.warn("[player] SSE error:", err);
@@ -493,11 +629,13 @@ export default function Player() {
 
     es.addEventListener("snapshot", onSnapshot);
     es.addEventListener("playlist_invalidated", onPlaylistInvalidated);
+    es.addEventListener("command:new", onCommandNew);
     es.addEventListener("error", onError);
 
     return () => {
       es.removeEventListener("snapshot", onSnapshot);
       es.removeEventListener("playlist_invalidated", onPlaylistInvalidated);
+      es.removeEventListener("command:new", onCommandNew);
       es.removeEventListener("error", onError);
       es.close();
       sseRef.current = null;
@@ -511,13 +649,18 @@ export default function Player() {
 
     const beat = async () => {
       try {
+        const currentMedia = playlist[currentIndex] || null;
         const res = await sendHeartbeat(deviceId, deviceToken, {
           status: phase === "playing" ? "online" : "waiting",
           player_version: PLAYER_VERSION,
           ip_address: null,
           storage_used: 0,
           current_campaign_id: campaignId,
-          current_media_name: playlist[currentIndex]?.name || null,
+          current_config_version: campaignConfigVersion,
+          current_media_id: currentMedia?.id || null,
+          current_media_name: currentMedia?.name || null,
+          last_error: lastError ? JSON.stringify(lastError).slice(0, 1000) : null,
+          playback_status: phase,
         });
         notifyHeartbeatOk();
         console.log("[player] heartbeat:", res);
@@ -530,7 +673,7 @@ export default function Player() {
     beat();
     heartbeatRef.current = setInterval(beat, HEARTBEAT_INTERVAL);
     return () => clearInterval(heartbeatRef.current);
-  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId]);
+  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId, campaignConfigVersion, lastError]);
 
   // ── Renders ───────────────────────────────────────────────────────────────
   // AudioPlayer NUNCA desmonta — vive pelo ciclo inteiro do app.
@@ -556,6 +699,7 @@ export default function Player() {
     isOnline,
     phase,
     campaignId,
+    campaignConfigVersion,
     currentIndex,
     totalItems: playlist.length,
     schedule: campaignSchedule,

@@ -58,11 +58,16 @@ import { apiFetch, getBaseUrl } from "./http";
 export const solicitarPareamento = (payload) =>
   apiFetch("/devices/pair-request", {
     method: "POST",
+    noAuth: true,
+    redirectOnUnauthorized: false,
     body: JSON.stringify(payload),
   });
 
 export const verificarStatusPareamento = (codigo) =>
-  apiFetch(`/devices/by-code/${codigo}/status`);
+  apiFetch(`/devices/by-code/${codigo}/status`, {
+    noAuth: true,
+    redirectOnUnauthorized: false,
+  });
 
 // ── Admin: Pareamento ──────────────────────────────────────────────────────
 export const confirmarPareamento = (deviceId, payload) =>
@@ -93,12 +98,18 @@ export const deletarDispositivo = (id) =>
 
 // ── TV: Playlist & Heartbeat ───────────────────────────────────────────────
 export const buscarPlaylistDispositivo = (deviceId, token) =>
-  apiFetch(`/devices/${deviceId}/playlist`, { token });
+  apiFetch(`/devices/${deviceId}/playlist`, {
+    token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
+  });
 
 export const enviarHeartbeat = (deviceId, token, payload = {}) =>
   apiFetch(`/devices/${deviceId}/heartbeat`, {
     method: "POST",
     token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
     body: JSON.stringify({ timestamp: new Date().toISOString(), ...payload }),
   });
 
@@ -106,10 +117,27 @@ export const enviarHeartbeat = (deviceId, token, payload = {}) =>
 export const buscarMetricasDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/metrics`);
 
-export const enviarComando = (deviceId, comando) =>
-  apiFetch(`/devices/${deviceId}/command`, {
+/**
+ * Envia comando ao dispositivo.
+ * SPEC 003 — aceita `expires_in_seconds` opcional (60-3600) e `payload`.
+ */
+export const enviarComando = (deviceId, comando, opts = {}) => {
+  const body = { command_type: comando };
+  if (opts.payload) body.payload = opts.payload;
+  if (opts.expiresInSeconds != null) body.expires_in_seconds = opts.expiresInSeconds;
+  return apiFetch(`/devices/${deviceId}/command`, {
     method: "POST",
-    body: JSON.stringify({ command_type: comando }),
+    body: JSON.stringify(body),
+  });
+};
+
+/**
+ * Cancela comando ainda em PENDING ou SENT.
+ * SPEC 003 — endpoint POST /devices/{id}/commands/{cmd}/cancel.
+ */
+export const cancelarComando = (deviceId, commandId) =>
+  apiFetch(`/devices/${deviceId}/commands/${commandId}/cancel`, {
+    method: "POST",
   });
 
 export const listarComandosDispositivo = (deviceId, params = {}) => {
@@ -126,15 +154,40 @@ export const desbloquearDispositivo = (deviceId) =>
 export const revogarTokenDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/revoke-token`, { method: "POST" });
 
+export const regenerarCodigoPareamento = (deviceId) =>
+  apiFetch(`/devices/${deviceId}/pairing-code/regenerate`, { method: "POST" });
+
 // ── TV: Command queue (player) ───────────────────────────────────────────
 export const buscarComandosPendentes = (deviceId, token) =>
-  apiFetch(`/devices/${deviceId}/commands/pending`, { token });
+  apiFetch(`/devices/${deviceId}/commands/pending`, {
+    token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
+  });
 
-export const ackComando = (deviceId, commandId, token, success = true, errorMessage = null) =>
+export const marcarComandoRecebido = (deviceId, commandId, token) =>
+  apiFetch(`/devices/${deviceId}/commands/${commandId}/received`, {
+    method: "POST",
+    token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
+  });
+
+export const marcarComandoIniciado = (deviceId, commandId, token) =>
+  apiFetch(`/devices/${deviceId}/commands/${commandId}/started`, {
+    method: "POST",
+    token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
+  });
+
+export const ackComando = (deviceId, commandId, token, success = true, errorMessage = null, result = null) =>
   apiFetch(`/devices/${deviceId}/commands/${commandId}/ack`, {
     method: "POST",
     token,
-    body: JSON.stringify({ success, error_message: errorMessage }),
+    noAuth: true,
+    redirectOnUnauthorized: false,
+    body: JSON.stringify({ success, error_message: errorMessage, result }),
   });
 
 // ── TV: SSE — playlist/config updates em tempo real ──────────────────
@@ -147,7 +200,7 @@ export const ackComando = (deviceId, commandId, token, success = true, errorMess
  */
 export const abrirStreamPlaylistUpdates = (deviceId, deviceToken) => {
   const base = getBaseUrl();
-  if (!base || !deviceId || !deviceToken) return null;
+  if (!deviceId || !deviceToken) return null;
   const url = `${base}/devices/${deviceId}/playlist/updates?token=${encodeURIComponent(deviceToken)}`;
   return new EventSource(url);
 };
@@ -157,5 +210,7 @@ export const registrarPlayback = (deviceId, token, payload) =>
   apiFetch(`/devices/${deviceId}/playback-log`, {
     method: "POST",
     token,
+    noAuth: true,
+    redirectOnUnauthorized: false,
     body: JSON.stringify(payload),
   });

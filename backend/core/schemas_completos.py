@@ -337,19 +337,39 @@ class DeviceResponse(DeviceBase, TimestampedSchema):
     config_version: Optional[str] = None
     current_campaign: Optional[str] = None
     current_campaign_id: Optional[str] = None
+    pairing_version: Optional[int] = 1
+    token_version: Optional[int] = 1
+    requires_repairing: Optional[bool] = False
 
 
 class DeviceCommandStatusEnum(str, Enum):
     PENDING = "pending"
     SENT = "sent"
+    RECEIVED = "received"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
     EXECUTED = "executed"
     FAILED = "failed"
+    EXPIRED = "expired"
     CANCELLED = "cancelled"
 
 
 class DeviceCommandCreate(BaseSchema):
-    command_type: str = Field(..., description="sync | refresh_playlist | clear_cache | restart")
+    command_type: str = Field(
+        ...,
+        description=(
+            "sync | refresh_playlist | clear_cache | reload_player | "
+            "restart_app | restart_device | shutdown_device | "
+            "screenshot | take_screenshot | set_volume | mute | unmute"
+        ),
+    )
     payload: Optional[Dict[str, Any]] = None
+    expires_in_seconds: Optional[int] = Field(
+        None,
+        ge=60,
+        le=3600,
+        description="Tempo (em segundos) antes do comando ser marcado como expirado. Default: 600.",
+    )
 
 
 class DeviceCommandResponse(BaseSchema):
@@ -361,13 +381,38 @@ class DeviceCommandResponse(BaseSchema):
     requested_by: Optional[str] = None
     requested_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
     executed_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    is_destructive: bool = False
+
+
+class CommandAckResult(BaseSchema):
+    """Payload tipado para o campo `result` do ACK.
+
+    Aceita campos extras (`extra="allow"`) para nao quebrar clients antigos que
+    enviem chaves adicionais.
+    """
+
+    model_config = {"extra": "allow"}
+
+    platform: Optional[str] = None
+    command_type: Optional[str] = None
+    ack_phase: Optional[str] = None  # "pre_execution" | "post_execution" | "post_execution_override"
+    platform_unsupported: Optional[bool] = None
+    error_code: Optional[str] = None
+    reason: Optional[str] = None
+    completed_at: Optional[datetime] = None
+    failed_at: Optional[datetime] = None
 
 
 class DeviceCommandAck(BaseSchema):
     success: bool
     error_message: Optional[str] = None
+    result: Optional[CommandAckResult] = None
 
 
 class DeviceSessionResponse(BaseSchema):
@@ -507,6 +552,50 @@ class CampaignResponse(CampaignBase, TimestampedSchema):
     audio_playlist: Optional[AudioPlaylistResponse] = None
 
 
+# Campaign Playlist Items (SPEC-002)
+class CampaignPlaylistItemBase(BaseSchema):
+    media_id: str
+    order_index: Optional[int] = Field(None, ge=0)
+    display_duration_seconds: Optional[int] = Field(None, ge=1)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    is_active: Optional[bool] = True
+    repeat_count: Optional[int] = Field(1, ge=1, le=999)
+
+
+class CampaignPlaylistItemCreate(CampaignPlaylistItemBase):
+    pass
+
+
+class CampaignPlaylistItemBulkCreate(BaseSchema):
+    items: List[CampaignPlaylistItemCreate] = Field(..., min_length=1)
+
+
+class CampaignPlaylistItemUpdate(BaseSchema):
+    media_id: Optional[str] = None
+    order_index: Optional[int] = Field(None, ge=0)
+    display_duration_seconds: Optional[int] = Field(None, ge=1)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    is_active: Optional[bool] = None
+    repeat_count: Optional[int] = Field(None, ge=1, le=999)
+
+
+class CampaignPlaylistItemReorderEntry(BaseSchema):
+    item_id: str
+    order_index: int = Field(..., ge=0)
+
+
+class CampaignPlaylistItemReorderPayload(BaseSchema):
+    items: List[CampaignPlaylistItemReorderEntry] = Field(..., min_length=1)
+
+
+class CampaignPlaylistItemResponse(CampaignPlaylistItemBase, TimestampedSchema):
+    id: str
+    campaign_id: str
+    order_index: int
+
+
 # Media Schemas
 class MediaBase(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255)
@@ -516,11 +605,34 @@ class MediaBase(BaseSchema):
     type: MediaTypeEnum
     mime_type: Optional[str] = Field(None, max_length=100)
     duration: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    display_duration_seconds: Optional[int] = None
     file_size: Optional[int] = None
+    file_hash: Optional[str] = Field(None, max_length=128)
+    file_version: Optional[int] = 1
     resolution: Optional[str] = Field(None, max_length=50)
+    is_active: Optional[bool] = True
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    extra_metadata: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
     category: Optional[str] = Field(None, max_length=100)
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final da mídia deve ser maior ou igual à data inicial")
+        return self
 
 
 class MediaCreate(MediaBase):
@@ -535,18 +647,58 @@ class MediaUpdate(BaseSchema):
     type: Optional[MediaTypeEnum] = None
     mime_type: Optional[str] = Field(None, max_length=100)
     duration: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    display_duration_seconds: Optional[int] = None
     file_size: Optional[int] = None
+    file_hash: Optional[str] = Field(None, max_length=128)
+    file_version: Optional[int] = None
     resolution: Optional[str] = Field(None, max_length=50)
     status: Optional[MediaStatusEnum] = None
+    is_active: Optional[bool] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    extra_metadata: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
     category: Optional[str] = Field(None, max_length=100)
+    updated_by: Optional[str] = None
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final da mídia deve ser maior ou igual à data inicial")
+        return self
 
 
 class MediaResponse(MediaBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[MediaStatusEnum] = None
+    availability_status: Optional[str] = None
+    usage_count: Optional[int] = None
+
+
+class MediaVersionResponse(BaseSchema):
+    id: str
+    media_id: str
+    file_url: str
+    thumbnail_url: Optional[str] = None
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    version_number: int
+    is_current: bool
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
 
 
 # Location Schemas
