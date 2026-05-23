@@ -1167,6 +1167,16 @@ class AudioPlaybackEventResponse(AudioPlaybackEventBase, TimestampedSchema):
     id: str
 
 
+class AudioTrackUploadError(BaseSchema):
+    filename: str
+    error: str
+
+
+class AudioTrackUploadMultipleResponse(BaseSchema):
+    uploaded: List[AudioTrackResponse]
+    errors: Optional[List[AudioTrackUploadError]] = None
+
+
 # DevicePairingCode Schemas
 class DevicePairingCodeBase(BaseSchema):
     code: str = Field(..., min_length=1, max_length=50)

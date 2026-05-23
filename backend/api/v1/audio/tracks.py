@@ -11,8 +11,9 @@ from core.database import get_db
 from core.dependencies import get_current_user
 from core.models import AudioTrack, User
 from core.schemas_completos import (
-    AudioTrackCreate, AudioTrackUpdate, AudioTrackResponse, 
-    AudioTrackCategoryEnum, AudioTrackStatusEnum
+    AudioTrackCreate, AudioTrackUpdate, AudioTrackResponse,
+    AudioTrackCategoryEnum, AudioTrackStatusEnum,
+    AudioTrackUploadMultipleResponse, AudioTrackUploadError
 )
 from crud.entidades import crud_audio_track
 
@@ -355,3 +356,113 @@ def update_track_status(
     
     track = crud_audio_track.update_status(db, db_obj=track, status=new_status.value)
     return {"message": f"Status atualizado para {new_status.value}"}
+
+
+@router.post("/upload-multiple", response_model=AudioTrackUploadMultipleResponse, status_code=status.HTTP_201_CREATED)
+def upload_multiple_tracks(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    files: List[UploadFile] = File(...),
+    category: Optional[AudioTrackCategoryEnum] = Form(None),
+):
+    """
+    Upload múltiplo de faixas de áudio.
+
+    Retorna lista com sucesso/falha para cada arquivo.
+    """
+    from services.ffprobe_service import get_audio_duration, FFprobeError
+
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum arquivo enviado",
+        )
+
+    if len(files) > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Máximo 50 arquivos por vez",
+        )
+
+    os.makedirs("uploads/audio", exist_ok=True)
+    uploaded_tracks = []
+    errors = []
+
+    for file in files:
+        try:
+            if not file.filename:
+                errors.append({"filename": "unknown", "error": "Filename vazio"})
+                continue
+
+            # Validar tipo de arquivo
+            if not file.content_type or not file.content_type.startswith("audio/"):
+                errors.append({
+                    "filename": file.filename,
+                    "error": f"Tipo inválido: {file.content_type}. Apenas áudio.",
+                })
+                continue
+
+            # Salvar arquivo temporário
+            temp_path = f"uploads/audio/{datetime.utcnow().timestamp()}_{file.filename}"
+            with open(temp_path, "wb") as buffer:
+                buffer.write(file.file.read())
+
+            # Extrair duração com ffprobe
+            try:
+                duration_seconds = get_audio_duration(temp_path)
+                if not duration_seconds:
+                    errors.append({
+                        "filename": file.filename,
+                        "error": "Não foi possível extrair duração",
+                    })
+                    os.remove(temp_path)
+                    continue
+            except FFprobeError as e:
+                errors.append({
+                    "filename": file.filename,
+                    "error": str(e),
+                })
+                os.remove(temp_path)
+                continue
+
+            # Gerar nome final sanitizado
+            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename)
+            file_url = f"/uploads/audio/{datetime.utcnow().isoformat()}_{safe_name}"
+
+            # Mover para local final
+            os.makedirs(os.path.dirname(file_url[1:]), exist_ok=True)
+            shutil.move(temp_path, file_url[1:])
+
+            # Criar registro
+            track_name = file.filename.rsplit(".", 1)[0] if "." in file.filename else file.filename
+            track = crud_audio_track.create(
+                db,
+                obj_in=AudioTrackCreate(
+                    name=track_name,
+                    file_url=file_url,
+                    mime_type=file.content_type or "audio/mpeg",
+                    duration_seconds=duration_seconds,
+                    category=category or AudioTrackCategoryEnum.MUSIC,
+                    tenant_id=None if current_user.role == "admin" else str(current_user.tenant_id),
+                ),
+            )
+
+            uploaded_tracks.append(track)
+
+        except Exception as e:
+            errors.append({
+                "filename": file.filename or "unknown",
+                "error": str(e),
+            })
+            # Tenta limpar arquivo temp se ainda existe
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except:
+                pass
+
+    return AudioTrackUploadMultipleResponse(
+        uploaded=uploaded_tracks,
+        errors=errors if errors else None,
+    )

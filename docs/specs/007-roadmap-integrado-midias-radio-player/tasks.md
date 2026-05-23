@@ -45,8 +45,8 @@ Status: `[ ]` pendente · `[~]` parcial · `[x]` concluido · `[!]` bloqueado/de
 - [x] Resolver de spots por intervalo.
 - [x] Migration `audio_playback_events`.
 - [x] CRUD + logger de eventos de playback.
-- [ ] Endpoint `POST /audio/tracks/upload-multiple`.
-- [ ] Backend `ffprobe` como fonte oficial de duracao de audio.
+- [x] Endpoint `POST /audio/tracks/upload-multiple`.
+- [x] Backend `ffprobe` como fonte oficial de duracao de audio.
 
 ## Fase D — Radio v2 frontend
 
