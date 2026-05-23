@@ -1035,6 +1035,101 @@ class AudioPlaylistFolderScheduleResponse(AudioPlaylistFolderScheduleBase, Times
     folder_id: str
 
 
+class AudioSpotStatusEnum(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ARCHIVED = "archived"
+
+
+class AudioSpotInsertionPolicyEnum(str, Enum):
+    INTERRUPT = "interrupt"
+    WAIT_SILENCE = "wait_silence"
+    FADE_MIX = "fade_mix"
+
+
+class AudioSpotBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    track_id: str
+    status: Optional[AudioSpotStatusEnum] = AudioSpotStatusEnum.ACTIVE
+    insertion_policy: Optional[AudioSpotInsertionPolicyEnum] = AudioSpotInsertionPolicyEnum.WAIT_SILENCE
+
+
+class AudioSpotCreate(AudioSpotBase):
+    tenant_id: Optional[str] = None
+
+
+class AudioSpotUpdate(BaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    track_id: Optional[str] = None
+    status: Optional[AudioSpotStatusEnum] = None
+    insertion_policy: Optional[AudioSpotInsertionPolicyEnum] = None
+
+
+class AudioSpotResponse(AudioSpotBase, TimestampedSchema):
+    id: str
+    tenant_id: Optional[str] = None
+
+
+class AudioSpotScheduleBase(BaseSchema):
+    spot_id: str
+    interval_seconds: int = Field(..., gt=0)
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    priority: Optional[int] = Field(0, ge=0)
+    is_active: Optional[bool] = True
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final do agendamento deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioSpotScheduleCreate(AudioSpotScheduleBase):
+    pass
+
+
+class AudioSpotScheduleUpdate(BaseSchema):
+    spot_id: Optional[str] = None
+    interval_seconds: Optional[int] = Field(None, gt=0)
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    priority: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final do agendamento deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioSpotScheduleResponse(AudioSpotScheduleBase, TimestampedSchema):
+    id: str
+    playlist_id: str
+    spot_id: str
+
+
 # DevicePairingCode Schemas
 class DevicePairingCodeBase(BaseSchema):
     code: str = Field(..., min_length=1, max_length=50)

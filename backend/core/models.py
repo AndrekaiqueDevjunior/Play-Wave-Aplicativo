@@ -471,6 +471,7 @@ class AudioTrack(Base):
 
     tenant = relationship("Tenant", back_populates="audio_tracks")
     folder_items = relationship("AudioFolderTrack", back_populates="track")
+    spots = relationship("AudioSpot", back_populates="track")
 
 
 class AudioFolderStatus(str, enum.Enum):
@@ -581,6 +582,11 @@ class AudioPlaylist(Base):
         back_populates="playlist",
         cascade="all, delete-orphan",
     )
+    spot_schedules = relationship(
+        "AudioSpotSchedule",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+    )
 
 
 class AudioPlaylistItem(Base):
@@ -647,6 +653,84 @@ class AudioPlaylistFolderSchedule(Base):
 
     playlist = relationship("AudioPlaylist", back_populates="folder_schedules")
     folder = relationship("AudioFolder", back_populates="playlist_schedules")
+
+
+class AudioSpotStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ARCHIVED = "archived"
+
+
+class AudioSpotInsertionPolicy(str, enum.Enum):
+    INTERRUPT = "interrupt"
+    WAIT_SILENCE = "wait_silence"
+    FADE_MIX = "fade_mix"
+
+
+class AudioSpot(Base):
+    __tablename__ = "audio_spots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    track_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_tracks.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(
+        SQLEnum(AudioSpotStatus, name="audio_spot_status", values_callable=enum_values),
+        default=AudioSpotStatus.ACTIVE,
+    )
+    insertion_policy = Column(
+        SQLEnum(AudioSpotInsertionPolicy, name="audio_spot_insertion_policy", values_callable=enum_values),
+        default=AudioSpotInsertionPolicy.WAIT_SILENCE,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    track = relationship("AudioTrack", back_populates="spots")
+    schedules = relationship(
+        "AudioSpotSchedule",
+        back_populates="spot",
+        cascade="all, delete-orphan",
+    )
+
+
+class AudioSpotSchedule(Base):
+    __tablename__ = "audio_spot_schedules"
+    __table_args__ = (
+        UniqueConstraint("spot_id", "playlist_id", name="uq_audio_spot_schedules_spot_playlist"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    spot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_spots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    playlist_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    interval_seconds = Column(Integer, nullable=False)
+    start_time = Column(String(10), nullable=True)
+    end_time = Column(String(10), nullable=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    priority = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    spot = relationship("AudioSpot", back_populates="schedules")
+    playlist = relationship("AudioPlaylist", back_populates="spot_schedules")
 
 
 class PairingCodeStatus(str, enum.Enum):

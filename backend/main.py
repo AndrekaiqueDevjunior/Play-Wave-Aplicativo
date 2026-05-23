@@ -1,16 +1,18 @@
+import mimetypes
 import os
+import re
 import traceback
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import event
 from api.v1 import (
     auth_router, devices_router, campaigns_router, media_router,
     users_router, locations_router, user_logs_router,
-    tracks_router, playlists_router, audio_devices_router,
+    tracks_router, playlists_router, audio_devices_router, audio_folders_router, spots_router,
     dashboard_router, reports_router, schedule_router,
     monitoring_router, tenants_router, plans_router,
 )
@@ -19,6 +21,9 @@ from core.config import settings
 from core.models import Device
 
 Base.metadata.create_all(bind=engine)
+
+UPLOADS_DIR = Path("uploads").resolve()
+RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 # Registrar event listeners para limpar strings vazias de UUID
 @event.listens_for(Device, 'before_insert')
@@ -35,10 +40,108 @@ app = FastAPI(
     version=settings.VERSION,
 )
 
-# Serve uploaded files as static assets
-_uploads_dir = "uploads"
-os.makedirs(_uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
+
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+
+def _resolve_upload_path(file_path: str) -> Path:
+    path = (UPLOADS_DIR / file_path).resolve()
+    if not path.is_relative_to(UPLOADS_DIR) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+    return path
+
+
+def _parse_range(range_header: str, file_size: int) -> tuple[int, int]:
+    match = RANGE_RE.match(range_header.strip())
+    if not match:
+        raise HTTPException(
+            status_code=416,
+            detail="Range inválido",
+            headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+        )
+
+    start_text, end_text = match.groups()
+    if not start_text and not end_text:
+        raise HTTPException(
+            status_code=416,
+            detail="Range inválido",
+            headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+        )
+
+    if start_text:
+        start = int(start_text)
+        end = int(end_text) if end_text else file_size - 1
+    else:
+        suffix_length = int(end_text)
+        if suffix_length <= 0:
+            raise HTTPException(
+                status_code=416,
+                detail="Range inválido",
+                headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+            )
+        start = max(file_size - suffix_length, 0)
+        end = file_size - 1
+
+    end = min(end, file_size - 1)
+    if start >= file_size or end < start:
+        raise HTTPException(
+            status_code=416,
+            detail="Range fora do arquivo",
+            headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+        )
+    return start, end
+
+
+def _iter_file_range(path: Path, start: int, end: int, chunk_size: int = 1024 * 1024):
+    with path.open("rb") as file:
+        file.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = file.read(min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+@app.api_route("/uploads/{file_path:path}", methods=["GET", "HEAD"])
+async def serve_upload(
+    file_path: str,
+    request: Request,
+    range_header: str | None = Header(default=None, alias="Range"),
+):
+    """Serve mídias com suporte a Range Requests para Android WebView."""
+    path = _resolve_upload_path(file_path)
+    file_size = path.stat().st_size
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    base_headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=604800",
+    }
+
+    if request.method == "HEAD":
+        return Response(
+            status_code=200,
+            media_type=media_type,
+            headers={**base_headers, "Content-Length": str(file_size)},
+        )
+
+    if not range_header:
+        return FileResponse(path, media_type=media_type, headers=base_headers)
+
+    start, end = _parse_range(range_header, file_size)
+    content_length = end - start + 1
+    headers = {
+        **base_headers,
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Content-Length": str(content_length),
+    }
+    return StreamingResponse(
+        _iter_file_range(path, start, end),
+        status_code=206,
+        media_type=media_type,
+        headers=headers,
+    )
 
 
 @app.exception_handler(ResponseValidationError)
@@ -86,6 +189,8 @@ app.include_router(user_logs_router)
 app.include_router(tracks_router)
 app.include_router(playlists_router)
 app.include_router(audio_devices_router)
+app.include_router(audio_folders_router)
+app.include_router(spots_router)
 
 # New routers
 app.include_router(dashboard_router)
