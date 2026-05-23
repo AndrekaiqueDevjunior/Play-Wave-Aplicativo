@@ -58,6 +58,10 @@ export const uploadFaixa = async (file, metadata = {}) => {
   return apiUpload("/audio/tracks/upload", form);
 };
 
+export const uploadMultipleTracksAPI = async (formData) => {
+  return apiUpload("/audio/tracks/upload-multiple", formData);
+};
+
 export const atualizarFaixa = (id, payload) =>
   apiFetch(`/audio/tracks/${id}`, {
     method: "PUT",
