@@ -50,12 +50,12 @@ Status: `[ ]` pendente · `[~]` parcial · `[x]` concluido · `[!]` bloqueado/de
 
 ## Fase D — Radio v2 frontend
 
-- [ ] `MultiAudioUploadDialog`.
-- [ ] Selecao multipla de faixas.
-- [ ] UI de pastas de audio.
-- [ ] UI de programacao por horario.
-- [ ] UI de spots por intervalo.
-- [ ] UI de modo sequencial/shuffle por playlist/pasta.
+- [x] `MultiAudioUploadDialog`.
+- [x] Selecao multipla de faixas.
+- [x] UI de pastas de audio.
+- [x] UI de programacao por horario.
+- [x] UI de spots por intervalo.
+- [ ] UI de modo sequencial/shuffle por playlist/pasta (integrado nos builders).
 
 ## Fase E — Player audio manager
 
