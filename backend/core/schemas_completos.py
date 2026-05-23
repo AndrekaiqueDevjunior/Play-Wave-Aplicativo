@@ -14,6 +14,27 @@ class UserRoleEnum(str, Enum):
     VIEWER = "viewer"
 
 
+class AudioPolicyEnum(str, Enum):
+    AUTO = "auto"
+    RADIO_ONLY = "radio_only"
+    MEDIA_AUDIO_ONLY = "media_audio_only"
+    MIX = "mix"
+    MUTED_VIDEO_WITH_RADIO = "muted_video_with_radio"
+
+
+class OSDPositionEnum(str, Enum):
+    TOP_LEFT = "top_left"
+    TOP_RIGHT = "top_right"
+    BOTTOM_LEFT = "bottom_left"
+    BOTTOM_RIGHT = "bottom_right"
+
+
+class OSDFontSizeEnum(str, Enum):
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
+
+
 class TenantPlanEnum(str, Enum):
     STARTER = "starter"
     PRO = "pro"
@@ -84,6 +105,12 @@ class AudioTrackStatusEnum(str, Enum):
 
 
 class AudioPlaylistStatusEnum(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ARCHIVED = "archived"
+
+
+class AudioFolderStatusEnum(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
     ARCHIVED = "archived"
@@ -192,6 +219,14 @@ class TenantUpdate(BaseSchema):
 
 class TenantResponse(TenantBase, TimestampedSchema):
     id: str
+    audio_policy_default: AudioPolicyEnum = AudioPolicyEnum.AUTO
+    audio_fade_ms: int = 200
+    osd_show_current_audio: bool = True
+    osd_position: OSDPositionEnum = OSDPositionEnum.TOP_RIGHT
+    osd_duration_seconds: int = 8
+    osd_opacity: float = 0.6
+    osd_font_size: OSDFontSizeEnum = OSDFontSizeEnum.MEDIUM
+    osd_config: Optional[Dict[str, Any]] = None
 
 
 # Plan Schemas
@@ -319,12 +354,33 @@ class DeviceUpdate(BaseSchema):
     audio_playlist_id: Optional[str] = None
     audio_playlist_name: Optional[str] = None
     audio_volume: Optional[float] = Field(None, ge=0.0, le=1.0)
+    audio_policy_default: Optional[AudioPolicyEnum] = None  # SPEC 005
     ip_address: Optional[str] = Field(None, max_length=50)
     player_version: Optional[str] = Field(None, max_length=50)
     os: Optional[DeviceOSEnum] = None
     storage_used: Optional[int] = None
     notes: Optional[str] = None
     current_campaign_id: Optional[str] = None
+
+
+class OSDConfig(BaseSchema):
+    show_current_audio: bool
+    position: OSDPositionEnum
+    duration_seconds: int = Field(..., ge=0, le=3600)
+    opacity: float = Field(..., ge=0.0, le=1.0)
+    font_size: OSDFontSizeEnum
+
+
+class DeviceOSDConfigUpdate(BaseSchema):
+    show_current_audio: Optional[bool] = None
+    position: Optional[OSDPositionEnum] = None
+    duration_seconds: Optional[int] = Field(None, ge=0, le=3600)
+    opacity: Optional[float] = Field(None, ge=0.0, le=1.0)
+    font_size: Optional[OSDFontSizeEnum] = None
+
+
+class TenantOSDConfigUpdate(OSDConfig):
+    pass
 
 
 class DeviceResponse(DeviceBase, TimestampedSchema):
@@ -340,6 +396,12 @@ class DeviceResponse(DeviceBase, TimestampedSchema):
     pairing_version: Optional[int] = 1
     token_version: Optional[int] = 1
     requires_repairing: Optional[bool] = False
+    audio_policy_default: Optional[AudioPolicyEnum] = None  # SPEC 005
+    osd_config_local: Optional[DeviceOSDConfigUpdate] = None
+    osd_config_effective: Optional[OSDConfig] = None
+    current_audio_track_id: Optional[str] = None
+    current_audio_track_name: Optional[str] = None
+    current_audio_track_started_at: Optional[datetime] = None
 
 
 class DeviceCommandStatusEnum(str, Enum):
@@ -443,6 +505,7 @@ class CampaignBase(BaseSchema):
     media_order: Optional[List[MediaOrderItem]] = None
     audio_playlist_id: Optional[str] = None
     video_muted: Optional[bool] = True
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
     schedule_all_day: Optional[bool] = True
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -481,6 +544,7 @@ class CampaignUpdate(BaseSchema):
     media_order: Optional[List[MediaOrderItem]] = None
     audio_playlist_id: Optional[str] = None
     video_muted: Optional[bool] = None
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
     schedule_all_day: Optional[bool] = None
     schedule_days: Optional[List[str]] = None
     schedule_start_time: Optional[str] = Field(None, max_length=10)
@@ -538,10 +602,49 @@ class AudioPlaylistUpdate(BaseSchema):
     track_volumes: Optional[Dict[str, float]] = None
 
 
+class AudioPlaylistItemBase(BaseSchema):
+    track_id: str
+    order_index: Optional[int] = Field(None, ge=0)
+    volume_override: Optional[float] = Field(None, ge=0.0, le=1.0)
+    is_active: Optional[bool] = True
+
+
+class AudioPlaylistItemCreate(AudioPlaylistItemBase):
+    pass
+
+
+class AudioPlaylistItemBulkCreate(BaseSchema):
+    items: List[AudioPlaylistItemCreate] = Field(..., min_length=1)
+
+
+class AudioPlaylistItemUpdate(BaseSchema):
+    track_id: Optional[str] = None
+    order_index: Optional[int] = Field(None, ge=0)
+    volume_override: Optional[float] = Field(None, ge=0.0, le=1.0)
+    is_active: Optional[bool] = None
+
+
+class AudioPlaylistItemReorderEntry(BaseSchema):
+    item_id: str
+    order_index: int = Field(..., ge=0)
+
+
+class AudioPlaylistItemReorderPayload(BaseSchema):
+    items: List[AudioPlaylistItemReorderEntry] = Field(..., min_length=1)
+
+
+class AudioPlaylistItemResponse(AudioPlaylistItemBase, TimestampedSchema):
+    id: str
+    playlist_id: str
+    order_index: int
+    track_id: str
+
+
 class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[AudioPlaylistStatusEnum] = None
+    items: Optional[List[AudioPlaylistItemResponse]] = None
 
 
 class CampaignResponse(CampaignBase, TimestampedSchema):
@@ -550,6 +653,7 @@ class CampaignResponse(CampaignBase, TimestampedSchema):
     total_views: Optional[int] = 0
     config_version: Optional[str] = None
     audio_playlist: Optional[AudioPlaylistResponse] = None
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
 
 
 # Campaign Playlist Items (SPEC-002)
@@ -637,6 +741,8 @@ class MediaBase(BaseSchema):
 
 class MediaCreate(MediaBase):
     tenant_id: Optional[str] = None
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
+    has_audio: Optional[bool] = None               # SPEC 005
 
 
 class MediaUpdate(BaseSchema):
@@ -662,6 +768,8 @@ class MediaUpdate(BaseSchema):
     notes: Optional[str] = None
     category: Optional[str] = Field(None, max_length=100)
     updated_by: Optional[str] = None
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
+    has_audio: Optional[bool] = None               # SPEC 005
 
     @field_validator('starts_at', 'ends_at', mode='before')
     @classmethod
@@ -683,6 +791,8 @@ class MediaResponse(MediaBase, TimestampedSchema):
     status: Optional[MediaStatusEnum] = None
     availability_status: Optional[str] = None
     usage_count: Optional[int] = None
+    audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
+    has_audio: Optional[bool] = None               # SPEC 005
 
 
 class MediaVersionResponse(BaseSchema):
@@ -759,6 +869,172 @@ class AudioTrackResponse(AudioTrackBase, TimestampedSchema):
     status: Optional[AudioTrackStatusEnum] = None
 
 
+# AudioFolder Schemas
+class AudioFolderBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    schedule_days: Optional[List[str]] = None
+    is_active: Optional[bool] = True
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final da pasta deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioFolderCreate(AudioFolderBase):
+    tenant_id: Optional[str] = None
+    status: Optional[AudioFolderStatusEnum] = AudioFolderStatusEnum.ACTIVE
+
+
+class AudioFolderUpdate(BaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: Optional[AudioFolderStatusEnum] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    schedule_days: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final da pasta deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioFolderTrackBase(BaseSchema):
+    track_id: str
+    order_index: Optional[int] = Field(None, ge=0)
+    volume_override: Optional[float] = Field(None, ge=0.0, le=1.0)
+    is_active: Optional[bool] = True
+
+
+class AudioFolderTrackCreate(AudioFolderTrackBase):
+    pass
+
+
+class AudioFolderTrackBulkCreate(BaseSchema):
+    tracks: List[AudioFolderTrackCreate] = Field(..., min_length=1)
+
+
+class AudioFolderTrackUpdate(BaseSchema):
+    track_id: Optional[str] = None
+    order_index: Optional[int] = Field(None, ge=0)
+    volume_override: Optional[float] = Field(None, ge=0.0, le=1.0)
+    is_active: Optional[bool] = None
+
+
+class AudioFolderTrackReorderEntry(BaseSchema):
+    item_id: str
+    order_index: int = Field(..., ge=0)
+
+
+class AudioFolderTrackReorderPayload(BaseSchema):
+    items: List[AudioFolderTrackReorderEntry] = Field(..., min_length=1)
+
+
+class AudioFolderTrackResponse(AudioFolderTrackBase, TimestampedSchema):
+    id: str
+    folder_id: str
+    order_index: int
+    track_id: str
+
+
+class AudioFolderResponse(AudioFolderBase, TimestampedSchema):
+    id: str
+    tenant_id: Optional[str] = None
+    status: Optional[AudioFolderStatusEnum] = None
+    tracks: Optional[List[AudioFolderTrackResponse]] = None
+
+
+class AudioPlaylistPlayModeEnum(str, Enum):
+    SEQUENTIAL = "sequential"
+    SHUFFLE = "shuffle"
+    LOOP = "loop"
+
+
+class AudioPlaylistFolderScheduleBase(BaseSchema):
+    folder_id: str
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    days_of_week: Optional[List[str]] = None
+    priority: Optional[int] = Field(0, ge=0)
+    play_mode: Optional[AudioPlaylistPlayModeEnum] = AudioPlaylistPlayModeEnum.SEQUENTIAL
+    is_active: Optional[bool] = True
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final do agendamento deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioPlaylistFolderScheduleCreate(AudioPlaylistFolderScheduleBase):
+    pass
+
+
+class AudioPlaylistFolderScheduleUpdate(BaseSchema):
+    folder_id: Optional[str] = None
+    start_time: Optional[str] = Field(None, max_length=10)
+    end_time: Optional[str] = Field(None, max_length=10)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    days_of_week: Optional[List[str]] = None
+    priority: Optional[int] = Field(None, ge=0)
+    play_mode: Optional[AudioPlaylistPlayModeEnum] = None
+    is_active: Optional[bool] = None
+
+    @field_validator('starts_at', 'ends_at', mode='before')
+    @classmethod
+    def coerce_date_str(cls, v):
+        if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
+            return f"{v}T00:00:00"
+        return v
+
+    @model_validator(mode='after')
+    def validate_period(self):
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("Data final do agendamento deve ser maior ou igual à data inicial")
+        return self
+
+
+class AudioPlaylistFolderScheduleResponse(AudioPlaylistFolderScheduleBase, TimestampedSchema):
+    id: str
+    playlist_id: str
+    folder_id: str
+
+
 # DevicePairingCode Schemas
 class DevicePairingCodeBase(BaseSchema):
     code: str = Field(..., min_length=1, max_length=50)
@@ -783,6 +1059,85 @@ class DevicePairingCodeResponse(DevicePairingCodeBase, TimestampedSchema):
     status: Optional[PairingCodeStatusEnum] = None
     tenant_id: Optional[str] = None
     device_id: Optional[str] = None
+
+
+# ─── SPEC 004 — Pareamento e revogacao ───────────────────────────────────────
+
+class PairCodeStatusResponse(BaseSchema):
+    """Response de GET /devices/by-code/{code}/status.
+
+    Estendido pela SPEC 004 com token_version e pairing_version quando o
+    pareamento foi confirmado — o player precisa persistir essas versoes
+    para enviar no header X-Device-Token-Version em requests futuras.
+    """
+
+    status: str  # "pending" | "paired" | "expired"
+    device_id: Optional[str] = None
+    device_token: Optional[str] = None
+    token_version: Optional[int] = None
+    pairing_version: Optional[int] = None
+    device_name: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class RegenerateCodeRequest(BaseSchema):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class RegenerateCodeResponse(BaseSchema):
+    pairing_code: str
+    pairing_version: int
+    token_version: int
+    revoked_sessions_count: int
+    previous_pairing_code: Optional[str] = None
+
+
+class ForceRepairRequest(BaseSchema):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class ForceRepairResponse(BaseSchema):
+    token_version: int
+    revoked_sessions_count: int
+    pairing_code_unchanged: str
+
+
+class PairingEventActor(BaseSchema):
+    id: str
+    name: Optional[str] = None
+
+
+class DevicePairingEventResponse(BaseSchema):
+    id: str
+    event_type: str
+    previous_token_version: Optional[int] = None
+    new_token_version: Optional[int] = None
+    previous_pairing_version: Optional[int] = None
+    new_pairing_version: Optional[int] = None
+    previous_pairing_code: Optional[str] = None
+    new_pairing_code: Optional[str] = None
+    requested_by: Optional[PairingEventActor] = None
+    reason: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
+class PairingEventListResponse(BaseSchema):
+    items: List[DevicePairingEventResponse]
+    total: int
+
+
+# ── SPEC 005 — Audio Policy ──────────────────────────────────────────────────
+
+class TenantAudioConfigUpdate(BaseSchema):
+    audio_policy_default: AudioPolicyEnum
+    audio_fade_ms: int = Field(200, ge=0, le=2000)
+
+
+class RecomputeAudioDetectionResponse(BaseSchema):
+    media_id: str
+    has_audio: bool
+    detected_at: datetime
 
 
 # DeviceSession Schemas

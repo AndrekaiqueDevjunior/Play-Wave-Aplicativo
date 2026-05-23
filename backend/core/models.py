@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Text, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Numeric, Text, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from core.database import Base
@@ -11,6 +11,31 @@ class UserRole(str, enum.Enum):
     ADMIN = "admin"
     OPERATOR = "operator"
     VIEWER = "viewer"
+
+
+class AudioPolicy(str, enum.Enum):
+    AUTO = "auto"
+    RADIO_ONLY = "radio_only"
+    MEDIA_AUDIO_ONLY = "media_audio_only"
+    MIX = "mix"
+    MUTED_VIDEO_WITH_RADIO = "muted_video_with_radio"
+
+
+def enum_values(enum_cls):
+    return [item.value for item in enum_cls]
+
+
+class OSDPosition(str, enum.Enum):
+    TOP_LEFT = "top_left"
+    TOP_RIGHT = "top_right"
+    BOTTOM_LEFT = "bottom_left"
+    BOTTOM_RIGHT = "bottom_right"
+
+
+class OSDFontSize(str, enum.Enum):
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
 
 
 class Tenant(Base):
@@ -26,6 +51,27 @@ class Tenant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    audio_policy_default = Column(
+        SQLEnum(AudioPolicy, name="audio_policy_enum", values_callable=enum_values), default=AudioPolicy.AUTO, nullable=False,
+        server_default="auto",
+    )
+    audio_fade_ms = Column(Integer, default=200, nullable=False, server_default="200")
+    osd_show_current_audio = Column(Boolean, default=True, nullable=False, server_default="true")
+    osd_position = Column(
+        SQLEnum("top_left", "top_right", "bottom_left", "bottom_right", name="osd_position_enum"),
+        default="top_right",
+        nullable=False,
+        server_default="top_right",
+    )
+    osd_duration_seconds = Column(Integer, default=8, nullable=False, server_default="8")
+    osd_opacity = Column(Numeric(3, 2), default=0.6, nullable=False, server_default="0.6")
+    osd_font_size = Column(
+        SQLEnum("small", "medium", "large", name="osd_font_size_enum"),
+        default="medium",
+        nullable=False,
+        server_default="medium",
+    )
+
     users = relationship("User", back_populates="tenant")
     devices = relationship("Device", back_populates="tenant")
     campaigns = relationship("Campaign", back_populates="tenant")
@@ -33,10 +79,21 @@ class Tenant(Base):
     locations = relationship("Location", back_populates="tenant")
     audio_tracks = relationship("AudioTrack", back_populates="tenant")
     audio_playlists = relationship("AudioPlaylist", back_populates="tenant")
+    audio_folders = relationship("AudioFolder", back_populates="tenant")
     device_events = relationship("DeviceEvent", back_populates="tenant")
     playback_logs = relationship("PlaybackLog", back_populates="tenant")
     view_reports = relationship("ViewReport", back_populates="tenant")
     user_logs = relationship("UserLog", back_populates="tenant")
+
+    @property
+    def osd_config(self) -> dict:
+        return {
+            "show_current_audio": bool(self.osd_show_current_audio),
+            "position": self.osd_position.value if hasattr(self.osd_position, "value") else self.osd_position,
+            "duration_seconds": self.osd_duration_seconds if self.osd_duration_seconds is not None else 8,
+            "opacity": float(self.osd_opacity if self.osd_opacity is not None else 0.6),
+            "font_size": self.osd_font_size.value if hasattr(self.osd_font_size, "value") else self.osd_font_size,
+        }
 
 
 class Plan(Base):
@@ -132,6 +189,15 @@ class Device(Base):
     audio_playlist_id = Column(UUID(as_uuid=True), ForeignKey("audio_playlists.id"), nullable=True)
     audio_playlist_name = Column(String(255), nullable=True)
     audio_volume = Column(Float, default=0.7)
+    audio_policy_default = Column(SQLEnum(AudioPolicy, name="audio_policy_enum", values_callable=enum_values), nullable=True)
+    osd_show_current_audio = Column(Boolean, nullable=True)
+    osd_position = Column(SQLEnum("top_left", "top_right", "bottom_left", "bottom_right", name="osd_position_enum"), nullable=True)
+    osd_duration_seconds = Column(Integer, nullable=True)
+    osd_opacity = Column(Numeric(3, 2), nullable=True)
+    osd_font_size = Column(SQLEnum("small", "medium", "large", name="osd_font_size_enum"), nullable=True)
+    current_audio_track_id = Column(UUID(as_uuid=True), nullable=True)
+    current_audio_track_name = Column(String(500), nullable=True)
+    current_audio_track_started_at = Column(DateTime(timezone=True), nullable=True)
     ip_address = Column(String(50), nullable=True)
     player_version = Column(String(50), nullable=True)
     os = Column(String(50), nullable=True)
@@ -148,6 +214,49 @@ class Device(Base):
     device_commands = relationship("DeviceCommand", back_populates="device")
     playback_logs = relationship("PlaybackLog", back_populates="device")
     view_reports = relationship("ViewReport", back_populates="device")
+
+    @property
+    def osd_config_local(self) -> dict:
+        return {
+            "show_current_audio": self.osd_show_current_audio,
+            "position": self.osd_position.value if hasattr(self.osd_position, "value") else self.osd_position,
+            "duration_seconds": self.osd_duration_seconds,
+            "opacity": float(self.osd_opacity) if self.osd_opacity is not None else None,
+            "font_size": self.osd_font_size.value if hasattr(self.osd_font_size, "value") else self.osd_font_size,
+        }
+
+    @property
+    def osd_config_effective(self) -> dict:
+        tenant_config = self.tenant.osd_config if self.tenant else {
+            "show_current_audio": True,
+            "position": "top_right",
+            "duration_seconds": 8,
+            "opacity": 0.6,
+            "font_size": "medium",
+        }
+        return {
+            "show_current_audio": (
+                self.osd_show_current_audio
+                if self.osd_show_current_audio is not None
+                else tenant_config["show_current_audio"]
+            ),
+            "position": (
+                self.osd_position.value if hasattr(self.osd_position, "value") else self.osd_position
+            ) or tenant_config["position"],
+            "duration_seconds": (
+                self.osd_duration_seconds
+                if self.osd_duration_seconds is not None
+                else tenant_config["duration_seconds"]
+            ),
+            "opacity": (
+                float(self.osd_opacity)
+                if self.osd_opacity is not None
+                else tenant_config["opacity"]
+            ),
+            "font_size": (
+                self.osd_font_size.value if hasattr(self.osd_font_size, "value") else self.osd_font_size
+            ) or tenant_config["font_size"],
+        }
 
     @staticmethod
     def before_insert(mapper, connection, target):
@@ -187,7 +296,8 @@ class Campaign(Base):
     media_ids = Column(JSON, nullable=True)
     media_order = Column(JSON, nullable=True)
     audio_playlist_id = Column(UUID(as_uuid=True), ForeignKey("audio_playlists.id"), nullable=True)
-    video_muted = Column(Boolean, default=True)
+    video_muted = Column(Boolean, default=True)  # legado — mantido por compat (SPEC 005)
+    audio_policy = Column(SQLEnum(AudioPolicy, name="audio_policy_enum", values_callable=enum_values), nullable=True)
     schedule_all_day = Column(Boolean, default=True)
     schedule_days = Column(JSON, nullable=True)
     schedule_start_time = Column(String(10), nullable=True)
@@ -265,6 +375,8 @@ class Media(Base):
     thumbnail_url = Column(String(500), nullable=True)
     type = Column(SQLEnum(MediaType), nullable=False)
     mime_type = Column(String(100), nullable=True)
+    audio_policy = Column(SQLEnum(AudioPolicy, name="audio_policy_enum", values_callable=enum_values), nullable=True)
+    has_audio = Column(Boolean, nullable=True)
     duration = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     display_duration_seconds = Column(Integer, nullable=True)
@@ -358,6 +470,76 @@ class AudioTrack(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="audio_tracks")
+    folder_items = relationship("AudioFolderTrack", back_populates="track")
+
+
+class AudioFolderStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ARCHIVED = "archived"
+
+
+class AudioFolder(Base):
+    __tablename__ = "audio_folders"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(
+        SQLEnum(AudioFolderStatus, name="audio_folder_status", values_callable=enum_values),
+        default=AudioFolderStatus.ACTIVE,
+    )
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    start_time = Column(String(10), nullable=True)
+    end_time = Column(String(10), nullable=True)
+    schedule_days = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="audio_folders")
+    tracks = relationship(
+        "AudioFolderTrack",
+        back_populates="folder",
+        cascade="all, delete-orphan",
+        order_by="AudioFolderTrack.order_index",
+    )
+    playlist_schedules = relationship(
+        "AudioPlaylistFolderSchedule",
+        back_populates="folder",
+        cascade="all, delete-orphan",
+    )
+
+
+class AudioFolderTrack(Base):
+    __tablename__ = "audio_folder_tracks"
+    __table_args__ = (
+        UniqueConstraint("folder_id", "track_id", name="uq_audio_folder_tracks_folder_track"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    folder_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_folders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_tracks.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    order_index = Column(Integer, nullable=False, default=0)
+    volume_override = Column(Float, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    folder = relationship("AudioFolder", back_populates="tracks")
+    track = relationship("AudioTrack", back_populates="folder_items")
 
 
 class AudioPlaylistStatus(str, enum.Enum):
@@ -388,6 +570,83 @@ class AudioPlaylist(Base):
 
     tenant = relationship("Tenant", back_populates="audio_playlists")
     devices = relationship("Device", foreign_keys=[Device.audio_playlist_id])
+    items = relationship(
+        "AudioPlaylistItem",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="AudioPlaylistItem.order_index",
+    )
+    folder_schedules = relationship(
+        "AudioPlaylistFolderSchedule",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+    )
+
+
+class AudioPlaylistItem(Base):
+    __tablename__ = "audio_playlist_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    playlist_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_tracks.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    order_index = Column(Integer, nullable=False, default=0)
+    volume_override = Column(Float, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    playlist = relationship("AudioPlaylist", back_populates="items")
+    track = relationship("AudioTrack")
+
+
+class AudioPlaylistPlayMode(str, enum.Enum):
+    SEQUENTIAL = "sequential"
+    SHUFFLE = "shuffle"
+    LOOP = "loop"
+
+
+class AudioPlaylistFolderSchedule(Base):
+    __tablename__ = "audio_playlist_folder_schedules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    playlist_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    folder_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_folders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    start_time = Column(String(10), nullable=True)
+    end_time = Column(String(10), nullable=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    days_of_week = Column(JSON, nullable=True)
+    priority = Column(Integer, default=0, nullable=False)
+    play_mode = Column(
+        SQLEnum(AudioPlaylistPlayMode, name="audio_playlist_play_mode", values_callable=enum_values),
+        default=AudioPlaylistPlayMode.SEQUENTIAL,
+    )
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    playlist = relationship("AudioPlaylist", back_populates="folder_schedules")
+    folder = relationship("AudioFolder", back_populates="playlist_schedules")
 
 
 class PairingCodeStatus(str, enum.Enum):
@@ -572,6 +831,47 @@ class DeviceCommand(Base):
 
     device = relationship("Device", back_populates="device_commands")
     tenant = relationship("Tenant")
+
+
+class DevicePairingEventType(str, enum.Enum):
+    """Tipos de eventos do ciclo de pareamento (SPEC 004 — auditoria)."""
+    PAIRED = "paired"
+    RE_PAIRED = "re_paired"
+    CODE_REGENERATED = "code_regenerated"
+    FORCE_REPAIR = "force_repair"
+    TOKEN_REVOKED = "token_revoked"
+    CODE_EXPIRED = "code_expired"
+    DEVICE_BLOCKED = "device_blocked"
+    DEVICE_UNBLOCKED = "device_unblocked"
+
+
+class DevicePairingEvent(Base):
+    """Trilha de auditoria de mudancas no pareamento.
+
+    Cada acao relevante (regenerar codigo, force-repair, bloqueio, etc.)
+    gera uma linha aqui com previous/new values, requested_by e reason.
+    """
+
+    __tablename__ = "device_pairing_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String(40), nullable=False)
+    previous_token_version = Column(Integer, nullable=True)
+    new_token_version = Column(Integer, nullable=True)
+    previous_pairing_version = Column(Integer, nullable=True)
+    new_pairing_version = Column(Integer, nullable=True)
+    previous_pairing_code = Column(String(40), nullable=True)
+    new_pairing_code = Column(String(40), nullable=True)
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason = Column(Text, nullable=True)
+    extra_metadata = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    device = relationship("Device")
+    tenant = relationship("Tenant")
+    requested_by_user = relationship("User")
 
 
 class UserLogAction(str, enum.Enum):
