@@ -15,6 +15,7 @@ from .crud_audio_folder import crud_audio_folder
 from .crud_audio_folder_track import crud_audio_folder_track
 from .crud_audio_spot import crud_audio_spot
 from .crud_audio_spot_schedule import crud_audio_spot_schedule
+from .crud_audio_playback_event import crud_audio_playback_event
 from .crud_device_pairing_code import crud_device_pairing_code
 from .crud_device_session import crud_device_session
 from .crud_device_event import crud_device_event
@@ -40,6 +41,7 @@ __all__ = [
     "crud_audio_folder_track",
     "crud_audio_spot",
     "crud_audio_spot_schedule",
+    "crud_audio_playback_event",
     "crud_device_pairing_code",
     "crud_device_session",
     "crud_device_event",

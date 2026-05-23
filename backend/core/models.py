@@ -214,6 +214,7 @@ class Device(Base):
     device_commands = relationship("DeviceCommand", back_populates="device")
     playback_logs = relationship("PlaybackLog", back_populates="device")
     view_reports = relationship("ViewReport", back_populates="device")
+    audio_playback_events = relationship("AudioPlaybackEvent", back_populates="device", cascade="all, delete-orphan")
 
     @property
     def osd_config_local(self) -> dict:
@@ -731,6 +732,71 @@ class AudioSpotSchedule(Base):
 
     spot = relationship("AudioSpot", back_populates="schedules")
     playlist = relationship("AudioPlaylist", back_populates="spot_schedules")
+
+
+class AudioPlaybackEventType(str, enum.Enum):
+    TRACK_STARTED = "track_started"
+    TRACK_ENDED = "track_ended"
+    SPOT_STARTED = "spot_started"
+    SPOT_ENDED = "spot_ended"
+    ERROR = "error"
+
+
+class AudioPlaybackResult(str, enum.Enum):
+    SUCCESS = "success"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
+class AudioPlaybackEvent(Base):
+    __tablename__ = "audio_playback_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    playlist_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_playlists.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    track_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_tracks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    spot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audio_spots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_type = Column(
+        SQLEnum(AudioPlaybackEventType, name="audio_playback_event_type", values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    result = Column(
+        SQLEnum(AudioPlaybackResult, name="audio_playback_result", values_callable=enum_values),
+        default=AudioPlaybackResult.SUCCESS,
+    )
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    device = relationship("Device", back_populates="audio_playback_events")
+    playlist = relationship("AudioPlaylist")
+    track = relationship("AudioTrack")
+    spot = relationship("AudioSpot")
 
 
 class PairingCodeStatus(str, enum.Enum):

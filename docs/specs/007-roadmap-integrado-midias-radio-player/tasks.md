@@ -43,7 +43,8 @@ Status: `[ ]` pendente · `[~]` parcial · `[x]` concluido · `[!]` bloqueado/de
 - [x] Migration `audio_spots`, `audio_spot_schedules`.
 - [x] CRUD/API de spots e agendamentos.
 - [x] Resolver de spots por intervalo.
-- [ ] Migration `audio_playback_events`.
+- [x] Migration `audio_playback_events`.
+- [x] CRUD + logger de eventos de playback.
 - [ ] Endpoint `POST /audio/tracks/upload-multiple`.
 - [ ] Backend `ffprobe` como fonte oficial de duracao de audio.
 

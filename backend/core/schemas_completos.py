@@ -1130,6 +1130,43 @@ class AudioSpotScheduleResponse(AudioSpotScheduleBase, TimestampedSchema):
     spot_id: str
 
 
+class AudioPlaybackEventTypeEnum(str, Enum):
+    TRACK_STARTED = "track_started"
+    TRACK_ENDED = "track_ended"
+    SPOT_STARTED = "spot_started"
+    SPOT_ENDED = "spot_ended"
+    ERROR = "error"
+
+
+class AudioPlaybackResultEnum(str, Enum):
+    SUCCESS = "success"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
+class AudioPlaybackEventBase(BaseSchema):
+    device_id: str
+    playlist_id: Optional[str] = None
+    track_id: Optional[str] = None
+    spot_id: Optional[str] = None
+    event_type: AudioPlaybackEventTypeEnum
+    result: Optional[AudioPlaybackResultEnum] = AudioPlaybackResultEnum.SUCCESS
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = Field(None, ge=0)
+    error_message: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AudioPlaybackEventCreate(AudioPlaybackEventBase):
+    pass
+
+
+class AudioPlaybackEventResponse(AudioPlaybackEventBase, TimestampedSchema):
+    id: str
+
+
 # DevicePairingCode Schemas
 class DevicePairingCodeBase(BaseSchema):
     code: str = Field(..., min_length=1, max_length=50)
