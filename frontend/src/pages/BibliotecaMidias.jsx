@@ -76,6 +76,29 @@ function formatSize(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+function formatDuration(media) {
+  if (media.display_duration_seconds) return `${media.display_duration_seconds}s`;
+  if (media.duration_seconds) return `${media.duration_seconds}s`;
+  if (media.duration) return `${media.duration}s`;
+  if (media.type === "video" || media.type === "audio") return "Até o fim";
+  return "—";
+}
+
+function formatPeriod(media) {
+  const start = media.starts_at ? new Date(media.starts_at).toLocaleDateString("pt-BR") : "Agora";
+  const end = media.ends_at ? new Date(media.ends_at).toLocaleDateString("pt-BR") : "Sem fim";
+  return `${start} - ${end}`;
+}
+
+const AVAILABILITY_LABEL = {
+  active: "Ativa",
+  scheduled: "Agendada",
+  expired: "Expirada",
+  inactive: "Inativa",
+  processing: "Processando",
+  error: "Com erro",
+};
+
 export default function BibliotecaMidias() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -124,10 +147,18 @@ export default function BibliotecaMidias() {
   };
 
   const handleDelete = async () => {
-    await deletarMidia(deleteTarget.id);
-    queryClient.invalidateQueries({ queryKey: ["media"] });
-    toast({ title: "Mídia excluída." });
-    setDeleteTarget(null);
+    try {
+      await deletarMidia(deleteTarget.id);
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast({ title: "Mídia excluída." });
+      setDeleteTarget(null);
+    } catch (error) {
+      toast({
+        title: "Mídia em uso",
+        description: error?.message || "Esta mídia está vinculada a campanhas. Remova os vínculos antes de excluir.",
+        variant: "destructive",
+      });
+    }
   };
 
   const openEdit = (m) => {
@@ -244,13 +275,13 @@ export default function BibliotecaMidias() {
                       {TYPE_LABEL[media.type] || media.type}
                     </Badge>
                   </div>
-                  {media.duration && (
+                  {formatDuration(media) !== "—" && (
                     <div className="absolute top-2 right-2">
                       <Badge
                         variant="secondary"
                         className="text-xs bg-black/60 text-white border-0"
                       >
-                        {media.duration}s
+                        {formatDuration(media)}
                       </Badge>
                     </div>
                   )}
@@ -288,6 +319,9 @@ export default function BibliotecaMidias() {
                           {media.category}
                         </p>
                       )}
+                      <p className="text-xs text-muted-foreground">
+                        {formatPeriod(media)}
+                      </p>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -323,6 +357,16 @@ export default function BibliotecaMidias() {
                   </div>
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <StatusBadge status={media.status} />
+                    {media.availability_status && (
+                      <Badge variant="outline" className="text-xs">
+                        {AVAILABILITY_LABEL[media.availability_status] || media.availability_status}
+                      </Badge>
+                    )}
+                    {media.usage_count > 0 && (
+                      <Badge variant="secondary" className="text-xs">
+                        Em {media.usage_count} campanha(s)
+                      </Badge>
+                    )}
                     {(media.tags || []).slice(0, 2).map((tag) => (
                       <Badge key={tag} variant="outline" className="text-xs">
                         {tag}
@@ -342,6 +386,7 @@ export default function BibliotecaMidias() {
                 <TableHead>Mídia</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead className="hidden md:table-cell">Duração</TableHead>
+                <TableHead className="hidden lg:table-cell">Período</TableHead>
                 <TableHead className="hidden md:table-cell">Tamanho</TableHead>
                 <TableHead className="hidden lg:table-cell">
                   Categoria
@@ -372,7 +417,10 @@ export default function BibliotecaMidias() {
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm">
-                      {media.duration ? `${media.duration}s` : "—"}
+                      {formatDuration(media)}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                      {formatPeriod(media)}
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
                       {formatSize(media.file_size)}
@@ -381,7 +429,14 @@ export default function BibliotecaMidias() {
                       {media.category || "—"}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={media.status} />
+                      <div className="flex flex-col gap-1">
+                        <StatusBadge status={media.status} />
+                        {media.availability_status && (
+                          <span className="text-xs text-muted-foreground">
+                            {AVAILABILITY_LABEL[media.availability_status] || media.availability_status}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>

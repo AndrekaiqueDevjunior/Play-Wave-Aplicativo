@@ -17,7 +17,7 @@ app = Celery(
     "playwave",
     broker=settings.CELERY_BROKER_URL or settings.RABBITMQ_URL,
     backend=settings.CELERY_RESULT_BACKEND or settings.REDIS_URL,
-    include=["tasks"],
+    include=["tasks", "tasks.media.backfill_has_audio"],
 )
 
 app.conf.update(

@@ -41,6 +41,7 @@ import Localizacoes from "@/pages/Localizacoes";
 // Rádio Indoor
 import FaixasAudio from "@/pages/FaixasAudio";
 import PlaylistsSonoras from "@/pages/PlaylistsSonoras";
+import PlaylistDetalhe from "@/pages/PlaylistDetalhe";
 
 // Configurações
 import ConfiguracaoEmpresa from "@/pages/ConfigEmpresa";
@@ -122,6 +123,7 @@ function App() {
               {/* Rádio Indoor */}
               <Route path="audio/faixas" element={<FaixasAudio />} />
               <Route path="audio/playlists" element={<PlaylistsSonoras />} />
+              <Route path="audio/playlists/:id" element={<PlaylistDetalhe />} />
 
               {/* Configurações — apenas admin */}
               <Route

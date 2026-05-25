@@ -26,6 +26,10 @@
  * DELETE /media/{id}                       (admin)
  *   resp: 204
  *
+ * POST   /media/{id}/replace-file          (admin, multipart/form-data)
+ * GET    /media/{id}/usage                 (admin)
+ * GET    /media/{id}/versions              (admin)
+ *
  * GET    /media/{id}/thumbnail             (admin)
  *   resp: { thumbnail_url }
  */
@@ -62,5 +66,19 @@ export const atualizarMidia = (id, payload) =>
     body: JSON.stringify(payload),
   });
 
-export const deletarMidia = (id) =>
-  apiFetch(`/media/${id}`, { method: "DELETE" });
+export const substituirArquivoMidia = async (id, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return apiUpload(`/media/${id}/replace-file`, form);
+};
+
+export const buscarUsoMidia = (id) => apiFetch(`/media/${id}/usage`);
+
+export const listarVersoesMidia = (id) => apiFetch(`/media/${id}/versions`);
+
+export const deletarMidia = (id, { force = false } = {}) =>
+  apiFetch(`/media/${id}${force ? "?force=true" : ""}`, { method: "DELETE" });
+
+// SPEC 005 — re-detecta has_audio via ffprobe
+export const recomputarDeteccaoAudio = (id) =>
+  apiFetch(`/media/${id}/recompute-audio-detection`, { method: "POST" });

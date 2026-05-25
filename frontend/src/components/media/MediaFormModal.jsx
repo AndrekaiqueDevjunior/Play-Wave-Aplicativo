@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
+import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
+import { recomputarDeteccaoAudio } from "@/api/midias";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Upload, X, Image, Film, Link2, Music } from "lucide-react";
-import { uploadMidia } from "@/api/midias";
+import { substituirArquivoMidia, uploadMidia } from "@/api/midias";
 import { detectUrlMediaType } from "@/utils/mediaUtils";
 
 const DEFAULT_FORM = {
@@ -27,9 +29,16 @@ const DEFAULT_FORM = {
   type: "image",
   file_url: "",
   duration: 10,
+  duration_seconds: null,
+  display_duration_seconds: "",
+  starts_at: "",
+  ends_at: "",
   tags: "",
   notes: "",
   category: "",
+  is_active: true,
+  audio_policy: null,  // SPEC 005
+  has_audio: null,     // SPEC 005
 };
 
 // image precisa de tempo de exibição. video/audio tocam até o fim natural
@@ -52,10 +61,17 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
         description: media.description || "",
         type: media.type || "image",
         file_url: media.file_url || "",
-        duration: media.duration || 10,
+        duration: media.duration || media.display_duration_seconds || 10,
+        duration_seconds: media.duration_seconds || null,
+        display_duration_seconds: media.display_duration_seconds || "",
+        starts_at: media.starts_at ? media.starts_at.slice(0, 10) : "",
+        ends_at: media.ends_at ? media.ends_at.slice(0, 10) : "",
         tags: (media.tags || []).join(", "),
         notes: media.notes || "",
         category: media.category || "",
+        is_active: media.is_active !== false,
+        audio_policy: media.audio_policy || null,  // SPEC 005
+        has_audio: media.has_audio ?? null,         // SPEC 005
       });
       setMode(media.type === "external_url" ? "url" : "upload");
     } else {
@@ -114,7 +130,8 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
         ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
         : [];
       const usesDuration = TYPES_USING_DURATION.has(form.type);
-      const durationValue = usesDuration ? Number(form.duration) || null : null;
+      const customDuration = Number(form.display_duration_seconds) || null;
+      const durationValue = usesDuration ? Number(form.duration) || customDuration || null : customDuration;
 
       // ── Caminho UPLOAD: cria via /media/upload com TODOS os campos ─────
       // (antes o modal criava o registro via upload e DEPOIS chamava onSave,
@@ -129,6 +146,9 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
             category: form.category || undefined,
             tags: tags.length ? tags.join(",") : undefined,
             duration: durationValue,
+            display_duration_seconds: durationValue,
+            starts_at: form.starts_at || undefined,
+            ends_at: form.ends_at || undefined,
             notes: form.notes || undefined,
           });
           if (onUploaded) onUploaded(uploaded);
@@ -146,10 +166,14 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
         file_url: form.file_url,
         thumbnail_url: form.file_url,
         duration: durationValue,
+        display_duration_seconds: durationValue,
+        starts_at: form.starts_at || null,
+        ends_at: form.ends_at || null,
         file_size: media?.file_size || 0,
         tags,
         notes: form.notes,
         category: form.category,
+        is_active: form.is_active,
         status: "available",
       });
     } finally {
@@ -244,6 +268,31 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
             </div>
           )}
 
+          {media && (
+            <div className="space-y-2 rounded-md border p-3">
+              <Label>Substituir arquivo</Label>
+              <Input
+                type="file"
+                accept="image/*,video/mp4,video/webm,video/quicktime,video/x-matroska,audio/mpeg,audio/wav,audio/ogg,audio/m4a"
+                onChange={async (event) => {
+                  const selected = event.target.files?.[0];
+                  if (!selected) return;
+                  setUploading(true);
+                  try {
+                    const updated = await substituirArquivoMidia(media.id, selected);
+                    if (onUploaded) onUploaded(updated);
+                  } finally {
+                    setUploading(false);
+                    event.target.value = "";
+                  }
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Mantém o mesmo cadastro e os vínculos com campanhas, mas gera nova versão para o player baixar.
+              </p>
+            </div>
+          )}
+
           {mode === "url" && (
             <div className="space-y-2">
               <Label>URL do arquivo</Label>
@@ -300,7 +349,10 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
                   type="number"
                   min="1"
                   value={form.duration}
-                  onChange={(e) => set("duration", e.target.value)}
+                  onChange={(e) => {
+                    set("duration", e.target.value);
+                    set("display_duration_seconds", e.target.value);
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
                   Tempo de exibição em tela.
@@ -310,13 +362,43 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
               <div className="space-y-2">
                 <Label>Duração</Label>
                 <div className="h-10 px-3 rounded-md border border-input bg-muted/40 flex items-center text-sm text-muted-foreground">
-                  Até o fim do arquivo
+                  {form.duration_seconds ? `Detectada: ${form.duration_seconds}s` : "Até o fim do arquivo"}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {form.type === "video" ? "Vídeo" : "Áudio"} toca em loop dentro da campanha — o player avança quando o arquivo termina.
+                  Reprodução padrão até o fim do arquivo. Use duração personalizada só para cortar antes.
                 </p>
               </div>
             )}
+          </div>
+          {!TYPES_USING_DURATION.has(form.type) && (
+            <div className="space-y-2">
+              <Label>Duração personalizada opcional (s)</Label>
+              <Input
+                type="number"
+                min="1"
+                value={form.display_duration_seconds}
+                onChange={(e) => set("display_duration_seconds", e.target.value)}
+                placeholder="Ex: 30"
+              />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Início de exibição</Label>
+              <Input
+                type="date"
+                value={form.starts_at}
+                onChange={(e) => set("starts_at", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Fim de exibição</Label>
+              <Input
+                type="date"
+                value={form.ends_at}
+                onChange={(e) => set("ends_at", e.target.value)}
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -344,6 +426,55 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
               rows={2}
               placeholder="Anotações..."
             />
+          </div>
+
+          {/* SPEC 005 — política de áudio */}
+          <div className="border-t pt-4 space-y-3">
+            <AudioPolicySelector
+              value={form.audio_policy}
+              onChange={(v) => set("audio_policy", v)}
+              allowNull
+              inheritedLabel="Usar política da campanha"
+            />
+
+            {form.type === "video" && (
+              <div className="p-3 bg-gray-50 rounded-lg text-sm space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-700">
+                    Áudio nativo:{" "}
+                    <span className="font-medium">
+                      {form.has_audio === null
+                        ? "não detectado"
+                        : form.has_audio
+                          ? "presente"
+                          : "ausente"}
+                    </span>
+                  </span>
+                  {media?.id && (
+                    <button
+                      type="button"
+                      className="text-blue-600 hover:underline text-xs"
+                      onClick={async () => {
+                        try {
+                          const res = await recomputarDeteccaoAudio(media.id);
+                          set("has_audio", res.has_audio);
+                        } catch {
+                          /* silencioso */
+                        }
+                      }}
+                    >
+                      Recalcular
+                    </button>
+                  )}
+                </div>
+                {form.has_audio === null && (
+                  <p className="text-xs text-amber-600">
+                    Esta mídia ainda não foi analisada. Salve e clique em
+                    "Recalcular" para detectar automaticamente.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <DialogFooter>

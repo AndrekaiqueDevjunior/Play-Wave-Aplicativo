@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     libpq-dev \
+    ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
-import MediaThumb from "@/components/media/MediaThumb";
+import { useQuery } from "@tanstack/react-query";
+import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
+import CampaignPlaylistBuilder, {
+  itemsFromApi,
+  itemsFromCampaignLegacy,
+  normalizeCampaignPlaylistItems,
+} from "@/components/campaigns/CampaignPlaylistBuilder";
+import { listarItensCampanha } from "@/api/campanhas";
 import {
   Dialog,
   DialogContent,
@@ -20,9 +27,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Film, Monitor, Globe, Music, ImageIcon, Radio } from "lucide-react";
+import { Check, Loader2, Monitor, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DAYS = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
@@ -38,6 +44,7 @@ const DEFAULT_FORM = {
   media_ids: [],
   audio_playlist_id: "",
   video_muted: true,
+  audio_policy: null,  // SPEC 005
   device_ids: [],
   schedule_all_day: true,
   schedule_days: [...DAYS],
@@ -59,13 +66,6 @@ const toDateTimeInputValue = (value) => {
   // Aceita "YYYY-MM-DDTHH:MM[:SS...]" ou "YYYY-MM-DD".
   return value.slice(0, 16);
 };
-
-function MediaTypeIcon({ type }) {
-  if (type === "video") return <Film className="w-4 h-4 text-muted-foreground" />;
-  if (type === "audio") return <Music className="w-4 h-4 text-muted-foreground" />;
-  if (type === "external_url") return <Globe className="w-4 h-4 text-muted-foreground" />;
-  return <ImageIcon className="w-4 h-4 text-muted-foreground" />;
-}
 
 function SelectCheckbox({ checked }) {
   return (
@@ -90,8 +90,15 @@ export default function CampaignFormModal({
   audioPlaylists = [],
 }) {
   const [form, setForm] = useState(DEFAULT_FORM);
+  const [playlistItems, setPlaylistItems] = useState([]);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState("info");
+
+  const { data: apiPlaylistItems = [], isLoading: playlistItemsLoading } = useQuery({
+    queryKey: ["campaign-items", campaign?.id],
+    queryFn: () => listarItensCampanha(campaign.id),
+    enabled: open && !!campaign?.id,
+  });
 
   useEffect(() => {
     if (campaign) {
@@ -106,6 +113,7 @@ export default function CampaignFormModal({
         media_ids: Array.isArray(campaign.media_ids) ? campaign.media_ids : [],
         audio_playlist_id: campaign.audio_playlist_id || "",
         video_muted: campaign.video_muted !== false,
+        audio_policy: campaign.audio_policy || null,  // SPEC 005
         device_ids: Array.isArray(campaign.device_ids) ? campaign.device_ids : [],
         schedule_all_day: campaign.schedule_all_day !== false,
         schedule_days: campaign.schedule_days || [...DAYS],
@@ -113,11 +121,19 @@ export default function CampaignFormModal({
         schedule_end_time: campaign.schedule_end_time || "22:00",
         target_groups: campaign.target_groups || [],
       });
+      setPlaylistItems(itemsFromCampaignLegacy(campaign, mediaList));
     } else {
       setForm(DEFAULT_FORM);
+      setPlaylistItems([]);
     }
     setTab("info");
-  }, [campaign, open]);
+  }, [campaign, open, mediaList]);
+
+  useEffect(() => {
+    if (!open || !campaign?.id) return;
+    if (!Array.isArray(apiPlaylistItems) || apiPlaylistItems.length === 0) return;
+    setPlaylistItems(itemsFromApi(apiPlaylistItems, mediaList));
+  }, [apiPlaylistItems, campaign?.id, mediaList, open]);
 
   const set = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -156,6 +172,7 @@ export default function CampaignFormModal({
         : form.device_ids;
 
       const loopCountInt = parseInt(form.loop_count, 10);
+      const normalizedItems = normalizeCampaignPlaylistItems(playlistItems);
       await onSave({
         ...form,
         priority: Number(form.priority),
@@ -164,6 +181,17 @@ export default function CampaignFormModal({
         start_date: form.start_date || null,
         end_date: form.end_date || null,
         loop_count: Number.isFinite(loopCountInt) && loopCountInt > 0 ? loopCountInt : null,
+        media_ids: normalizedItems.map((item) => item.media_id),
+        playlist_items: normalizedItems.map((item, index) => ({
+          id: item.id,
+          media_id: item.media_id,
+          order_index: index * 10,
+          display_duration_seconds: item.display_duration_seconds || null,
+          starts_at: item.starts_at || null,
+          ends_at: item.ends_at || null,
+          is_active: item.is_active !== false,
+          repeat_count: item.repeat_count || 1,
+        })),
         device_ids: normalizedDeviceIds,
       });
     } finally {
@@ -173,7 +201,7 @@ export default function CampaignFormModal({
 
   const TABS = [
     { id: "info", label: "Informações" },
-    { id: "media", label: `Mídias (${(form.media_ids || []).length})` },
+    { id: "media", label: `Mídias (${playlistItems.length})` },
     { id: "devices", label: `TVs (${(form.device_ids || []).length})` },
     { id: "schedule", label: "Agendamento" },
   ];
@@ -183,18 +211,14 @@ export default function CampaignFormModal({
     ...(Array.isArray(audioPlaylists) ? audioPlaylists.map((p) => ({ value: p.id, label: p.name })) : []),
   ];
 
-  const availableMedia = Array.isArray(mediaList)
-    ? mediaList.filter((m) => !m.status || m.status === "available")
-    : [];
   const activeDevices = Array.isArray(devices)
     ? devices.filter((d) => d.is_active)
     : [];
-  const selectedMediaIds = Array.isArray(form.media_ids) ? form.media_ids : [];
   const selectedDeviceIds = Array.isArray(form.device_ids) ? form.device_ids : [];
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>
             {campaign ? "Editar Campanha" : "Nova Campanha"}
@@ -336,79 +360,43 @@ export default function CampaignFormModal({
                     A playlist de áudio tocará junto com as mídias da campanha.
                   </p>
                 </div>
-                <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <div className="pr-3">
-                    <Label>Som embutido dos vídeos</Label>
-                    <p className="text-xs text-muted-foreground">
-                      {form.video_muted
-                        ? "Vídeos mutados. O som vem da rádio indoor acima (se houver)."
-                        : "Vídeos tocam com a trilha de áudio do próprio arquivo. Desligue a rádio indoor para evitar áudio duplicado."}
-                    </p>
+                {/* SPEC 005 — política de áudio */}
+                <AudioPolicySelector
+                  value={form.audio_policy}
+                  onChange={(v) => set("audio_policy", v)}
+                  allowNull
+                  inheritedLabel="Herdar do dispositivo/empresa (padrão automático)"
+                />
+
+                {/* legado — mantido para compat por 2 releases */}
+                <details className="text-xs text-muted-foreground mt-1">
+                  <summary className="cursor-pointer hover:text-foreground">
+                    Configuração legada (video_muted)
+                  </summary>
+                  <div className="flex items-center justify-between rounded-md border px-3 py-2 mt-2">
+                    <div className="pr-3">
+                      <Label>Som embutido dos vídeos (legado)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Substituído pela Política de áudio acima.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={!form.video_muted}
+                      onCheckedChange={(v) => set("video_muted", !v)}
+                    />
                   </div>
-                  <Switch
-                    checked={!form.video_muted}
-                    onCheckedChange={(v) => set("video_muted", !v)}
-                  />
-                </div>
+                </details>
               </>
             )}
 
             {/* ── Mídias tab ───────────────────────────────── */}
             {tab === "media" && (
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  {selectedMediaIds.length} mídia(s) selecionada(s)
-                </p>
-                {availableMedia.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-4 text-center">
-                    Nenhuma mídia disponível
-                  </p>
-                ) : (
-                  availableMedia.map((m) => {
-                    const selected = selectedMediaIds.includes(m.id);
-                    return (
-                      <div
-                        key={m.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => toggleArr("media_ids", m.id)}
-                        onKeyDown={(e) =>
-                          (e.key === "Enter" || e.key === " ") &&
-                          toggleArr("media_ids", m.id)
-                        }
-                        className={cn(
-                          "flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors select-none",
-                          selected
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:border-primary/30",
-                        )}
-                      >
-                        {/* Thumbnail (mostra primeiro frame para vídeos) */}
-                        <div className="w-14 h-9 rounded overflow-hidden bg-muted shrink-0">
-                          <MediaThumb media={m} />
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{m.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {m.type === "external_url"
-                              ? "Link externo"
-                              : m.type === "audio"
-                              ? "Áudio"
-                              : m.type === "video"
-                              ? "Vídeo"
-                              : "Imagem"}
-                            {m.duration ? ` · ${m.duration}s` : ""}
-                            {m.category ? ` · ${m.category}` : ""}
-                          </p>
-                        </div>
-
-                        <SelectCheckbox checked={selected} />
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+              <CampaignPlaylistBuilder
+                items={playlistItems}
+                onChange={setPlaylistItems}
+                mediaList={mediaList}
+                loading={playlistItemsLoading}
+              />
             )}
 
             {/* ── TVs tab ──────────────────────────────────── */}

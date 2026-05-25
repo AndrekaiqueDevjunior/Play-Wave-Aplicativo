@@ -20,7 +20,7 @@ export default function Planos() {
     queryKey: ["plans"],
     queryFn: listarPlanos,
   });
-
+  // isLoading deve vir antes do estado vazio para evitar flicker durante o carregamento.
   return (
     <div className="space-y-6">
       <div className="max-w-2xl">

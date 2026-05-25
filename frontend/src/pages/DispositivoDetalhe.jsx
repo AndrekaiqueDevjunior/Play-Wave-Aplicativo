@@ -1,4 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
+import { OSDConfigForm } from "@/components/shared/OSDConfigForm";
+import { OSDConfigPreview, normalizeOSDConfig } from "@/components/shared/OSDConfigPreview";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,18 +19,20 @@ import {
   Clock,
   Wifi,
   WifiOff,
-  AlertTriangle,
   KeyRound,
   RotateCcw,
+  Save,
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   buscarDispositivo,
   atualizarDispositivo,
+  atualizarOSDConfigDispositivo,
   listarComandosDispositivo,
   regenerarCodigoPareamento,
   cancelarComando,
+  forcarReparamento,
 } from "@/api/dispositivos";
 import {
   sendDeviceCommand,
@@ -39,11 +44,13 @@ import { cn } from "@/lib/utils";
 import moment from "moment";
 import {
   COMMANDS_BY_GROUP,
-  commandLabel,
   isDestructive,
 } from "@/utils/deviceCommands";
 import CommandHistoryTimeline from "@/components/devices/CommandHistoryTimeline";
 import DestructiveCommandConfirmDialog from "@/components/devices/DestructiveCommandConfirmDialog";
+import RegenerateCodeDialog from "@/components/devices/RegenerateCodeDialog";
+import ForceRepairDialog from "@/components/devices/ForceRepairDialog";
+import PairingEventTimeline from "@/components/devices/PairingEventTimeline";
 
 export default function DispositivoDetalhe() {
   const { id } = useParams();
@@ -55,12 +62,23 @@ export default function DispositivoDetalhe() {
   const [syncLog, setSyncLog] = useState([]);
   const [pendingDestructive, setPendingDestructive] = useState(null); // { command, label }
   const [cancellingId, setCancellingId] = useState(null);
+  // SPEC 004 — dialogs separados para regenerate vs force-repair.
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
+  const [forceRepairDialogOpen, setForceRepairDialogOpen] = useState(false);
+  const [forceRepairLoading, setForceRepairLoading] = useState(false);
+  const [osdLocalConfig, setOsdLocalConfig] = useState({});
 
   const { data: device, isLoading } = useQuery({
     queryKey: ["device", id],
     queryFn: () => buscarDispositivo(id),
     enabled: !!id,
+    refetchInterval: 10_000,
   });
+
+  useEffect(() => {
+    if (!device?.osd_config_local) return;
+    setOsdLocalConfig(device.osd_config_local);
+  }, [device?.id, device?.osd_config_local]);
 
   const { data: metrics } = useQuery({
     queryKey: ["device-metrics", id],
@@ -81,6 +99,21 @@ export default function DispositivoDetalhe() {
     mutationFn: (data) => atualizarDispositivo(id, data),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["device", id] }),
+  });
+
+  const osdMutation = useMutation({
+    mutationFn: (payload) => atualizarOSDConfigDispositivo(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["device", id] });
+      toast({ title: "Overlay OSD atualizado" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Erro ao atualizar overlay",
+        description: err.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    },
   });
 
   const handleCommand = async (command, label) => {
@@ -163,20 +196,22 @@ export default function DispositivoDetalhe() {
     });
   };
 
-  const handleRegeneratePairing = async () => {
+  // SPEC 004 — agora passa por modal RegenerateCodeDialog.
+  const handleConfirmRegenerate = async (reason) => {
     if (!device) return;
-    const confirmed = window.confirm(
-      "Regenerar o código de pareamento vai derrubar o player atual e exigir novo pareamento nesta TV. Continuar?",
-    );
-    if (!confirmed) return;
     setPairingLoading(true);
     try {
-      const updated = await regenerarCodigoPareamento(id);
+      const updated = await regenerarCodigoPareamento(id, reason);
       queryClient.invalidateQueries({ queryKey: ["device", id] });
+      queryClient.invalidateQueries({ queryKey: ["device-pairing-events", id] });
+      const revoked = updated?.revoked_sessions_count ?? 0;
       toast({
         title: "Código regenerado",
-        description: `Novo código: ${updated?.pairing_code || "gerado"}. O player antigo precisará parear novamente.`,
+        description:
+          `Novo código: ${updated?.pairing_code || "gerado"}. ` +
+          `${revoked} sessão(ões) revogada(s).`,
       });
+      setRegenerateDialogOpen(false);
     } catch (error) {
       toast({
         title: "Erro ao regenerar código",
@@ -185,6 +220,33 @@ export default function DispositivoDetalhe() {
       });
     } finally {
       setPairingLoading(false);
+    }
+  };
+
+  // SPEC 004 — força repareamento sem trocar o código.
+  const handleConfirmForceRepair = async (reason) => {
+    if (!device) return;
+    setForceRepairLoading(true);
+    try {
+      const result = await forcarReparamento(id, reason);
+      queryClient.invalidateQueries({ queryKey: ["device", id] });
+      queryClient.invalidateQueries({ queryKey: ["device-pairing-events", id] });
+      const revoked = result?.revoked_sessions_count ?? 0;
+      toast({
+        title: "Reparamento forçado",
+        description:
+          `${revoked} sessão(ões) revogada(s). ` +
+          `O código permanece: ${result?.pairing_code_unchanged || device.pairing_code}.`,
+      });
+      setForceRepairDialogOpen(false);
+    } catch (error) {
+      toast({
+        title: "Erro ao forçar reparamento",
+        description: error?.message || "Não foi possível forçar o reparamento.",
+        variant: "destructive",
+      });
+    } finally {
+      setForceRepairLoading(false);
     }
   };
 
@@ -228,6 +290,16 @@ export default function DispositivoDetalhe() {
     },
     { label: "Campanha Atual", value: device.current_campaign || "Nenhuma" },
     {
+      label: "Tocando agora",
+      value: device.current_audio_track_name
+        ? `${device.current_audio_track_name}${
+            device.current_audio_track_started_at
+              ? ` (${moment(device.current_audio_track_started_at).fromNow()})`
+              : ""
+          }`
+        : "—",
+    },
+    {
       label: "Código de Pareamento",
       value: (
         <span className="font-mono font-bold tracking-wider">
@@ -253,6 +325,13 @@ export default function DispositivoDetalhe() {
   const devicePlatform = device?.player_version
     ? `${device.os || "?"} (player ${device.player_version})`
     : device?.os || null;
+  const osdEffectiveConfig = normalizeOSDConfig(device?.osd_config_effective || {});
+  const osdPreviewConfig = normalizeOSDConfig({
+    ...osdEffectiveConfig,
+    ...Object.fromEntries(
+      Object.entries(osdLocalConfig || {}).filter(([, value]) => value !== null && value !== undefined),
+    ),
+  });
 
   return (
     <div className="space-y-6">
@@ -359,10 +438,22 @@ export default function DispositivoDetalhe() {
             variant="outline"
             size="sm"
             disabled={pairingLoading}
-            onClick={handleRegeneratePairing}
+            onClick={() => setRegenerateDialogOpen(true)}
+            title="Gera novo código de pareamento e expulsa todos os players atuais."
           >
             <KeyRound className={cn("w-4 h-4 mr-2", pairingLoading && "animate-spin")} />
             {pairingLoading ? "Regenerando..." : "Regenerar Pareamento"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={forceRepairLoading}
+            onClick={() => setForceRepairDialogOpen(true)}
+            title="Expulsa players atuais MANTENDO o código de pareamento."
+            className="text-orange-700 border-orange-300 hover:bg-orange-50"
+          >
+            <KeyRound className={cn("w-4 h-4 mr-2", forceRepairLoading && "animate-spin")} />
+            {forceRepairLoading ? "Forçando..." : "Forçar Reparamento"}
           </Button>
           <Button
             variant="outline"
@@ -388,6 +479,25 @@ export default function DispositivoDetalhe() {
         devicePlatform={devicePlatform}
         onConfirm={confirmDestructive}
         loading={commandLoading === pendingDestructive?.command}
+      />
+
+      <RegenerateCodeDialog
+        open={regenerateDialogOpen}
+        onOpenChange={setRegenerateDialogOpen}
+        deviceId={id}
+        deviceName={device.name}
+        currentCode={device.pairing_code}
+        onConfirm={handleConfirmRegenerate}
+        loading={pairingLoading}
+      />
+
+      <ForceRepairDialog
+        open={forceRepairDialogOpen}
+        onOpenChange={setForceRepairDialogOpen}
+        deviceName={device.name}
+        currentCode={device.pairing_code}
+        onConfirm={handleConfirmForceRepair}
+        loading={forceRepairLoading}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -439,6 +549,83 @@ export default function DispositivoDetalhe() {
           </CardContent>
         </Card>
       </div>
+
+      {/* SPEC 004 — histórico de pareamento */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Histórico de Pareamento</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PairingEventTimeline deviceId={id} limit={20} />
+        </CardContent>
+      </Card>
+
+      {/* SPEC 006 — overlay OSD do dispositivo */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Overlay OSD</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <OSDConfigForm
+              value={osdLocalConfig}
+              onChange={setOsdLocalConfig}
+              allowNull
+              inheritedFrom={osdEffectiveConfig}
+            />
+            <OSDConfigPreview config={osdPreviewConfig} />
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={osdMutation.isPending}
+              onClick={() =>
+                setOsdLocalConfig({
+                  show_current_audio: null,
+                  position: null,
+                  duration_seconds: null,
+                  opacity: null,
+                  font_size: null,
+                })
+              }
+            >
+              Herdar da empresa
+            </Button>
+            <Button
+              type="button"
+              disabled={osdMutation.isPending}
+              onClick={() => osdMutation.mutate(osdLocalConfig)}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {osdMutation.isPending ? "Salvando..." : "Salvar overlay"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* SPEC 005 — política de áudio do dispositivo */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Áudio</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AudioPolicySelector
+            value={device?.audio_policy_default ?? null}
+            onChange={async (v) => {
+              try {
+                await updateMutation.mutateAsync({ audio_policy_default: v });
+                toast({ title: "Política de áudio atualizada" });
+              } catch {
+                toast({ title: "Erro ao atualizar", variant: "destructive" });
+              }
+            }}
+            allowNull
+            inheritedLabel="Herdar da empresa (padrão automático)"
+            disabled={updateMutation.isPending}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

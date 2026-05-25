@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_PASSWORD: Optional[str] = None
+    REDIS_MAX_CONNECTIONS: int = 50
+    REDIS_SOCKET_TIMEOUT: float = 2.0
+    REDIS_SOCKET_CONNECT_TIMEOUT: float = 2.0
 
     # RabbitMQ
     RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
@@ -54,11 +57,30 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+_redis_client: Optional[redis.Redis] = None
+
 
 def get_redis_client():
-    """Get Redis client connection."""
+    """Get shared Redis client connection.
+
+    redis-py clients are thread-safe and maintain an internal connection pool.
+    Reusing one client per process avoids reconnect overhead on hot player paths.
+    """
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
     try:
-        return redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+            socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+            health_check_interval=30,
+            retry_on_timeout=True,
+        )
+        return _redis_client
     except Exception as e:
         print(f"Failed to connect to Redis: {e}")
         return None
@@ -68,7 +90,15 @@ def get_async_redis_client():
     """Get async Redis client connection for use inside async generators (SSE)."""
     try:
         import redis.asyncio as aioredis
-        return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        return aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+            socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+            health_check_interval=30,
+            retry_on_timeout=True,
+        )
     except Exception as e:
         print(f"Failed to connect to Redis (async): {e}")
         return None

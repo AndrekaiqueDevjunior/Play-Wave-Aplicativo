@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import AudioPlaylist, AudioTrack, AudioTrackStatus, Device, User
+from core.models import AudioPlaylist, AudioPlaylistItem, AudioTrack, AudioTrackStatus, Device, User
 
 router = APIRouter(prefix="/audio/devices", tags=["audio-devices"])
 
@@ -30,21 +30,39 @@ def get_device_audio_playlist(
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist de áudio não encontrada")
 
+    items = (
+        db.query(AudioPlaylistItem)
+        .filter(AudioPlaylistItem.playlist_id == playlist.id)
+        .order_by(AudioPlaylistItem.order_index, AudioPlaylistItem.created_at)
+        .all()
+    )
+    entries = (
+        [(item, str(item.track_id)) for item in items if item.is_active]
+        if items
+        else [(None, str(tid)) for tid in (playlist.track_ids or []) if tid]
+    )
+
     tracks = []
-    if playlist.track_ids:
+    if entries:
         track_objs = db.query(AudioTrack).filter(
-            AudioTrack.id.in_([str(tid) for tid in playlist.track_ids]),
+            AudioTrack.id.in_([track_id for _, track_id in entries]),
             AudioTrack.status == AudioTrackStatus.ACTIVE,
         ).all()
         track_map = {str(t.id): t for t in track_objs}
-        for tid in playlist.track_ids:
-            t = track_map.get(str(tid))
+        for item, track_id in entries:
+            t = track_map.get(track_id)
             if t:
+                volume = (
+                    item.volume_override
+                    if item is not None and item.volume_override is not None
+                    else (playlist.track_volumes or {}).get(str(t.id), playlist.volume_default)
+                )
                 tracks.append({
                     "id": str(t.id),
                     "file_url": t.file_url,
                     "name": t.name,
                     "duration_seconds": t.duration_seconds or 0,
+                    "volume": volume,
                 })
 
     return {

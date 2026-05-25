@@ -55,3 +55,16 @@ export const deletarTenant = (id) =>
 
 export const buscarEstatisticasTenant = (id) =>
   apiFetch(`/tenants/${id}/stats`);
+
+// SPEC 005 — configuração de áudio do tenant
+export const atualizarConfigAudioEmpresa = (payload) =>
+  apiFetch("/tenants/me/audio-config", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const atualizarOSDConfigEmpresa = (tenantId, payload) =>
+  apiFetch(`/tenants/${tenantId}/osd-config`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });

@@ -1,13 +1,23 @@
 from datetime import datetime, timedelta
 import json
 
-from celery import shared_task
-from celery.utils.log import get_task_logger
+try:
+    from celery import shared_task
+    from celery.utils.log import get_task_logger
+except ModuleNotFoundError:
+    def shared_task(*_args, **_kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+    def get_task_logger(_name):
+        import logging
+
+        return logging.getLogger(_name)
 
 logger = get_task_logger(__name__)
 
 OFFLINE_THRESHOLD_MINUTES = 5
-
 
 @shared_task(name="tasks.recalculate_device_playlists")
 def recalculate_device_playlists():

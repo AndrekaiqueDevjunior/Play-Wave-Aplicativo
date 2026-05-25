@@ -15,17 +15,21 @@ import {
   ackComando,
   abrirStreamPlaylistUpdates,
 } from "@/api/dispositivos";
-import AudioPlayer from "@/components/audio/AudioPlayer";
 import PairingScreen from "@/components/player/PairingScreen";
 import LoadingScreen from "@/components/player/LoadingScreen";
 import ErrorScreen from "@/components/player/ErrorScreen";
 import MediaRenderer from "@/components/player/MediaRenderer";
 import PlayerOSD from "@/components/player/PlayerOSD";
 import { assetUrl } from "@/utils/mediaUtils";
+import { isMediaCurrentlyPlayable } from "@/utils/mediaSchedule";
 import { PairingStorage, PlaylistCache } from "@/player-core/storage";
 import { executeCommand, DESTRUCTIVE_COMMANDS } from "@/player-core/commands";
+import { onForceRepair } from "@/player-core/repair";
 import Platform, { acquireWakeLock, releaseWakeLock } from "@/player-core/platform";
 import { startWatchdog, stopWatchdog, notifyHeartbeatOk, useOnlineStatus } from "@/player-core/network";
+import { useAudioConflictResolver } from "@/hooks/useAudioConflictResolver";
+import { createAudioManager, AUDIO_STATE, AUDIO_MODE } from "@/lib/audioManager";
+import { logTrackStarted, logTrackEnded } from "@/lib/playbackEventLogger";
 
 const HEARTBEAT_INTERVAL = 30_000;
 const POLL_PAIRING_INTERVAL = 3_000;
@@ -66,19 +70,6 @@ function withMediaVersion(url, media) {
   }
 }
 
-function isMediaCurrentlyPlayable(media, now = Date.now()) {
-  if (!media) return false;
-  if (media.status && media.status !== "available") return false;
-  if (media.is_active === false) return false;
-
-  const startsAt = media.starts_at ? Date.parse(media.starts_at) : null;
-  if (Number.isFinite(startsAt) && startsAt > now) return false;
-
-  const endsAt = media.ends_at ? Date.parse(media.ends_at) : null;
-  if (Number.isFinite(endsAt) && endsAt < now) return false;
-
-  return true;
-}
 
 function normalizePlaylistMedia(media) {
   const absoluteUrl = assetUrl(media.file_url);
@@ -134,8 +125,8 @@ export default function Player() {
   const isOnline = useOnlineStatus();
   const debugMode = useMemo(getDebugMode, []);
 
-  // Generate or reuse pairing code
-  const [pairingCode] = useState(() => saved.code || generateCode());
+  // Generate or reuse pairing code (setter usado em renovação por expiração ou forceRepair)
+  const [pairingCode, setPairingCode] = useState(() => saved.code || generateCode());
 
   // If we already have device credentials, start in "loading" to skip pairing
   const [phase, setPhase] = useState(
@@ -147,9 +138,19 @@ export default function Player() {
   const [deviceName,  setDeviceName]  = useState("");
   const [playlist,    setPlaylist]    = useState([]);
   const [audioPlaylist, setAudioPlaylist] = useState(null);
+  const [osdConfig, setOsdConfig] = useState({
+    show_current_audio: true,
+    position: "top_right",
+    duration_seconds: 8,
+    opacity: 0.6,
+    font_size: "medium",
+  });
+  const [currentAudioTrack, setCurrentAudioTrack] = useState(null);
   const [campaignId, setCampaignId] = useState(null);
   const [campaignConfigVersion, setCampaignConfigVersion] = useState(null);
-  const [videoMuted, setVideoMuted] = useState(true);
+  const [campaign, setCampaign] = useState(null);  // SPEC 005: objeto campanha completo
+  const [videoMuted, setVideoMuted] = useState(true); // legado — mantido para compat SSE
+  const [audioManagerCurrent, setAudioManagerCurrent] = useState(AUDIO_STATE.SILENT);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress,   setProgress]    = useState(0);
   const [viewsCount, setViewsCount]  = useState(0);
@@ -163,6 +164,9 @@ export default function Player() {
   const [videoDebug, setVideoDebug] = useState(null);
   const [lastError, setLastError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
+  // SPEC 004 — quando forceRepair dispara, mostramos um banner explicativo
+  // na tela de pareamento.
+  const [forceRepairReason, setForceRepairReason] = useState(null);
 
   const pollPairRef      = useRef(null);
   const pollPlaylistRef  = useRef(null);
@@ -173,9 +177,15 @@ export default function Player() {
   const deviceTokenRef   = useRef(deviceToken);
   const sseRef           = useRef(null);
   const failedMediaIdsRef = useRef(new Set());
+  const trackStartedAtRef = useRef(null);
+  const audioManagerRef  = useRef(null);
+  const deviceIdRef      = useRef(deviceId);
+  const audioPlaylistIdRef = useRef(null);
+  const prevAudioTrackRef = useRef(null);
 
-  // Keep ref in sync so callbacks always have the latest token
+  // Keep refs in sync so mount-time closures always see latest values
   useEffect(() => { deviceTokenRef.current = deviceToken; }, [deviceToken]);
+  useEffect(() => { deviceIdRef.current = deviceId; }, [deviceId]);
 
   // ── 0. Inicialização da plataforma ────────────────────────────────────────
   useEffect(() => {
@@ -192,12 +202,95 @@ export default function Player() {
     }
     acquireWakeLock();
     startWatchdog(120_000, () => {
+      // SPEC 004 — durante pairing/waiting o player nao tem credenciais válidas;
+      // forçar reload aqui só vai entrar em loop. Skip.
+      if (phase === "waiting" || phase === "pairing") {
+        console.log("[player] watchdog skip — em fase de pareamento");
+        return;
+      }
       console.warn("[player] watchdog triggered — forcing reload of playlist");
       setPhase("loading");
     });
+
+    // SPEC 004 — registra callback chamado por forceRepair() (repair.js).
+    onForceRepair((reason) => {
+      console.warn("[player] forceRepair callback:", reason);
+      setForceRepairReason(reason);
+      setDeviceId(null);
+      setDeviceToken(null);
+      setPlaylist([]);
+      setAudioPlaylist(null);
+      setCampaignId(null);
+      setCurrentIndex(0);
+      setProgress(0);
+
+      // SPEC 004 — quando o admin regenera o código, o pairing_code do
+      // dispositivo muda no backend. O código salvo no estado é stale e
+      // nunca vai encontrar o dispositivo ao polling. Gera código novo para
+      // que o admin pareie usando o código visível na TV.
+      if (reason === "code_regenerated") {
+        const newCode = generateCode();
+        PairingStorage.save({ code: newCode });
+        setPairingCode(newCode);
+      }
+
+      setPhase("waiting");
+    });
+
     return () => {
       releaseWakeLock();
       stopWatchdog();
+    };
+  }, []);
+
+  // ── 0b. Audio Manager — motor de áudio central ───────────────────────────
+  useEffect(() => {
+    const radio = document.createElement("audio");
+    radio.preload = "auto";
+
+    const spot = document.createElement("audio");
+    spot.preload = "none";
+
+    const mgr = createAudioManager({ fadeMs: 200 });
+    mgr.initPlayers(radio, null, spot);
+
+    const unsub = mgr.subscribe((newState) => {
+      if ("currentTrack" in newState) {
+        const newTrack = newState.currentTrack || null;
+        const prevTrack = prevAudioTrackRef.current;
+
+        // Log ended event for the previous track
+        if (prevTrack && prevTrack !== newTrack) {
+          const startedAt = trackStartedAtRef.current;
+          const durationSecs = startedAt
+            ? Math.round((Date.now() - new Date(startedAt).getTime()) / 1000)
+            : null;
+          logTrackEnded(deviceIdRef.current, prevTrack.id, durationSecs, audioPlaylistIdRef.current).catch(() => {});
+        }
+
+        if (newTrack) {
+          const now = new Date().toISOString();
+          trackStartedAtRef.current = now;
+          logTrackStarted(deviceIdRef.current, newTrack.id, audioPlaylistIdRef.current, now).catch(() => {});
+        } else {
+          trackStartedAtRef.current = null;
+        }
+
+        prevAudioTrackRef.current = newTrack;
+        setCurrentAudioTrack(newTrack);
+      }
+      if ("current" in newState) {
+        setAudioManagerCurrent(newState.current);
+      }
+    });
+
+    audioManagerRef.current = mgr;
+
+    return () => {
+      unsub();
+      mgr.destroy();
+      radio.pause(); radio.src = "";
+      spot.pause(); spot.src = "";
     };
   }, []);
 
@@ -219,11 +312,29 @@ export default function Player() {
         console.log("[player] pairing poll:", res);
         if (res?.status === "paired" && res.device_id && res.device_token) {
           clearInterval(pollPairRef.current);
-          PairingStorage.save(pairingCode, res.device_id, res.device_token);
+          // SPEC 004 — persiste tambem token_version e pairing_version para o
+          // interceptor http enviar X-Device-Token-Version nas proximas requests.
+          PairingStorage.save({
+            code: pairingCode,
+            id: res.device_id,
+            token: res.device_token,
+            tokenVersion: res.token_version,
+            pairingVersion: res.pairing_version,
+          });
           setDeviceId(res.device_id);
           setDeviceToken(res.device_token);
+          setForceRepairReason(null);
           deviceTokenRef.current = res.device_token;
           setPhase("loading");
+        } else if (res?.status === "expired") {
+          // SPEC 004 — código expirou sem confirmação: gera um novo código.
+          // O código anterior não tem mais entrada válida no backend.
+          clearInterval(pollPairRef.current);
+          console.warn("[player] pairing code expired — generating new code");
+          const newCode = generateCode();
+          PairingStorage.save({ code: newCode });
+          setPairingCode(newCode);
+          setForceRepairReason("PAIRING_CODE_EXPIRED");
         }
       } catch (err) {
         console.warn("[player] pairing poll error:", err);
@@ -251,12 +362,23 @@ export default function Player() {
       if (res?.campaign?.id) {
         setCampaignId(res.campaign.id);
         setCampaignConfigVersion(res.campaign.config_version || null);
+        setCampaign(res.campaign);  // SPEC 005: guarda objeto completo
       } else {
         setCampaignId(null);
         setCampaignConfigVersion(null);
+        setCampaign(null);
       }
       setVideoMuted(res?.campaign?.video_muted !== false);
-      setAudioPlaylist(res?.audio_playlist || null);
+      const ap = res?.audio_playlist || null;
+      setAudioPlaylist(ap);
+      audioPlaylistIdRef.current = ap?.id || null;
+      setOsdConfig(res?.osd_config || {
+        show_current_audio: true,
+        position: "top_right",
+        duration_seconds: 8,
+        opacity: 0.6,
+        font_size: "medium",
+      });
       setCampaignSchedule(res?.campaign ? {
         endDate: res.campaign.end_date || null,
         scheduleEndTime: res.campaign.schedule_end_time || null,
@@ -627,15 +749,37 @@ export default function Player() {
       console.warn("[player] SSE error:", err);
     };
 
+    // SPEC 004 — revogação remota do pareamento (regenerate, force-repair,
+    // token_revoked, device_blocked). Player limpa storage e volta para tela
+    // de pareamento sem precisar esperar 401.
+    const onPairingRevoked = async (evt) => {
+      let reason = "pairing_revoked";
+      try {
+        const data = JSON.parse(evt.data);
+        reason = data?.data?.reason || data?.reason || reason;
+      } catch {
+        /* ignore */
+      }
+      console.warn("[player] SSE pairing:revoked", reason);
+      try {
+        const repair = await import("@/player-core/repair");
+        repair.forceRepair(reason);
+      } catch (err) {
+        console.warn("[player] could not import repair.js:", err);
+      }
+    };
+
     es.addEventListener("snapshot", onSnapshot);
     es.addEventListener("playlist_invalidated", onPlaylistInvalidated);
     es.addEventListener("command:new", onCommandNew);
+    es.addEventListener("pairing:revoked", onPairingRevoked);
     es.addEventListener("error", onError);
 
     return () => {
       es.removeEventListener("snapshot", onSnapshot);
       es.removeEventListener("playlist_invalidated", onPlaylistInvalidated);
       es.removeEventListener("command:new", onCommandNew);
+      es.removeEventListener("pairing:revoked", onPairingRevoked);
       es.removeEventListener("error", onError);
       es.close();
       sseRef.current = null;
@@ -659,6 +803,9 @@ export default function Player() {
           current_config_version: campaignConfigVersion,
           current_media_id: currentMedia?.id || null,
           current_media_name: currentMedia?.name || null,
+          current_audio_track_id: currentAudioTrack?.id || null,
+          current_audio_track_name: currentAudioTrack?.name || null,
+          current_audio_track_started_at: currentAudioTrack ? trackStartedAtRef.current : null,
           last_error: lastError ? JSON.stringify(lastError).slice(0, 1000) : null,
           playback_status: phase,
         });
@@ -673,22 +820,111 @@ export default function Player() {
     beat();
     heartbeatRef.current = setInterval(beat, HEARTBEAT_INTERVAL);
     return () => clearInterval(heartbeatRef.current);
-  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId, campaignConfigVersion, lastError]);
+  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId, campaignConfigVersion, currentAudioTrack, lastError]);
 
-  // ── Renders ───────────────────────────────────────────────────────────────
-  // AudioPlayer NUNCA desmonta — vive pelo ciclo inteiro do app.
-  // `enabled` controla play/pause; `audioPlaylist` controla o conteúdo.
-  const renderAudio = () => (
-    <AudioPlayer
-      audioPlaylist={audioPlaylist || null}
-      enabled={phase === "playing"}
-      onStatusChange={(status) =>
-        console.log("[player] audio status:", status.playing, status.track?.name)
-      }
-    />
-  );
-
+  // ── SPEC 005: resolver de política de áudio ──────────────────────────────
   const current = playlist[currentIndex] || null;
+  const fallbackPolicy = campaign?.audio_policy_default || "auto";
+  const audioFadeMs = campaign?.audio_fade_ms ?? 200;
+
+  // spotActive: truthy quando o AudioManager está tocando um spot
+  const spotActive = audioManagerCurrent === AUDIO_STATE.SPOT ? { id: "active" } : null;
+
+  const { videoMuted: resolvedVideoMuted, audioEnabled } = useAudioConflictResolver({
+    currentMedia: current,
+    audioPlaylist,
+    currentSpot: spotActive,
+    fallbackPolicy,
+  });
+
+  // Compat: se a mídia não tem audio_policy_effective (player antigo ou campo ausente),
+  // usa o video_muted legado da campanha.
+  const finalVideoMuted = current?.audio_policy_effective
+    ? resolvedVideoMuted
+    : videoMuted;
+
+  // Log de diagnóstico
+  useEffect(() => {
+    if (!current) return;
+    console.log("[player] audio resolver:", {
+      media: current.name,
+      policy: current.audio_policy_effective,
+      has_audio: current.has_audio,
+      decision: { videoMuted: finalVideoMuted, audioEnabled },
+    });
+  }, [current?.id, finalVideoMuted, audioEnabled]);
+
+  // ── Audio Manager: sincroniza fadeMs quando campanha carrega ─────────────
+  useEffect(() => {
+    const mgr = audioManagerRef.current;
+    if (mgr) mgr.state.fadeMs = audioFadeMs;
+  }, [audioFadeMs]);
+
+  // ── Audio Manager: carrega playlist no manager quando audioPlaylist muda ──
+  useEffect(() => {
+    const mgr = audioManagerRef.current;
+    if (!mgr) return;
+    const rawTracks = audioPlaylist?.tracks || [];
+    const tracks = rawTracks.map((t) => ({ ...t, file_url: assetUrl(t.file_url) }));
+    const mode = audioPlaylist?.shuffle ? AUDIO_MODE.SHUFFLE : AUDIO_MODE.SEQUENTIAL;
+    mgr.loadRadioPlaylist(tracks, mode);
+  }, [audioPlaylist?.id, audioPlaylist?.shuffle]);
+
+  // ── Audio Manager: play/stop rádio conforme política + fase ──────────────
+  useEffect(() => {
+    const mgr = audioManagerRef.current;
+    if (!mgr) return;
+    if (audioEnabled && phase === "playing") {
+      mgr.playRadio().catch(() => {});
+    } else {
+      mgr.silence().catch(() => {});
+    }
+  }, [audioEnabled, phase]);
+
+  // ── Audio Manager: agenda de spots ────────────────────────────────────────
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const mgr = audioManagerRef.current;
+    if (!mgr) return;
+
+    const spotSchedules = audioPlaylist?.spot_schedules;
+    if (!spotSchedules?.length) return;
+
+    const timers = [];
+
+    spotSchedules.forEach((sched) => {
+      if (!sched.file_url || !sched.interval_seconds) return;
+
+      const now = new Date();
+      const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const inWindow =
+        (!sched.start_time || hhmm >= sched.start_time) &&
+        (!sched.end_time || hhmm <= sched.end_time);
+
+      if (!inWindow) return;
+
+      const intervalMs = sched.interval_seconds * 1000;
+      const url = assetUrl(sched.file_url);
+      const policy = sched.insertion_policy || "interrupt";
+
+      const id = setInterval(() => {
+        const nowCheck = new Date();
+        const t = `${String(nowCheck.getHours()).padStart(2, "0")}:${String(nowCheck.getMinutes()).padStart(2, "0")}`;
+        const stillInWindow =
+          (!sched.start_time || t >= sched.start_time) &&
+          (!sched.end_time || t <= sched.end_time);
+        if (!stillInWindow) return;
+        console.log("[player] spot scheduled:", sched.spot_name || sched.spot_id);
+        mgr.playSpot(url, policy).catch(() => {});
+      }, intervalMs);
+
+      timers.push(id);
+    });
+
+    return () => timers.forEach(clearInterval);
+  }, [audioPlaylist?.id, phase]);
+
+  // `current` já declarado acima no bloco do resolver SPEC 005
   const nextMedia = playlist.length ? playlist[(currentIndex + 1) % playlist.length] : null;
   const debugData = {
     enabled: debugMode,
@@ -714,8 +950,7 @@ export default function Player() {
   if (phase === "waiting") {
     return (
       <>
-        {renderAudio()}
-        <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} />
+        <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} forceRepairReason={forceRepairReason} />
         <PlayerDebugOverlay data={debugData} />
       </>
     );
@@ -728,7 +963,7 @@ export default function Player() {
           <MediaRenderer
             media={current}
             progress={progress}
-            videoMuted={videoMuted}
+            videoMuted={finalVideoMuted}
             onDebug={setVideoDebug}
             onError={handleMediaError}
             onEnded={advanceMedia}
@@ -738,18 +973,19 @@ export default function Player() {
             totalItems={playlist.length}
             currentIndex={currentIndex}
             deviceName={deviceName}
+            currentAudioTrack={currentAudioTrack}
+            audioEnabled={audioEnabled && phase === "playing"}
+            osdConfig={osdConfig}
           />
           <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-white text-sm">
             Sincronizando playlist...
           </div>
           <PlayerDebugOverlay data={debugData} />
-          {renderAudio()}
         </div>
       );
     }
     return (
       <>
-        {renderAudio()}
         <LoadingScreen message="Carregando playlist..." />
         <PlayerDebugOverlay data={debugData} />
       </>
@@ -759,7 +995,6 @@ export default function Player() {
   if (phase === "error") {
     return (
       <>
-        {renderAudio()}
         <ErrorScreen
           onRetry={() => {
             PairingStorage.clear();
@@ -777,7 +1012,6 @@ export default function Player() {
   if (phase === "no_campaign") {
     return (
       <>
-        {renderAudio()}
         <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-6">
           <div className="w-16 h-16 rounded-2xl bg-blue-600/20 flex items-center justify-center">
             <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
@@ -800,7 +1034,7 @@ export default function Player() {
       <MediaRenderer
         media={current}
         progress={progress}
-        videoMuted={videoMuted}
+        videoMuted={finalVideoMuted}
         onDebug={setVideoDebug}
         onError={handleMediaError}
         onEnded={advanceMedia}
@@ -810,9 +1044,11 @@ export default function Player() {
         totalItems={playlist.length}
         currentIndex={currentIndex}
         deviceName={deviceName}
+        currentAudioTrack={currentAudioTrack}
+        audioEnabled={audioEnabled && phase === "playing"}
+        osdConfig={osdConfig}
       />
       <PlayerDebugOverlay data={debugData} />
-      {renderAudio()}
     </div>
   );
 }

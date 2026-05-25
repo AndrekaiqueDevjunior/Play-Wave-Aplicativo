@@ -40,7 +40,7 @@ import {
   AlertDialogDescription,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Edit, Loader2, Volume2 } from "lucide-react";
 
 const INSERTION_POLICIES = {

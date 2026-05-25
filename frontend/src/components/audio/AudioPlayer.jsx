@@ -1,6 +1,33 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { assetUrl } from "@/utils/mediaUtils";
 
+const FADE_INTERVAL_MS = 25;
+
+/**
+ * Sobe/desce volume de um elemento <audio> suavemente.
+ * Retorna o intervalId (ou null se durationMs <= 0).
+ */
+function doFade(audio, targetVolume, durationMs, onComplete) {
+  if (durationMs <= 0) {
+    audio.volume = Math.max(0, Math.min(1, targetVolume));
+    onComplete?.();
+    return null;
+  }
+  const steps = Math.max(1, Math.floor(durationMs / FADE_INTERVAL_MS));
+  const delta = (targetVolume - audio.volume) / steps;
+  let step = 0;
+  const id = setInterval(() => {
+    step += 1;
+    audio.volume = Math.max(0, Math.min(1, audio.volume + delta));
+    if (step >= steps) {
+      audio.volume = Math.max(0, Math.min(1, targetVolume));
+      clearInterval(id);
+      onComplete?.();
+    }
+  }, FADE_INTERVAL_MS);
+  return id;
+}
+
 /**
  * AudioPlayer — Motor de áudio persistente.
  *
@@ -9,21 +36,31 @@ import { assetUrl } from "@/utils/mediaUtils";
  *    inteiro do Player.jsx.
  * 2. Play/pause são controlados pela prop `enabled`, nunca por desmontagem.
  * 3. O elemento <audio> é criado UMA vez e reutilizado indefinidamente.
- * 4. Quando `enabled=false`, apenas pausamos. Quando `enabled=true`, tentamos
- *    retomar.
+ * 4. Quando `enabled=false`, fade out e pausa. Quando `enabled=true`, play com fade in.
  * 5. Erros de autoplay são logados e capturados silenciosamente.
  *
  * Props:
- *   audioPlaylist - Dados da playlist com tracks inline
- *   enabled       - Se o áudio deve estar ativo (play) ou pausado
- *   onStatusChange - Callback de status
+ *   audioPlaylist  — Dados da playlist com tracks inline
+ *   enabled        — Se o áudio deve estar ativo (play) ou pausado
+ *   fadeMs         — Duração do fade em ms (SPEC 005, default 200)
+ *   onStatusChange — Callback de status
+ *   onTrackChange  — Callback debounced para reportar faixa atual ao backend
  */
-export default function AudioPlayer({ audioPlaylist, enabled = true, onStatusChange }) {
+export default function AudioPlayer({
+  audioPlaylist,
+  enabled = true,
+  fadeMs = 200,
+  onStatusChange,
+  onTrackChange,
+}) {
   const audioRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const currentIndexRef = useRef(0);
   const tracksRef = useRef([]);
   const isPlayingRef = useRef(false);
+  const fadeIdRef = useRef(null);  // SPEC 005: cancelar fade anterior
+  const trackChangeDebounceRef = useRef(null);
+  const lastReportedTrackIdRef = useRef(null);
 
   // ── 1. Cria o elemento <audio> UMA vez, nunca o recria ──────────────────
   useEffect(() => {
@@ -62,6 +99,8 @@ export default function AudioPlayer({ audioPlaylist, enabled = true, onStatusCha
     if (!tracks.length) {
       console.log("[AudioPlayer] empty playlist, pausing");
       audioRef.current?.pause();
+      lastReportedTrackIdRef.current = null;
+      onTrackChange?.(null);
       return;
     }
 
@@ -70,6 +109,46 @@ export default function AudioPlayer({ audioPlaylist, enabled = true, onStatusCha
     setCurrentIndex(0);
     currentIndexRef.current = 0;
   }, [audioPlaylist?.id]);
+
+  // ── SPEC 006: reporta faixa atual com debounce ─────────────────────────
+  useEffect(() => {
+    const track = tracksRef.current[currentIndex] || null;
+    const trackId = track?.id || null;
+
+    if (!enabled) {
+      return;
+    }
+    if (lastReportedTrackIdRef.current === trackId) {
+      return;
+    }
+
+    if (trackChangeDebounceRef.current) {
+      clearTimeout(trackChangeDebounceRef.current);
+    }
+    trackChangeDebounceRef.current = setTimeout(() => {
+      lastReportedTrackIdRef.current = trackId;
+      onTrackChange?.(track);
+      trackChangeDebounceRef.current = null;
+    }, 500);
+
+    return () => {
+      if (trackChangeDebounceRef.current) {
+        clearTimeout(trackChangeDebounceRef.current);
+        trackChangeDebounceRef.current = null;
+      }
+    };
+  }, [audioPlaylist?.id, currentIndex, enabled, onTrackChange]);
+
+  useEffect(() => {
+    if (!enabled && lastReportedTrackIdRef.current !== null) {
+      if (trackChangeDebounceRef.current) {
+        clearTimeout(trackChangeDebounceRef.current);
+        trackChangeDebounceRef.current = null;
+      }
+      lastReportedTrackIdRef.current = null;
+      onTrackChange?.(null);
+    }
+  }, [enabled, onTrackChange]);
 
   // ── 3. Toca/pausa baseado em `enabled` e `currentIndex` ─────────────────
   const handleError = useCallback(() => {
@@ -149,22 +228,45 @@ export default function AudioPlayer({ audioPlaylist, enabled = true, onStatusCha
     };
   }, [currentIndex, audioPlaylist, enabled, handleEnded, handleError, onStatusChange]);
 
-  // ── 4. Log de mudança de enabled ───────────────────────────────────────
+  // ── 4. SPEC 005: fade ao mudar enabled ────────────────────────────────
   useEffect(() => {
-    console.log("[AudioPlayer] enabled changed to:", enabled);
+    console.log("[AudioPlayer] enabled changed to:", enabled, "fadeMs:", fadeMs);
     const audio = audioRef.current;
     if (!audio) return;
 
-    if (enabled && audio.paused && tracksRef.current.length > 0) {
-      console.log("[AudioPlayer] auto-resuming after enabled=true");
-      audio.play().catch((err) => {
-        console.warn("[AudioPlayer] auto-resume failed:", err.name);
+    // Cancela fade em andamento
+    if (fadeIdRef.current) {
+      clearInterval(fadeIdRef.current);
+      fadeIdRef.current = null;
+    }
+
+    if (enabled && tracksRef.current.length > 0) {
+      if (audio.paused) {
+        audio.volume = 0;
+        audio.play().catch((err) => {
+          console.warn("[AudioPlayer] auto-resume failed:", err.name);
+        });
+      }
+      const targetVol = tracksRef.current[currentIndexRef.current]?.volume
+        ?? audioPlaylist?.volume
+        ?? 0.7;
+      fadeIdRef.current = doFade(audio, targetVol, fadeMs, () => {
+        fadeIdRef.current = null;
       });
     } else if (!enabled && !audio.paused) {
-      console.log("[AudioPlayer] auto-pausing after enabled=false");
-      audio.pause();
+      fadeIdRef.current = doFade(audio, 0, fadeMs, () => {
+        audio.pause();
+        fadeIdRef.current = null;
+      });
     }
-  }, [enabled]);
+
+    return () => {
+      if (fadeIdRef.current) {
+        clearInterval(fadeIdRef.current);
+        fadeIdRef.current = null;
+      }
+    };
+  }, [enabled, fadeMs]);
 
   // Componente invisível — motor de áudio persistente
   return null;

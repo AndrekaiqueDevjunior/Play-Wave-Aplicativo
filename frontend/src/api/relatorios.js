@@ -70,7 +70,7 @@ export const registrarPlayback = (token, payload) =>
 /** Download CSV de relatório (autenticado via JWT) */
 export const exportarRelatorioCSV = async (params = {}) => {
   const BASE_URL = getBaseUrl();
-  if (!BASE_URL) return null;
+  // BASE_URL vazio = URL relativa
 
   const token =
     sessionStorage.getItem("pw_access_token") ??

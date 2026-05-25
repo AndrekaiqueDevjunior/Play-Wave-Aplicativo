@@ -93,6 +93,12 @@ export const atualizarDispositivo = (id, payload) =>
     body: JSON.stringify(payload),
   });
 
+export const atualizarOSDConfigDispositivo = (id, payload) =>
+  apiFetch(`/devices/${id}/osd-config`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
 export const deletarDispositivo = (id) =>
   apiFetch(`/devices/${id}`, { method: "DELETE" });
 
@@ -154,8 +160,46 @@ export const desbloquearDispositivo = (deviceId) =>
 export const revogarTokenDispositivo = (deviceId) =>
   apiFetch(`/devices/${deviceId}/revoke-token`, { method: "POST" });
 
-export const regenerarCodigoPareamento = (deviceId) =>
-  apiFetch(`/devices/${deviceId}/pairing-code/regenerate`, { method: "POST" });
+/**
+ * Regenera o código de pareamento. Aceita `reason` opcional para auditoria.
+ * SPEC 004 — resposta agora inclui `revoked_sessions_count`, `previous_pairing_code`,
+ * `pairing_version`, `token_version`.
+ */
+export const regenerarCodigoPareamento = (deviceId, reason = null) =>
+  apiFetch(`/devices/${deviceId}/pairing-code/regenerate`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+
+/**
+ * SPEC 004 — revoga tokens sem trocar o código de pareamento.
+ * Útil quando o operador quer expulsar player suspeito/clonado mas
+ * manter o código atual nas TVs autorizadas.
+ */
+export const forcarReparamento = (deviceId, reason = null) =>
+  apiFetch(`/devices/${deviceId}/force-repair`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+
+/**
+ * SPEC 004 — lista histórico de eventos de pareamento do dispositivo.
+ */
+export const listarEventosPareamento = (deviceId, params = {}) => {
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== "")),
+  ).toString();
+  return apiFetch(`/devices/${deviceId}/pairing-events${qs ? `?${qs}` : ""}`);
+};
+
+/**
+ * SPEC 004 — lista sessões ativas (usado antes do modal de regenerate para
+ * mostrar impacto). Reusa o endpoint existente /sessions filtrando ativos.
+ */
+export const buscarSessoesAtivas = async (deviceId) => {
+  const sessions = await apiFetch(`/devices/${deviceId}/sessions`);
+  return (sessions || []).filter((s) => s.is_active);
+};
 
 // ── TV: Command queue (player) ───────────────────────────────────────────
 export const buscarComandosPendentes = (deviceId, token) =>

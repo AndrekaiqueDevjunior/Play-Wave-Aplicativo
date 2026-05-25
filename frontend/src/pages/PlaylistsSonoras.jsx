@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   listarPlaylistsAudio,
   atualizarPlaylistAudio,
@@ -17,6 +18,7 @@ import {
   Music2,
   Volume2,
   Repeat,
+  Settings2,
 } from "lucide-react";
 import AudioPlaylistFormModal from "@/components/audio/AudioPlaylistsFormModal";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
@@ -24,6 +26,7 @@ import StatusBadge from "@/components/shared/StatusBadge";
 
 export default function PlaylistsSonoras() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -172,6 +175,14 @@ export default function PlaylistsSonoras() {
                   >
                     <Edit2 className="w-3.5 h-3.5 mr-1.5" />
                     Editar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate(`/audio/playlists/${pl.id}`)}
+                    title="Pastas, agenda e spots"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
                   </Button>
                   <Button
                     variant="ghost"

@@ -48,6 +48,7 @@ import {
   criarCampanha,
   atualizarCampanha,
   deletarCampanha,
+  sincronizarItensCampanha,
 } from "@/api/campanhas";
 import { listarMidias } from "@/api/midias";
 import { listarDispositivos } from "@/api/dispositivos";
@@ -107,17 +108,27 @@ export default function Campanhas() {
 
   const handleSave = async (form) => {
     try {
+      const { playlist_items: playlistItems = [], ...campaignPayload } = form;
+      let savedCampaign;
       if (editCampaign) {
-        await atualizarCampanha(editCampaign.id, form);
+        savedCampaign = await atualizarCampanha(editCampaign.id, campaignPayload);
+        await sincronizarItensCampanha(editCampaign.id, playlistItems);
         toast({ title: "Campanha atualizada!" });
       } else {
-        await criarCampanha({ ...form, total_views: 0 });
+        savedCampaign = await criarCampanha({ ...campaignPayload, total_views: 0 });
+        if (savedCampaign?.id) {
+          await sincronizarItensCampanha(savedCampaign.id, playlistItems);
+        }
         toast({
           title: "Campanha criada!",
-          description: `${form.name} foi adicionada.`,
+          description: `${campaignPayload.name} foi adicionada.`,
         });
       }
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      const campaignId = editCampaign?.id || savedCampaign?.id;
+      if (campaignId) {
+        queryClient.invalidateQueries({ queryKey: ["campaign-items", campaignId] });
+      }
       setModalOpen(false);
       setEditCampaign(null);
     } catch (err) {

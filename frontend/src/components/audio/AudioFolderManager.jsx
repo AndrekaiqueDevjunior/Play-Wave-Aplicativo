@@ -26,7 +26,7 @@ import {
   AlertDialogDescription,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -99,15 +99,13 @@ export default function AudioFolderManager({
       return;
     }
 
-    const payload = {
-      ...form,
-      track_ids: selectedTracks,
-    };
+    // track_ids NÃO vai no body da pasta — endpoint separado /folders/{id}/tracks
+    const folderPayload = { ...form };
 
     if (editingFolder) {
-      await onUpdate?.(editingFolder.id, payload);
+      await onUpdate?.(editingFolder.id, folderPayload, selectedTracks);
     } else {
-      await onSave?.(payload);
+      await onSave?.(folderPayload, selectedTracks);
     }
 
     setEditingFolder(null);

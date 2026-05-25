@@ -36,6 +36,7 @@ export class AudioManager {
       duration: 0,
       volume: 1.0,
       fadeMs: options.fadeMs || 200,
+      currentTrack: null,
     };
 
     this.players = {
@@ -86,6 +87,7 @@ export class AudioManager {
     if (this.players.radio) {
       this.players.radio.addEventListener('timeupdate', () => this._onTimeUpdate('radio'));
       this.players.radio.addEventListener('ended', () => this._onTrackEnded('radio'));
+      this.players.radio.addEventListener('error', () => this._onTrackError('radio'));
     }
 
     if (this.players.mediaAudio) {
@@ -131,17 +133,20 @@ export class AudioManager {
   async playRadio(trackUrl = null) {
     if (!this.players.radio) return;
 
-    // Se passou URL, toca ela; senão, pega próxima da fila
+    // Já tocando rádio e não foi pedida faixa específica: não reinicia
+    if (!trackUrl && this.state.current === AUDIO_STATE.RADIO && this.state.isPlaying) return;
+
+    let track = null;
     if (!trackUrl) {
       if (this.queue.radioIndex >= this.queue.radio.length) {
-        // Loop: reinicia fila
         this.queue.radioIndex = 0;
         if (this.queue.radioMode === AUDIO_MODE.SHUFFLE) {
           this._shuffleQueue();
         }
       }
       if (this.queue.radio.length === 0) return;
-      trackUrl = this.queue.radio[this.queue.radioIndex].file_url;
+      track = this.queue.radio[this.queue.radioIndex];
+      trackUrl = track.file_url;
     }
 
     // Fade out + load novo
@@ -149,7 +154,7 @@ export class AudioManager {
     this.players.radio.src = trackUrl;
     await this._fadeIn(this.players.radio, this.state.fadeMs);
 
-    this._notify({ current: AUDIO_STATE.RADIO, isPlaying: true });
+    this._notify({ current: AUDIO_STATE.RADIO, isPlaying: true, currentTrack: track });
   }
 
   /**
@@ -236,7 +241,7 @@ export class AudioManager {
     await this._fadeOut(this.players.mediaAudio, this.state.fadeMs);
     await this._fadeOut(this.players.spot, this.state.fadeMs);
 
-    this._notify({ current: AUDIO_STATE.SILENT, isPlaying: false });
+    this._notify({ current: AUDIO_STATE.SILENT, isPlaying: false, currentTrack: null });
   }
 
   /**
@@ -287,7 +292,7 @@ export class AudioManager {
     if (this.queue.radioIndex >= this.queue.radio.length) {
       this.queue.radioIndex = 0;
     }
-    this.playRadio();
+    this._playRadioByIndex();
   }
 
   /**
@@ -298,7 +303,20 @@ export class AudioManager {
     if (this.queue.radioIndex < 0) {
       this.queue.radioIndex = this.queue.radio.length - 1;
     }
-    this.playRadio();
+    this._playRadioByIndex();
+  }
+
+  /**
+   * Toca faixa pelo índice atual (sem guard de "já tocando")
+   */
+  async _playRadioByIndex() {
+    if (!this.players.radio || this.queue.radio.length === 0) return;
+    const track = this.queue.radio[this.queue.radioIndex];
+    if (!track?.file_url) return;
+    await this._fadeOut(this.players.radio, this.state.fadeMs);
+    this.players.radio.src = track.file_url;
+    await this._fadeIn(this.players.radio, this.state.fadeMs);
+    this._notify({ current: AUDIO_STATE.RADIO, isPlaying: true, currentTrack: track });
   }
 
   /**
@@ -390,6 +408,13 @@ export class AudioManager {
       this.nextTrack();
     } else if (source === 'spot') {
       this._resumeAfterSpot(this.state.current);
+    }
+  }
+
+  _onTrackError(source) {
+    if (source === 'radio') {
+      console.warn('[AudioManager] track error, skipping to next');
+      this.nextTrack();
     }
   }
 

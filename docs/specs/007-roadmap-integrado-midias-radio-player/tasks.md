@@ -59,11 +59,11 @@ Status: `[ ]` pendente · `[~]` parcial · `[x]` concluido · `[!]` bloqueado/de
 
 ## Fase E — Player audio manager
 
-- [ ] Criar audio manager central.
-- [ ] Implementar fila sequencial.
-- [ ] Implementar shuffle sem repeticao imediata.
-- [ ] Implementar spots sem sobreposicao.
-- [ ] Registrar eventos de musica/spot.
+- [x] Criar audio manager central.
+- [x] Implementar fila sequencial.
+- [x] Implementar shuffle sem repeticao imediata.
+- [~] Implementar spots sem sobreposicao — elemento reservado; agendamento aguarda spot_schedules no payload.
+- [x] Registrar eventos de musica/spot via playbackEventLogger.
 - [ ] Validar comportamento com video + radio + spot.
 
 ## Fase F — Comandos nativos

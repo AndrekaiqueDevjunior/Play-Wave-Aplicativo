@@ -7,15 +7,21 @@ from fastapi.responses import StreamingResponse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi import status as http_status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.dependencies import get_current_user
 from core.models import (
+    AudioFolder,
+    AudioFolderTrack,
     AudioPlaylist,
+    AudioPlaylistFolderSchedule,
+    AudioPlaylistItem,
     AudioPlaylistStatus,
+    AudioSpot,
+    AudioSpotSchedule,
     AudioTrack,
     AudioTrackStatus,
     Campaign,
@@ -26,9 +32,11 @@ from core.models import (
     DeviceCommandStatus,
     DeviceEvent,
     DevicePairingCode,
+    DevicePairingEventType,
     DeviceSession,
     Media,
     PlaybackLog,
+    Tenant,
     User,
     ViewReport,
 )
@@ -37,16 +45,26 @@ from core.schemas_completos import (
     DeviceCommandCreate,
     DeviceCommandResponse,
     DeviceCreate,
+    DeviceOSDConfigUpdate,
     DevicePairingCodeCreate,
+    DevicePairingEventResponse,
     DeviceResponse,
     DeviceSessionResponse,
     DeviceStatusEnum,
     DeviceUpdate,
+    ForceRepairRequest,
+    ForceRepairResponse,
+    PairCodeStatusResponse,
+    PairingEventActor,
+    PairingEventListResponse,
+    RegenerateCodeRequest,
+    RegenerateCodeResponse,
 )
 from crud.entidades.crud_device_command import crud_device_command
 from crud.entidades.crud_campaign import crud_campaign
 from crud.entidades.crud_device import crud_device
 from crud.entidades.crud_device_pairing_code import crud_device_pairing_code
+from crud.entidades.crud_device_pairing_event import crud_device_pairing_event
 from crud.entidades.crud_playback_log import crud_playback_log
 
 
@@ -67,6 +85,9 @@ class HeartbeatBody(BaseModel):
     current_config_version: Optional[str] = None
     current_media_id: Optional[str] = None
     current_media_name: Optional[str] = None
+    current_audio_track_id: Optional[str] = None
+    current_audio_track_name: Optional[str] = Field(None, max_length=500)
+    current_audio_track_started_at: Optional[datetime] = None
     last_error: Optional[str] = None
     playback_status: Optional[str] = None
 
@@ -82,26 +103,79 @@ class PlaybackBody(BaseModel):
 
 # ─── Device-token dependency ─────────────────────────────────────────────────
 
+class DeviceAuthError(HTTPException):
+    """Erro de autenticacao de device com error_code padronizado.
+
+    SPEC 004 — substitui HTTPException generica para que o player possa
+    interpretar (`TOKEN_VERSION_MISMATCH`, `REQUIRES_REPAIRING`, etc.) e
+    disparar forceRepair() automaticamente.
+    """
+
+    def __init__(
+        self,
+        error_code: str,
+        detail: str,
+        status_code: int = http_status.HTTP_401_UNAUTHORIZED,
+        **extra,
+    ):
+        # Empacota error_code e extras dentro do `detail` (FastAPI serializa
+        # como JSON do body de erro). Mantemos `detail` como string humana
+        # tambem para clientes legados.
+        payload = {"detail": detail, "error_code": error_code, **extra}
+        super().__init__(status_code=status_code, detail=payload)
+        self.error_code = error_code
+
+
 def get_device_by_token(
     x_device_token: str = Header(..., alias="X-Device-Token"),
+    x_device_token_version: Optional[str] = Header(None, alias="X-Device-Token-Version"),
     db: Session = Depends(get_db),
 ) -> Device:
     device = crud_device.get_by_device_token(db, device_token=x_device_token)
     if not device:
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Device token inválido",
+        raise DeviceAuthError(
+            error_code="TOKEN_REVOKED",
+            detail="Device token inválido ou revogado",
         )
     if device.is_blocked:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
+        raise DeviceAuthError(
+            error_code="DEVICE_BLOCKED",
             detail="Dispositivo bloqueado",
+            status_code=http_status.HTTP_403_FORBIDDEN,
         )
     if getattr(device, "requires_repairing", False):
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
+        raise DeviceAuthError(
+            error_code="REQUIRES_REPAIRING",
             detail="Dispositivo requer novo pareamento",
         )
+
+    # SPEC 004 — validacao de token_version (defesa em profundidade).
+    # Compat-period: header ausente eh aceito como versao do device (warn).
+    current_version = getattr(device, "token_version", 1) or 1
+    if x_device_token_version is None:
+        # Compat: aceita silenciosamente. Em release futuro virar erro.
+        print(
+            f"[auth] WARN device {device.id}: sem header X-Device-Token-Version "
+            f"(compat). Atual no banco: {current_version}"
+        )
+    else:
+        try:
+            received_version = int(x_device_token_version)
+        except (TypeError, ValueError):
+            raise DeviceAuthError(
+                error_code="TOKEN_VERSION_REQUIRED",
+                detail="Header X-Device-Token-Version inválido",
+                current_version=current_version,
+                received_version=x_device_token_version,
+            )
+        if received_version != current_version:
+            raise DeviceAuthError(
+                error_code="TOKEN_VERSION_MISMATCH",
+                detail="Versão do token não confere — o pareamento foi atualizado",
+                current_version=current_version,
+                received_version=received_version,
+            )
+
     return device
 
 
@@ -132,6 +206,36 @@ def _invalidate_device_playlist_cache(device_id: Optional[str] = None) -> None:
             redis_client.delete(key)
     except Exception as exc:
         print(f"[devices] Redis cache invalidation error: {exc}")
+
+
+def _publish_device_playlist_invalidated(device: Device, *, reason: str) -> None:
+    try:
+        from services.event_bus import publish_device_event
+
+        publish_device_event(
+            str(device.id),
+            event_type="playlist_invalidated",
+            campaign_id=str(device.current_campaign_id) if device.current_campaign_id else None,
+            data={
+                "config_version": device.config_version,
+                "reason": reason,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[devices] broadcast playlist_invalidated failed for {device.id}: {exc}")
+
+
+OSD_DEVICE_FIELDS = {
+    "show_current_audio": "osd_show_current_audio",
+    "position": "osd_position",
+    "duration_seconds": "osd_duration_seconds",
+    "opacity": "osd_opacity",
+    "font_size": "osd_font_size",
+}
+
+
+def _enum_value(value):
+    return value.value if hasattr(value, "value") else value
 
 
 def _sync_campaigns_for_device(db: Session, *, device: Device, campaign_id: Optional[str]) -> None:
@@ -196,7 +300,9 @@ def _get_redis_client():
     return get_redis_client()
 
 
-def _campaign_payload(campaign: Campaign) -> dict:
+def _campaign_payload(campaign: Campaign, *, device=None, tenant=None) -> dict:
+    from services.audio_policy_resolver import resolve_campaign_audio_payload
+    audio_info = resolve_campaign_audio_payload(campaign, device, tenant)
     return {
         "id": str(campaign.id),
         "name": campaign.name,
@@ -211,6 +317,9 @@ def _campaign_payload(campaign: Campaign) -> dict:
         "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
         "loop_count": campaign.loop_count,
         "config_version": campaign.config_version,
+        # SPEC 005
+        "audio_policy_default": audio_info["audio_policy_default"],
+        "audio_fade_ms": audio_info["audio_fade_ms"],
     }
 
 
@@ -283,6 +392,8 @@ def _build_media_payload(
     db: Session,
     *,
     campaign: Campaign,
+    device=None,
+    tenant=None,
 ) -> List[dict]:
     entries = _resolve_playlist_entries(db, campaign=campaign)
     if not entries:
@@ -309,6 +420,10 @@ def _build_media_payload(
         starts_at = (item.starts_at if item and item.starts_at else media.starts_at)
         ends_at = (item.ends_at if item and item.ends_at else media.ends_at)
 
+        # SPEC 005 — política de áudio efetiva por mídia
+        from services.audio_policy_resolver import resolve_media_payload as _rmp
+        audio_fields = _rmp(media, campaign, device, tenant)
+
         media_entry = {
             "id": str(media.id),
             "media_id": str(media.id),
@@ -326,6 +441,9 @@ def _build_media_payload(
             "status": media.status.value if hasattr(media.status, "value") else media.status,
             "starts_at": starts_at.isoformat() if starts_at else None,
             "ends_at": ends_at.isoformat() if ends_at else None,
+            # SPEC 005
+            "audio_policy_effective": audio_fields["audio_policy_effective"],
+            "has_audio": audio_fields["has_audio"],
         }
         if item is not None:
             media_entry["item_id"] = str(item.id)
@@ -340,39 +458,154 @@ def _build_media_payload(
     return payload
 
 
-def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
-    if not playlist.track_ids:
-        return {
-            "id": str(playlist.id),
-            "name": playlist.name,
-            "volume": playlist.volume_default,
-            "loop": playlist.loop_enabled,
-            "shuffle": playlist.shuffle_enabled,
-            "tracks": [],
-        }
+def _resolve_audio_playlist_entries(
+    db: Session, *, playlist: AudioPlaylist
+) -> List[tuple[Optional[AudioPlaylistItem], str]]:
+    items = (
+        db.query(AudioPlaylistItem)
+        .filter(AudioPlaylistItem.playlist_id == playlist.id)
+        .order_by(AudioPlaylistItem.order_index, AudioPlaylistItem.created_at)
+        .all()
+    )
+    if items:
+        return [(item, str(item.track_id)) for item in items if item.is_active]
+    return [(None, str(track_id)) for track_id in (playlist.track_ids or []) if track_id]
+
+
+def _audio_playlist_track_payload(
+    db: Session, *, playlist: AudioPlaylist
+) -> List[dict]:
+    entries = _resolve_audio_playlist_entries(db, playlist=playlist)
+    if not entries:
+        return []
+    track_ids = {track_id for _, track_id in entries}
     tracks = db.query(AudioTrack).filter(
-        AudioTrack.id.in_([str(tid) for tid in playlist.track_ids]),
+        AudioTrack.id.in_(track_ids),
         AudioTrack.status == AudioTrackStatus.ACTIVE,
     ).all()
     track_map = {str(t.id): t for t in tracks}
     ordered = []
-    for tid in playlist.track_ids:
-        t = track_map.get(str(tid))
-        if t:
-            ordered.append({
-                "id": str(t.id),
-                "name": t.name,
-                "file_url": t.file_url,
-                "duration_seconds": t.duration_seconds or 0,
-                "volume": (playlist.track_volumes or {}).get(str(t.id), playlist.volume_default),
-            })
+    for item, track_id in entries:
+        track = track_map.get(track_id)
+        if not track:
+            continue
+        volume = (
+            item.volume_override
+            if item is not None and item.volume_override is not None
+            else (playlist.track_volumes or {}).get(str(track.id), playlist.volume_default)
+        )
+        ordered.append({
+            "id": str(track.id),
+            "name": track.name,
+            "file_url": track.file_url,
+            "duration_seconds": track.duration_seconds or 0,
+            "volume": volume,
+        })
+    return ordered
+
+
+def _build_folder_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
+    schedules = (
+        db.query(AudioPlaylistFolderSchedule)
+        .filter(
+            AudioPlaylistFolderSchedule.playlist_id == playlist_id,
+            AudioPlaylistFolderSchedule.is_active.is_(True),
+        )
+        .order_by(AudioPlaylistFolderSchedule.priority.desc(), AudioPlaylistFolderSchedule.start_time)
+        .all()
+    )
+    result = []
+    for sched in schedules:
+        folder: Optional[AudioFolder] = db.query(AudioFolder).filter(AudioFolder.id == sched.folder_id).first()
+        if not folder:
+            continue
+        folder_tracks_raw = (
+            db.query(AudioFolderTrack)
+            .filter(AudioFolderTrack.folder_id == sched.folder_id)
+            .order_by(AudioFolderTrack.order_index)
+            .all()
+        )
+        track_ids = [str(ft.track_id) for ft in folder_tracks_raw]
+        tracks = []
+        if track_ids:
+            track_objs = {
+                str(t.id): t
+                for t in db.query(AudioTrack).filter(
+                    AudioTrack.id.in_(track_ids),
+                    AudioTrack.status == AudioTrackStatus.ACTIVE,
+                ).all()
+            }
+            for tid in track_ids:
+                t = track_objs.get(tid)
+                if t:
+                    tracks.append({
+                        "id": str(t.id),
+                        "name": t.name,
+                        "file_url": t.file_url,
+                        "duration_seconds": t.duration_seconds or 0,
+                    })
+        result.append({
+            "id": str(sched.id),
+            "folder_id": str(sched.folder_id),
+            "folder_name": folder.name,
+            "start_time": sched.start_time,
+            "end_time": sched.end_time,
+            "days_of_week": sched.days_of_week,
+            "priority": sched.priority,
+            "play_mode": sched.play_mode.value if sched.play_mode else "sequential",
+            "tracks": tracks,
+        })
+    return result
+
+
+def _build_spot_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
+    schedules = (
+        db.query(AudioSpotSchedule)
+        .filter(
+            AudioSpotSchedule.playlist_id == playlist_id,
+            AudioSpotSchedule.is_active.is_(True),
+        )
+        .order_by(AudioSpotSchedule.priority.desc())
+        .all()
+    )
+    result = []
+    for sched in schedules:
+        spot: Optional[AudioSpot] = db.query(AudioSpot).filter(AudioSpot.id == sched.spot_id).first()
+        if not spot:
+            continue
+        track: Optional[AudioTrack] = db.query(AudioTrack).filter(
+            AudioTrack.id == spot.track_id,
+            AudioTrack.status == AudioTrackStatus.ACTIVE,
+        ).first()
+        if not track:
+            continue
+        result.append({
+            "id": str(sched.id),
+            "spot_id": str(sched.spot_id),
+            "spot_name": spot.name,
+            "interval_seconds": sched.interval_seconds,
+            "start_time": sched.start_time,
+            "end_time": sched.end_time,
+            "priority": sched.priority,
+            "insertion_policy": spot.insertion_policy.value if spot.insertion_policy else "interrupt",
+            "file_url": track.file_url,
+        })
+    return result
+
+
+def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
+    tracks = _audio_playlist_track_payload(db, playlist=playlist)
+    folder_schedules = _build_folder_schedules_payload(db, playlist_id=playlist.id)
+    spot_schedules = _build_spot_schedules_payload(db, playlist_id=playlist.id)
     return {
         "id": str(playlist.id),
         "name": playlist.name,
         "volume": playlist.volume_default,
         "loop": playlist.loop_enabled,
         "shuffle": playlist.shuffle_enabled,
-        "tracks": ordered,
+        "tracks": tracks,
+        "folder_schedules": folder_schedules,
+        "spot_schedules": spot_schedules,
     }
 
 
@@ -382,39 +615,7 @@ def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
     playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
     if not playlist or playlist.status != AudioPlaylistStatus.ACTIVE:
         return None
-    if not playlist.track_ids:
-        return {
-            "id": str(playlist.id),
-            "name": playlist.name,
-            "volume": playlist.volume_default,
-            "loop": playlist.loop_enabled,
-            "shuffle": playlist.shuffle_enabled,
-            "tracks": [],
-        }
-    tracks = db.query(AudioTrack).filter(
-        AudioTrack.id.in_([str(tid) for tid in playlist.track_ids]),
-        AudioTrack.status == AudioTrackStatus.ACTIVE,
-    ).all()
-    track_map = {str(t.id): t for t in tracks}
-    ordered = []
-    for tid in playlist.track_ids:
-        t = track_map.get(str(tid))
-        if t:
-            ordered.append({
-                "id": str(t.id),
-                "name": t.name,
-                "file_url": t.file_url,
-                "duration_seconds": t.duration_seconds or 0,
-                "volume": (playlist.track_volumes or {}).get(str(t.id), playlist.volume_default),
-            })
-    return {
-        "id": str(playlist.id),
-        "name": playlist.name,
-        "volume": playlist.volume_default,
-        "loop": playlist.loop_enabled,
-        "shuffle": playlist.shuffle_enabled,
-        "tracks": ordered,
-    }
+    return _build_audio_playlist_from_model(playlist, db)
 
 
 def _resolve_player_campaign(db: Session, *, device: Device) -> Optional[Campaign]:
@@ -426,10 +627,16 @@ def _resolve_player_campaign(db: Session, *, device: Device) -> Optional[Campaig
 
 
 def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
+    from services.osd_config_resolver import resolve_osd_config
+
     campaign = _resolve_player_campaign(db, device=device)
+    tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first() if device.tenant_id else None
+    osd_config = resolve_osd_config(device, tenant)
+
     if not campaign:
         return {
             "device_name": device.name,
+            "osd_config": osd_config,
             "campaign": None,
             "media": [],
             "audio_playlist": _build_audio_playlist(device, db),
@@ -445,8 +652,9 @@ def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
 
     return {
         "device_name": device.name,
-        "campaign": _campaign_payload(campaign),
-        "media": _build_media_payload(db, campaign=campaign),
+        "osd_config": osd_config,
+        "campaign": _campaign_payload(campaign, device=device, tenant=tenant),
+        "media": _build_media_payload(db, campaign=campaign, device=device, tenant=tenant),
         "audio_playlist": audio_playlist,
     }
 
@@ -582,29 +790,63 @@ def pair_request(body: PairRequestBody, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/by-code/{code}/status")
+def _paired_response(device, *, status: str = "paired") -> dict:
+    """Monta resposta de status=paired incluindo token_version e pairing_version
+    (SPEC 004) — o player persiste essas versoes em PairingStorage.
+    """
+    return {
+        "status": status,
+        "device_id": str(device.id),
+        "device_token": device.device_token,
+        "token_version": device.token_version or 1,
+        "pairing_version": device.pairing_version or 1,
+        "device_name": device.name,
+    }
+
+
+def _log_paired_event(db: Session, device, *, is_repair: bool) -> None:
+    """Registra evento `paired` (primeira vez) ou `re_paired` (apos forceRepair/regenerate)."""
+    event_type = (
+        DevicePairingEventType.RE_PAIRED.value
+        if is_repair
+        else DevicePairingEventType.PAIRED.value
+    )
+    try:
+        crud_device_pairing_event.log(
+            db,
+            device=device,
+            event_type=event_type,
+            new_token_version=device.token_version,
+            new_pairing_version=device.pairing_version,
+            commit=False,
+        )
+    except Exception as exc:  # noqa: BLE001 — audit nunca bloqueia o pairing
+        print(f"[pairing] audit log failed: {exc}")
+
+
+@router.get("/by-code/{code}/status", response_model=PairCodeStatusResponse)
 def check_pairing_status(code: str, db: Session = Depends(get_db)):
     pairing = crud_device_pairing_code.get_by_code(db, code=code)
     if pairing:
-        # Always check if admin already created a matching device regardless of pairing status.
-        # This handles the "admin-first" flow where create_device ran before pair_request.
         device_for_code = crud_device.get_by_pairing_code(db, pairing_code=code)
 
         if pairing.expires_at and pairing.expires_at < datetime.utcnow():
-            # Expired but device may already exist
             if device_for_code and device_for_code.device_token:
-                return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
+                return _paired_response(device_for_code)
             return {"status": "expired", "device_id": None, "device_token": None}
 
-        # If DevicePairingCode is still "waiting" but admin already created the device
         if pairing.status == "waiting" and device_for_code and device_for_code.device_token:
             print(f"[pairing] auto-linking code={code} to device={device_for_code.id}")
             pairing.status = "paired"
             pairing.device_id = device_for_code.id
             pairing.used_at = datetime.utcnow()
             db.commit()
-            return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
+            return _paired_response(device_for_code)
+
         if pairing.status == "waiting" and device_for_code and not device_for_code.device_token:
+            # Gera token novo. Se pairing_version > 1, eh re-pareamento (apos
+            # forceRepair/regenerate); senao, primeiro pareamento.
+            is_repair = (device_for_code.pairing_version or 1) > 1
             device_for_code.device_token = secrets.token_urlsafe(32)
             device_for_code.requires_repairing = False
             device_for_code.status = "online"
@@ -612,20 +854,20 @@ def check_pairing_status(code: str, db: Session = Depends(get_db)):
             pairing.status = "paired"
             pairing.device_id = device_for_code.id
             pairing.used_at = datetime.utcnow()
+            _log_paired_event(db, device_for_code, is_repair=is_repair)
             db.commit()
             db.refresh(device_for_code)
-            return {"status": "paired", "device_id": str(device_for_code.id), "device_token": device_for_code.device_token}
+            return _paired_response(device_for_code)
 
-        result: dict = {"status": pairing.status, "device_id": None, "device_token": None}
         if pairing.status == "paired" and pairing.device_id:
             device = crud_device.get(db, id=str(pairing.device_id))
             if device:
-                result["device_id"] = str(device.id)
-                result["device_token"] = device.device_token
-        print(f"[pairing] code={code} status={result['status']}")
-        return result
+                return _paired_response(device)
 
-    # Fallback: player polling a code that was never registered (admin-first, no pair_request yet)
+        print(f"[pairing] code={code} status={pairing.status}")
+        return {"status": pairing.status, "device_id": None, "device_token": None}
+
+    # Fallback admin-first.
     device = crud_device.get_by_pairing_code(db, pairing_code=code)
     if not device:
         raise HTTPException(status_code=404, detail="Código não encontrado")
@@ -635,15 +877,17 @@ def check_pairing_status(code: str, db: Session = Depends(get_db)):
 
     if device.device_token:
         print(f"[pairing] code={code} fallback direct device match id={device.id}")
-        return {"status": "paired", "device_id": str(device.id), "device_token": device.device_token}
+        return _paired_response(device)
 
     if device.status == "waiting_pairing":
+        is_repair = (device.pairing_version or 1) > 1
         device.device_token = secrets.token_urlsafe(32)
         device.requires_repairing = False
         device.paired_at = datetime.utcnow()
+        _log_paired_event(db, device, is_repair=is_repair)
         db.commit()
         db.refresh(device)
-        return {"status": "paired", "device_id": str(device.id), "device_token": device.device_token}
+        return _paired_response(device)
 
     return {"status": "waiting", "device_id": None, "device_token": None}
 
@@ -699,6 +943,41 @@ def get_device(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para acessar este dispositivo",
         )
+    response = DeviceResponse.model_validate(device)
+    if current_user.role != "admin":
+        response.device_token = None
+    return response
+
+
+@router.patch("/{device_id}/osd-config", response_model=DeviceResponse)
+def update_device_osd_config(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    device_id: str,
+    body: DeviceOSDConfigUpdate,
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Dispositivo não encontrado",
+        )
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Sem permissão para atualizar este dispositivo",
+        )
+
+    payload = body.model_dump(exclude_unset=True)
+    for field, value in payload.items():
+        setattr(device, OSD_DEVICE_FIELDS[field], _enum_value(value))
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+    _invalidate_device_playlist_cache(device_id=str(device.id))
+    _publish_device_playlist_invalidated(device, reason="device_osd_config_updated")
     response = DeviceResponse.model_validate(device)
     if current_user.role != "admin":
         response.device_token = None
@@ -820,8 +1099,16 @@ def update_device(
             _sync_campaigns_for_device(db, device=device, campaign_id=next_campaign_id)
         db.commit()
         db.refresh(device)
-        if any(field in device_in.model_fields_set for field in ("current_campaign_id", "audio_playlist_id", "pairing_code")):
+        playlist_affecting_fields = (
+            "current_campaign_id",
+            "audio_playlist_id",
+            "pairing_code",
+            "audio_policy_default",
+        )
+        if any(field in device_in.model_fields_set for field in playlist_affecting_fields):
             _invalidate_device_playlist_cache(device_id=str(device.id))
+        if "audio_policy_default" in device_in.model_fields_set:
+            _publish_device_playlist_invalidated(device, reason="device_audio_policy_updated")
         return device
     except IntegrityError as exc:
         db.rollback()
@@ -912,6 +1199,14 @@ def block_device(
             detail="Sem permissão para bloquear este dispositivo",
         )
     device = crud_device.block_device(db, db_obj=device)
+    # SPEC 004 — audit + SSE.
+    crud_device_pairing_event.log(
+        db,
+        device=device,
+        event_type=DevicePairingEventType.DEVICE_BLOCKED.value,
+        requested_by_id=str(current_user.id),
+    )
+    _publish_pairing_revoked(device.id, "device_blocked")
     return {"message": "Dispositivo bloqueado com sucesso"}
 
 
@@ -934,15 +1229,54 @@ def unblock_device(
             detail="Sem permissão para desbloquear este dispositivo",
         )
     device = crud_device.unblock_device(db, db_obj=device)
+    crud_device_pairing_event.log(
+        db,
+        device=device,
+        event_type=DevicePairingEventType.DEVICE_UNBLOCKED.value,
+        requested_by_id=str(current_user.id),
+    )
     return {"message": "Dispositivo desbloqueado com sucesso"}
 
 
-@router.post("/{device_id}/pairing-code/regenerate", response_model=DeviceResponse)
+def _revoke_device_sessions(db: Session, device_id: str) -> int:
+    """Revoga sessoes ativas do device. Retorna quantas foram revogadas."""
+    return db.query(DeviceSession).filter(
+        DeviceSession.device_id == device_id,
+        DeviceSession.is_active == True,
+    ).update(
+        {"is_active": False, "revoked_at": datetime.utcnow()},
+        synchronize_session=False,
+    )
+
+
+def _publish_pairing_revoked(device_id: str, reason: str) -> None:
+    """Notifica player via SSE que o pareamento foi revogado (SPEC 004).
+
+    Player escuta `pairing:revoked` e dispara forceRepair() imediato em vez
+    de esperar a proxima request 401.
+    """
+    try:
+        from services.event_bus import publish_device_event
+
+        publish_device_event(
+            str(device_id),
+            event_type="pairing:revoked",
+            data={"reason": reason, "revoked_at": datetime.utcnow().isoformat()},
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[devices] pairing:revoked publish failed for {device_id}: {exc}")
+
+
+@router.post(
+    "/{device_id}/pairing-code/regenerate",
+    response_model=RegenerateCodeResponse,
+)
 def regenerate_pairing_code(
     *,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     device_id: str,
+    body: Optional[RegenerateCodeRequest] = None,
 ):
     device = crud_device.get(db, id=device_id)
     if not device:
@@ -968,27 +1302,167 @@ def regenerate_pairing_code(
             detail="Não foi possível gerar código único de pareamento",
         )
 
+    # Snapshot dos valores antigos para auditoria.
+    old_code = device.pairing_code
+    old_token_version = device.token_version or 1
+    old_pairing_version = device.pairing_version or 1
+
     device.pairing_code = next_code
     device.device_token = None
     device.requires_repairing = True
-    device.pairing_version = (device.pairing_version or 1) + 1
-    device.token_version = (device.token_version or 1) + 1
+    device.pairing_version = old_pairing_version + 1
+    device.token_version = old_token_version + 1
     device.status = "waiting_pairing"
-    db.query(DeviceSession).filter(
-        DeviceSession.device_id == device.id,
-        DeviceSession.is_active == True,
-    ).update(
-        {
-            "is_active": False,
-            "revoked_at": datetime.utcnow(),
-        },
-        synchronize_session=False,
+
+    revoked_count = _revoke_device_sessions(db, device.id)
+
+    # SPEC 004 — registra evento de auditoria.
+    crud_device_pairing_event.log(
+        db,
+        device=device,
+        event_type=DevicePairingEventType.CODE_REGENERATED.value,
+        requested_by_id=str(current_user.id),
+        reason=(body.reason if body else None),
+        previous_token_version=old_token_version,
+        new_token_version=device.token_version,
+        previous_pairing_version=old_pairing_version,
+        new_pairing_version=device.pairing_version,
+        previous_pairing_code=old_code,
+        new_pairing_code=device.pairing_code,
+        metadata={"revoked_sessions_count": revoked_count},
+        commit=False,  # commit junto com o device abaixo
     )
+
     db.add(device)
     db.commit()
     db.refresh(device)
     _invalidate_device_playlist_cache(device_id=str(device.id))
-    return device
+    _publish_pairing_revoked(device.id, "code_regenerated")
+
+    return RegenerateCodeResponse(
+        pairing_code=device.pairing_code,
+        pairing_version=device.pairing_version,
+        token_version=device.token_version,
+        revoked_sessions_count=revoked_count,
+        previous_pairing_code=old_code,
+    )
+
+
+@router.post(
+    "/{device_id}/force-repair",
+    response_model=ForceRepairResponse,
+)
+def force_repair_device(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    device_id: str,
+    body: Optional[ForceRepairRequest] = None,
+):
+    """SPEC 004 — revoga tokens sem trocar o codigo de pareamento.
+
+    Util quando o operador quer expulsar um player suspeito/clonado mas
+    nao quer reconfigurar todas as TVs que usam o codigo atual.
+    """
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Dispositivo não encontrado",
+        )
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Sem permissão para esta ação",
+        )
+
+    old_token_version = device.token_version or 1
+    device.device_token = None
+    device.token_version = old_token_version + 1
+    device.requires_repairing = True
+    # NAO mexe em pairing_code nem pairing_version.
+
+    revoked_count = _revoke_device_sessions(db, device.id)
+
+    crud_device_pairing_event.log(
+        db,
+        device=device,
+        event_type=DevicePairingEventType.FORCE_REPAIR.value,
+        requested_by_id=str(current_user.id),
+        reason=(body.reason if body else None),
+        previous_token_version=old_token_version,
+        new_token_version=device.token_version,
+        metadata={"revoked_sessions_count": revoked_count},
+        commit=False,
+    )
+
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    _invalidate_device_playlist_cache(device_id=str(device.id))
+    _publish_pairing_revoked(device.id, "force_repair")
+
+    return ForceRepairResponse(
+        token_version=device.token_version,
+        revoked_sessions_count=revoked_count,
+        pairing_code_unchanged=device.pairing_code,
+    )
+
+
+@router.get(
+    "/{device_id}/pairing-events",
+    response_model=PairingEventListResponse,
+)
+def list_pairing_events(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    device_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    event_type: Optional[str] = Query(None),
+):
+    """SPEC 004 — historico de eventos de pareamento de um device."""
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    events = crud_device_pairing_event.list_by_device(
+        db, device_id=device_id, limit=limit, event_type=event_type
+    )
+    total = crud_device_pairing_event.count_by_device(
+        db, device_id=device_id, event_type=event_type
+    )
+
+    # Resolve nome do usuario solicitante quando houver.
+    items = []
+    for ev in events:
+        actor = None
+        if ev.requested_by:
+            user = db.query(User).filter(User.id == ev.requested_by).first()
+            actor = PairingEventActor(
+                id=str(ev.requested_by),
+                name=(user.email if user else None),
+            )
+        items.append(
+            DevicePairingEventResponse(
+                id=str(ev.id),
+                event_type=ev.event_type,
+                previous_token_version=ev.previous_token_version,
+                new_token_version=ev.new_token_version,
+                previous_pairing_version=ev.previous_pairing_version,
+                new_pairing_version=ev.new_pairing_version,
+                previous_pairing_code=ev.previous_pairing_code,
+                new_pairing_code=ev.new_pairing_code,
+                requested_by=actor,
+                reason=ev.reason,
+                metadata=ev.extra_metadata,
+                created_at=ev.created_at,
+            )
+        )
+
+    return PairingEventListResponse(items=items, total=total)
 
 
 @router.post("/{device_id}/heartbeat")
@@ -1018,6 +1492,21 @@ def device_heartbeat(
         else:
             device.current_campaign_id = None
             device.current_campaign = None
+    if "current_audio_track_id" in body.model_fields_set:
+        if body.current_audio_track_id:
+            try:
+                device.current_audio_track_id = uuid.UUID(str(body.current_audio_track_id))
+            except ValueError:
+                raise HTTPException(
+                    status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="current_audio_track_id inválido",
+                )
+            device.current_audio_track_name = body.current_audio_track_name
+            device.current_audio_track_started_at = body.current_audio_track_started_at
+        else:
+            device.current_audio_track_id = None
+            device.current_audio_track_name = None
+            device.current_audio_track_started_at = None
     if device.status != "online":
         device.status = "online"
     db.add(device)
@@ -1555,12 +2044,48 @@ def revoke_device_token(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Legado — alias de POST /force-repair sem reason (SPEC 004).
+
+    Comportamento atualizado: invalida o token atual (player antigo cai em
+    401 e dispara forceRepair), incrementa token_version, marca
+    requires_repairing, audita como `token_revoked` e publica SSE.
+
+    Antes desta SPEC o endpoint gerava um novo token e devolvia para o admin —
+    o que nao revogava o anterior nem invalidava o player. Por isso foi
+    realinhado.
+    """
     device = crud_device.get(db, id=device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    new_token = secrets.token_urlsafe(32)
-    crud_device.update(db, db_obj=device, obj_in={"device_token": new_token})
-    return {"new_token": new_token}
+    old_token_version = device.token_version or 1
+    device.device_token = None
+    device.token_version = old_token_version + 1
+    device.requires_repairing = True
+
+    revoked_count = _revoke_device_sessions(db, device.id)
+
+    crud_device_pairing_event.log(
+        db,
+        device=device,
+        event_type=DevicePairingEventType.TOKEN_REVOKED.value,
+        requested_by_id=str(current_user.id),
+        previous_token_version=old_token_version,
+        new_token_version=device.token_version,
+        metadata={"revoked_sessions_count": revoked_count},
+        commit=False,
+    )
+
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    _invalidate_device_playlist_cache(device_id=str(device.id))
+    _publish_pairing_revoked(device.id, "token_revoked")
+
+    return {
+        "ok": True,
+        "token_version": device.token_version,
+        "revoked_sessions_count": revoked_count,
+    }

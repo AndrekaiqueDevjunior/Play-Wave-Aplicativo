@@ -1,5 +1,25 @@
 import React, { useEffect, useState } from "react";
-import { Wifi, WifiOff } from "lucide-react";
+import { AlertTriangle, Wifi, WifiOff } from "lucide-react";
+
+// SPEC 004 — mensagens amigáveis quando forceRepair() coloca o player de
+// volta na tela de pareamento por motivo conhecido.
+const REPAIR_MESSAGES = {
+  TOKEN_VERSION_MISMATCH: "O código de pareamento foi atualizado pelo administrador. Pareie novamente.",
+  TOKEN_VERSION_REQUIRED: "Versão do player desatualizada. Atualize o app e pareie novamente.",
+  REQUIRES_REPAIRING:     "Este dispositivo precisa ser pareado novamente.",
+  TOKEN_REVOKED:          "Sessão expirada. Pareie novamente.",
+  DEVICE_BLOCKED:         "Dispositivo bloqueado. Entre em contato com o administrador.",
+  PAIRING_CODE_EXPIRED:   "Código expirou. Solicitando um novo...",
+  code_regenerated:       "O código de pareamento foi atualizado pelo administrador. Pareie novamente.",
+  force_repair:           "O administrador solicitou reparamento. Pareie novamente com o mesmo código.",
+  token_revoked:          "Token revogado pelo administrador. Pareie novamente.",
+  device_blocked:         "Dispositivo bloqueado pelo administrador.",
+};
+
+function resolveRepairMessage(reason) {
+  if (!reason) return null;
+  return REPAIR_MESSAGES[reason] || "Pareie novamente para continuar.";
+}
 
 const STATUS_CONFIG = {
   connected: {
@@ -16,7 +36,8 @@ const STATUS_CONFIG = {
   connecting: { icon: null, color: "text-blue-400", label: "Conectando..." },
 };
 
-export default function PairingScreen({ pairingCode, apiStatus }) {
+export default function PairingScreen({ pairingCode, apiStatus, forceRepairReason }) {
+  const repairMessage = resolveRepairMessage(forceRepairReason);
   const [dots, setDots] = useState(0);
   const [time, setTime] = useState(new Date());
 
@@ -77,6 +98,18 @@ export default function PairingScreen({ pairingCode, apiStatus }) {
           PlayWave
         </span>
       </div>
+
+      {/* SPEC 004 — banner de reparamento, se aplicável */}
+      {repairMessage && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 max-w-xl w-[90%] z-10">
+          <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/40 rounded-2xl px-5 py-4 backdrop-blur-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 text-sm text-amber-100 leading-relaxed">
+              {repairMessage}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Center content */}
       <div className="flex-1 flex flex-col items-center justify-center px-8">

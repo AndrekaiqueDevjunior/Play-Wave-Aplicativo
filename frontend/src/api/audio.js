@@ -97,3 +97,89 @@ export const deletarPlaylistAudio = (id) =>
 // ── TV: Busca playlist de áudio ────────────────────────────────────────────
 export const buscarPlaylistAudioDispositivo = (deviceId, token) =>
   apiFetch(`/audio/devices/${deviceId}/playlist`, { token });
+
+// ── Pastas de áudio ────────────────────────────────────────────────────────
+export const listarPastas = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/audio/folders${qs ? `?${qs}` : ""}`);
+};
+
+export const buscarPasta = (id) => apiFetch(`/audio/folders/${id}`);
+
+export const criarPasta = (payload) =>
+  apiFetch("/audio/folders", { method: "POST", body: JSON.stringify(payload) });
+
+export const atualizarPasta = (id, payload) =>
+  apiFetch(`/audio/folders/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+
+export const deletarPasta = (id) =>
+  apiFetch(`/audio/folders/${id}`, { method: "DELETE" });
+
+export const listarFaixasDaPasta = (folderId) =>
+  apiFetch(`/audio/folders/${folderId}/tracks`);
+
+export const adicionarFaixasNaPasta = (folderId, trackIds) =>
+  apiFetch(`/audio/folders/${folderId}/tracks`, {
+    method: "POST",
+    body: JSON.stringify({ track_ids: trackIds }),
+  });
+
+export const removerFaixaDaPasta = (folderId, itemId) =>
+  apiFetch(`/audio/folders/${folderId}/tracks/${itemId}`, { method: "DELETE" });
+
+// ── Folder schedules (agenda de pastas por playlist) ───────────────────────
+export const listarFolderSchedules = (playlistId) =>
+  apiFetch(`/audio/playlists/${playlistId}/folder-schedules`);
+
+export const criarFolderSchedule = (playlistId, payload) =>
+  apiFetch(`/audio/playlists/${playlistId}/folder-schedules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const atualizarFolderSchedule = (playlistId, scheduleId, payload) =>
+  apiFetch(`/audio/playlists/${playlistId}/folder-schedules/${scheduleId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const deletarFolderSchedule = (playlistId, scheduleId) =>
+  apiFetch(`/audio/playlists/${playlistId}/folder-schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+
+// ── Spots ──────────────────────────────────────────────────────────────────
+export const listarSpots = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/audio/spots${qs ? `?${qs}` : ""}`);
+};
+
+export const criarSpot = (payload) =>
+  apiFetch("/audio/spots", { method: "POST", body: JSON.stringify(payload) });
+
+export const atualizarSpot = (id, payload) =>
+  apiFetch(`/audio/spots/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+
+export const deletarSpot = (id) =>
+  apiFetch(`/audio/spots/${id}`, { method: "DELETE" });
+
+// ── Spot schedules ─────────────────────────────────────────────────────────
+export const listarSpotSchedules = (playlistId) =>
+  apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules`);
+
+export const criarSpotSchedule = (playlistId, payload) =>
+  apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const atualizarSpotSchedule = (playlistId, scheduleId, payload) =>
+  apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules/${scheduleId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const deletarSpotSchedule = (playlistId, scheduleId) =>
+  apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
