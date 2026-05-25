@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from core.database import get_db
-from core.dependencies import get_current_user, get_device_token
+from core.dependencies import get_current_user
 from core.models import User
 from core.schemas_completos import AudioPlaybackEventCreate, AudioPlaybackEventResponse
 from crud.entidades import crud_audio_playback_event

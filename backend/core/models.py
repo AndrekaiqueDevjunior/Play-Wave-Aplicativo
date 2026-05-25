@@ -790,7 +790,7 @@ class AudioPlaybackEvent(Base):
     ended_at = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    event_metadata = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     device = relationship("Device", back_populates="audio_playback_events")
