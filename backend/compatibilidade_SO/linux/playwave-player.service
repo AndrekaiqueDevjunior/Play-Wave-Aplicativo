@@ -1,0 +1,20 @@
+[Unit]
+Description=PlayWave Digital Signage Player
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=playwave
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/playwave/.Xauthority
+Environment=PLAYER_KIOSK=true
+Environment=VITE_API_URL=http://SEU_SERVIDOR:8000
+ExecStart=/opt/playwave/PlayWave Player.AppImage
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,104 @@
+# =============================================================================
+# PlayWave — Stack HTTP-only (sem SSL)
+# Usar enquanto o DNS não aponta para o servidor ou para testes
+# Comando: docker compose -f docker-compose.http.yml up -d --build
+#
+# Quando o DNS estiver propagado, parar este e usar docker-compose.production.yml
+# rodando ./deploy/init-ssl.sh
+# =============================================================================
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.production.yml
+      service: postgres
+
+  redis:
+    extends:
+      file: docker-compose.production.yml
+      service: redis
+
+  rabbitmq:
+    extends:
+      file: docker-compose.production.yml
+      service: rabbitmq
+
+  backend:
+    extends:
+      file: docker-compose.production.yml
+      service: backend
+    environment:
+      # CORS aberto p/ IP + domínio (HTTP)
+      ALLOWED_ORIGINS: "http://playwave.com.br,http://www.playwave.com.br,http://2.24.81.194,http://localhost:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - playwave-network
+
+  celery-worker:
+    extends:
+      file: docker-compose.production.yml
+      service: celery-worker
+
+  celery-beat:
+    extends:
+      file: docker-compose.production.yml
+      service: celery-beat
+
+  # Frontend: build com VITE_API_URL vazio → URLs relativas (mesma origem do Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_WS_URL:  ""
+    container_name: playwave-frontend
+    restart: always
+    depends_on:
+      - backend
+    networks:
+      - playwave-network
+
+  # Nginx HTTP-only (sem SSL)
+  nginx:
+    image: nginx:alpine
+    container_name: playwave-nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.http.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - playwave-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  playwave-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

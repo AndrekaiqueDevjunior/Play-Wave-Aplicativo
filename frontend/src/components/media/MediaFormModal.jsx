@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
-import { recomputarDeteccaoAudio } from "@/api/midias";
+import { recomputarDeteccaoAudio, listarVersoesMidia } from "@/api/midias";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Upload, X, Image, Film, Link2, Music } from "lucide-react";
+import { Loader2, Upload, X, Image, Film, Link2, Music, History } from "lucide-react";
 import { substituirArquivoMidia, uploadMidia } from "@/api/midias";
 import { detectUrlMediaType } from "@/utils/mediaUtils";
 
@@ -53,6 +54,12 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState("upload"); // upload | url
   const fileRef = useRef(null);
+
+  const { data: versions = [] } = useQuery({
+    queryKey: ["media-versions", media?.id],
+    queryFn: () => listarVersoesMidia(media.id),
+    enabled: !!media?.id && open,
+  });
 
   useEffect(() => {
     if (media) {
@@ -290,6 +297,35 @@ export default function MediaFormModal({ open, onClose, onSave, onUploaded, medi
               <p className="text-xs text-muted-foreground">
                 Mantém o mesmo cadastro e os vínculos com campanhas, mas gera nova versão para o player baixar.
               </p>
+            </div>
+          )}
+
+          {versions.length > 0 && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <History className="w-4 h-4 text-muted-foreground" />
+                Histórico de versões
+              </div>
+              <div className="divide-y text-xs">
+                {versions.map((v) => (
+                  <div key={v.id} className="flex items-center justify-between py-1.5 gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-1.5 py-0.5 rounded font-mono ${v.is_current ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
+                        v{v.version_number}
+                      </span>
+                      {v.duration_seconds && (
+                        <span className="text-muted-foreground">{v.duration_seconds}s</span>
+                      )}
+                      {v.file_hash && (
+                        <span className="text-muted-foreground font-mono">{v.file_hash.slice(0, 8)}</span>
+                      )}
+                    </div>
+                    <span className="text-muted-foreground shrink-0">
+                      {new Date(v.created_at).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
