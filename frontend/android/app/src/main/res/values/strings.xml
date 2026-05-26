@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PlayWave Player</string>
+    <string name="title_activity_main">PlayWave Player</string>
+    <string name="package_name">com.playwave.player</string>
+    <string name="custom_url_scheme">com.playwave.player</string>
+</resources>
