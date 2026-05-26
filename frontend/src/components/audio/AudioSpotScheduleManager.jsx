@@ -125,17 +125,20 @@ export default function AudioSpotScheduleManager({
       return;
     }
     if (!spotForm.track_id) {
-      alert("Selecione uma faixa");
+      alert("Selecione uma faixa de áudio");
       return;
     }
 
-    if (editingSpot) {
-      await onUpdateSpot?.(editingSpot.id, spotForm);
-    } else {
-      await onCreateSpot?.(spotForm);
+    try {
+      if (editingSpot) {
+        await onUpdateSpot?.(editingSpot.id, spotForm);
+      } else {
+        await onCreateSpot?.(spotForm);
+      }
+      setOpenSpotDialog(false);
+    } catch (err) {
+      alert("Erro ao salvar spot: " + (err?.message || "tente novamente"));
     }
-
-    setOpenSpotDialog(false);
   };
 
   // Schedule handlers
@@ -177,13 +180,16 @@ export default function AudioSpotScheduleManager({
       priority: parseInt(scheduleForm.priority),
     };
 
-    if (editingSchedule) {
-      await onUpdateSchedule?.(editingSchedule.id, payload);
-    } else {
-      await onCreateSchedule?.(payload);
+    try {
+      if (editingSchedule) {
+        await onUpdateSchedule?.(editingSchedule.id, payload);
+      } else {
+        await onCreateSchedule?.(payload);
+      }
+      setOpenScheduleDialog(false);
+    } catch (err) {
+      alert("Erro ao salvar agendamento: " + (err?.message || "tente novamente"));
     }
-
-    setOpenScheduleDialog(false);
   };
 
   const getSpotName = (spotId) => {

@@ -50,8 +50,8 @@ const MENU_GRUPOS = [
   {
     label: "Rádio Indoor",
     items: [
-      { label: "Faixas de Áudio", icon: Radio, path: "/audio/faixas" },
-      { label: "Playlists Sonoras", icon: ListMusic, path: "/audio/playlists" },
+      { label: "Faixas de Áudio", icon: Radio, path: "/radio/faixas" },
+      { label: "Playlists Sonoras", icon: ListMusic, path: "/radio/playlists" },
     ],
   },
 ];

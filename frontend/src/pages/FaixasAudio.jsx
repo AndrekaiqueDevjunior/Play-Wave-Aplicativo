@@ -23,8 +23,12 @@ import {
   Search,
   Clock,
   HardDrive,
+  CheckSquare,
+  Square,
+  X,
 } from "lucide-react";
 import AudioTrackFormModal from "@/components/audio/AudioTrackFormModal";
+import AudioMultipleUploadModal from "@/components/audio/AudioMultipleUploadModal";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import StatusBadge from "@/components/shared/StatusBadge";
 
@@ -55,10 +59,15 @@ export default function FaixasAudio() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
+  const [multipleUploadOpen, setMultipleUploadOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
   const audioRef = useRef(null);
+  
+  // Seleção múltipla
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
 
   const { data: tracks = [], isLoading } = useQuery({
     queryKey: ["audio-tracks"],
@@ -70,6 +79,37 @@ export default function FaixasAudio() {
     onSuccess: () => {
       qc.invalidateQueries(["audio-tracks"]);
       setDeleteTarget(null);
+    },
+  });
+
+  const bulkArchiveMutation = useMutation({
+    mutationFn: async (ids) => {
+      await Promise.all(ids.map(id => atualizarFaixa(id, { status: "archived" })));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-tracks"]);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+    },
+  });
+
+  const bulkActivateMutation = useMutation({
+    mutationFn: async (ids) => {
+      await Promise.all(ids.map(id => atualizarFaixa(id, { status: "active" })));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-tracks"]);
+      setSelectedIds(new Set());
+    },
+  });
+
+  const bulkDeactivateMutation = useMutation({
+    mutationFn: async (ids) => {
+      await Promise.all(ids.map(id => atualizarFaixa(id, { status: "inactive" })));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-tracks"]);
+      setSelectedIds(new Set());
     },
   });
 
@@ -104,6 +144,42 @@ export default function FaixasAudio() {
     setFormOpen(true);
   }
 
+  function toggleSelection(id) {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(filtered.map(t => t.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }
+
+  function handleBulkArchive() {
+    if (selectedIds.size === 0) return;
+    if (confirm(`Arquivar ${selectedIds.size} faixa(s) selecionada(s)?`)) {
+      bulkArchiveMutation.mutate(Array.from(selectedIds));
+    }
+  }
+
+  function handleBulkActivate() {
+    if (selectedIds.size === 0) return;
+    bulkActivateMutation.mutate(Array.from(selectedIds));
+  }
+
+  function handleBulkDeactivate() {
+    if (selectedIds.size === 0) return;
+    bulkDeactivateMutation.mutate(Array.from(selectedIds));
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -115,11 +191,77 @@ export default function FaixasAudio() {
             Gerencie faixas de áudio para Rádio Indoor · MP3, WAV, OGG, OPUS, AAC, FLAC
           </p>
         </div>
-        <Button onClick={handleNew}>
-          <Upload className="w-4 h-4 mr-2" />
-          Upload de Áudio
-        </Button>
+        <div className="flex gap-2">
+          {!selectionMode && (
+            <Button variant="outline" onClick={() => setSelectionMode(true)}>
+              <CheckSquare className="w-4 h-4 mr-2" />
+              Selecionar
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setMultipleUploadOpen(true)}>
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Múltiplo
+          </Button>
+          <Button onClick={handleNew}>
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Único
+          </Button>
+        </div>
       </div>
+
+      {selectionMode && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <span className="font-medium text-foreground">
+                {selectedIds.size} {selectedIds.size === 1 ? 'faixa selecionada' : 'faixas selecionadas'}
+              </span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={selectAll}>
+                  Selecionar Todas ({filtered.length})
+                </Button>
+                <Button size="sm" variant="outline" onClick={clearSelection}>
+                  Limpar Seleção
+                </Button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBulkActivate}
+                    disabled={bulkActivateMutation.isPending}
+                  >
+                    Ativar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBulkDeactivate}
+                    disabled={bulkDeactivateMutation.isPending}
+                  >
+                    Desativar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={handleBulkArchive}
+                    disabled={bulkArchiveMutation.isPending}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Arquivar
+                  </Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -205,11 +347,29 @@ export default function FaixasAudio() {
       ) : (
         <div className="space-y-2">
           {filtered.map((track) => (
-            <Card key={track.id} className="hover:shadow-md transition-shadow">
+            <Card 
+              key={track.id} 
+              className={`hover:shadow-md transition-shadow ${
+                selectedIds.has(track.id) ? 'ring-2 ring-primary bg-primary/5' : ''
+              }`}
+            >
               <CardContent className="p-4 flex items-center gap-4">
+                {selectionMode && (
+                  <button
+                    onClick={() => toggleSelection(track.id)}
+                    className="w-10 h-10 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors hover:bg-primary/10"
+                  >
+                    {selectedIds.has(track.id) ? (
+                      <CheckSquare className="w-5 h-5 text-primary" />
+                    ) : (
+                      <Square className="w-5 h-5 text-muted-foreground" />
+                    )}
+                  </button>
+                )}
                 <button
                   onClick={() => togglePlay(track)}
                   className="w-10 h-10 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary flex-shrink-0 transition-colors"
+                  disabled={selectionMode}
                 >
                   {playingId === track.id ? (
                     <Pause className="w-4 h-4" />
@@ -243,23 +403,25 @@ export default function FaixasAudio() {
                     {formatSize(track.file_size)}
                   </span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleEdit(track)}
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setDeleteTarget(track)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                {!selectionMode && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleEdit(track)}
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setDeleteTarget(track)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -273,6 +435,15 @@ export default function FaixasAudio() {
           onSaved={() => {
             qc.invalidateQueries(["audio-tracks"]);
             setFormOpen(false);
+          }}
+        />
+      )}
+      {multipleUploadOpen && (
+        <AudioMultipleUploadModal
+          onClose={() => setMultipleUploadOpen(false)}
+          onSaved={() => {
+            qc.invalidateQueries(["audio-tracks"]);
+            setMultipleUploadOpen(false);
           }}
         />
       )}

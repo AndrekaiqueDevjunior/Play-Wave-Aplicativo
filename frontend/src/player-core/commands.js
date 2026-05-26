@@ -37,7 +37,13 @@ function platformUnsupported(command, opts) {
   throw new CommandUnsupportedError(command, opts);
 }
 
+/**
+ * Chama comando nativo de power management
+ * @param {string} command - Nome do comando
+ * @returns {Promise<any>}
+ */
 async function callNativePowerCommand(command) {
+  // @ts-ignore - Bridge nativo pode não estar definido em todas as plataformas
   const nativeBridge = window.PlayWaveNative || window.AndroidPlayer || window.__ELECTRON__?.player;
   const fn = nativeBridge?.[command];
   if (typeof fn !== "function") {
@@ -172,9 +178,19 @@ export const DESTRUCTIVE_COMMANDS = new Set([
  *   - error_code: enum padronizado (ver tabela em api-contract.md)
  */
 export async function executeCommand(cmd, context) {
+  console.log("[commands] ========================================");
+  console.log("[commands] Executando comando:", cmd.command_type);
+  console.log("[commands] Plataforma:", Platform.name);
+  console.log("[commands] Payload:", cmd.payload);
+  console.log("[commands] Context:", {
+    deviceId: context.deviceId,
+    phase: context.phase,
+  });
+  console.log("[commands] ========================================");
+
   const handler = COMMAND_HANDLERS[cmd.command_type];
   if (!handler) {
-    console.warn("[commands] unknown command:", cmd.command_type);
+    console.warn("[commands] ⚠️  Comando desconhecido:", cmd.command_type);
     return {
       success: false,
       errorMessage: `Unknown command: ${cmd.command_type}`,
@@ -187,8 +203,13 @@ export async function executeCommand(cmd, context) {
       },
     };
   }
+  
   try {
+    console.log("[commands] ▶️  Iniciando execução...");
     const handlerResult = await handler({ ...context, payload: cmd.payload });
+    console.log("[commands] ✅ Comando executado com sucesso:", cmd.command_type);
+    console.log("[commands] Resultado:", handlerResult);
+    
     return {
       success: true,
       errorMessage: null,
@@ -200,7 +221,15 @@ export async function executeCommand(cmd, context) {
       },
     };
   } catch (err) {
-    console.error("[commands] execution failed:", cmd.command_type, err);
+    console.error("[commands] ========================================");
+    console.error("[commands] ❌ ERRO ao executar:", cmd.command_type);
+    console.error("[commands] Mensagem:", err?.message);
+    console.error("[commands] Stack:", err?.stack);
+    console.error("[commands] Platform unsupported:", err?.platformUnsupported);
+    console.error("[commands] Error code:", err?.errorCode);
+    console.error("[commands] Reason:", err?.reason);
+    console.error("[commands] ========================================");
+    
     const isUnsupported = err?.platformUnsupported === true;
     return {
       success: false,

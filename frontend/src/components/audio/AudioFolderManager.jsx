@@ -56,6 +56,14 @@ export default function AudioFolderManager({
   loading = false,
 }) {
   const [editingFolder, setEditingFolder] = useState(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setEditingFolder(null);
+      setIsCreating(false);
+    }
+  }, [open]);
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -69,6 +77,7 @@ export default function AudioFolderManager({
 
   const handleNewFolder = () => {
     setEditingFolder(null);
+    setIsCreating(true);
     setForm({
       name: "",
       description: "",
@@ -81,6 +90,7 @@ export default function AudioFolderManager({
   };
 
   const handleEditFolder = (folder) => {
+    setIsCreating(false);
     setEditingFolder(folder);
     setForm({
       name: folder.name || "",
@@ -90,7 +100,7 @@ export default function AudioFolderManager({
       end_time: folder.end_time || "23:59",
       is_active: folder.is_active ?? true,
     });
-    setSelectedTracks((folder.tracks || []).map((t) => t.id));
+    setSelectedTracks((folder.tracks || []).map((t) => t.track_id || t.id));
   };
 
   const handleSave = async () => {
@@ -99,16 +109,19 @@ export default function AudioFolderManager({
       return;
     }
 
-    // track_ids NÃO vai no body da pasta — endpoint separado /folders/{id}/tracks
     const folderPayload = { ...form };
 
-    if (editingFolder) {
-      await onUpdate?.(editingFolder.id, folderPayload, selectedTracks);
-    } else {
-      await onSave?.(folderPayload, selectedTracks);
+    try {
+      if (editingFolder) {
+        await onUpdate?.(editingFolder.id, folderPayload, selectedTracks);
+      } else {
+        await onSave?.(folderPayload, selectedTracks);
+      }
+      setEditingFolder(null);
+      setIsCreating(false);
+    } catch (err) {
+      alert("Erro ao salvar pasta: " + (err?.message || "tente novamente"));
     }
-
-    setEditingFolder(null);
   };
 
   const handleDeleteFolder = async () => {
@@ -133,7 +146,7 @@ export default function AudioFolderManager({
             </SheetDescription>
           </SheetHeader>
 
-          {!editingFolder ? (
+          {!editingFolder && !isCreating ? (
             /* Lista de pastas */
             <div className="space-y-4 py-6">
               <Button onClick={handleNewFolder} className="w-full">
@@ -307,11 +320,11 @@ export default function AudioFolderManager({
             </Tabs>
           )}
 
-          {editingFolder && (
+          {(editingFolder || isCreating) && (
             <SheetFooter className="pt-6 border-t">
               <Button
                 variant="outline"
-                onClick={() => setEditingFolder(null)}
+                onClick={() => { setEditingFolder(null); setIsCreating(false); }}
               >
                 Cancelar
               </Button>

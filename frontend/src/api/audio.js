@@ -58,7 +58,7 @@ export const uploadFaixa = async (file, metadata = {}) => {
   return apiUpload("/audio/tracks/upload", form);
 };
 
-export const uploadMultipleTracksAPI = async (formData) => {
+export const uploadMultipleFaixas = async (formData) => {
   return apiUpload("/audio/tracks/upload-multiple", formData);
 };
 
@@ -121,7 +121,7 @@ export const listarFaixasDaPasta = (folderId) =>
 export const adicionarFaixasNaPasta = (folderId, trackIds) =>
   apiFetch(`/audio/folders/${folderId}/tracks`, {
     method: "POST",
-    body: JSON.stringify({ track_ids: trackIds }),
+    body: JSON.stringify({ tracks: trackIds.map((id) => ({ track_id: id })) }),
   });
 
 export const removerFaixaDaPasta = (folderId, itemId) =>

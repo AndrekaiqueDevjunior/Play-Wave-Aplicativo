@@ -40,6 +40,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+!frontend/src/lib/
+!frontend/src/lib/**
 parts/
 sdist/
 var/
@@ -173,3 +175,14 @@ icones e favicon.ico/
 *.jpg
 !frontend/src/assets/**/*.jpg
 !frontend/src/assets/**/*.jpeg
+
+# ===========================================
+# BUILDS NATIVOS / ARQUIVOS SENSÍVEIS
+# ===========================================
+.windsurf/
+frontend/dist-apk/
+frontend/electron/dist-electron/
+frontend/android/**/*.keystore
+frontend/android/**/release.keystore
+frontend/android/.gradle/
+frontend/android/**/build/

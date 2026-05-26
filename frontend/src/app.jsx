@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider } from "@/lib/AuthContext";
 import ProtectedRoute from "@/components/shared/ProtectedRoute";
+import SessionExpiredModal from "@/components/shared/SessionExpiredModal";
 
 // Layout
 import AppLayout from "@/components/layout/AppLayout";
@@ -121,9 +122,9 @@ function App() {
               <Route path="localizacoes" element={<Localizacoes />} />
 
               {/* Rádio Indoor */}
-              <Route path="audio/faixas" element={<FaixasAudio />} />
-              <Route path="audio/playlists" element={<PlaylistsSonoras />} />
-              <Route path="audio/playlists/:id" element={<PlaylistDetalhe />} />
+              <Route path="radio/faixas" element={<FaixasAudio />} />
+              <Route path="radio/playlists" element={<PlaylistsSonoras />} />
+              <Route path="radio/playlists/:id" element={<PlaylistDetalhe />} />
 
               {/* Configurações — apenas admin */}
               <Route
@@ -186,6 +187,7 @@ function App() {
           </Routes>
 
           <Toaster />
+          <SessionExpiredModal />
         </QueryClientProvider>
       </AuthProvider>
     </Router>

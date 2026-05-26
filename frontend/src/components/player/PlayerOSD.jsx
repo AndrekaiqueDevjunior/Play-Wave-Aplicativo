@@ -4,7 +4,7 @@ import { Music, Radio } from "lucide-react";
 const DEFAULT_OSD_CONFIG = {
   show_current_audio: true,
   position: "top_right",
-  duration_seconds: 8,
+  duration_seconds: 0,
   opacity: 0.6,
   font_size: "medium",
 };

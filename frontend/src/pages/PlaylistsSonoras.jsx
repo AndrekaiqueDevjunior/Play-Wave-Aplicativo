@@ -179,7 +179,7 @@ export default function PlaylistsSonoras() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => navigate(`/audio/playlists/${pl.id}`)}
+                    onClick={() => navigate(`/radio/playlists/${pl.id}`)}
                     title="Pastas, agenda e spots"
                   >
                     <Settings2 className="w-3.5 h-3.5" />

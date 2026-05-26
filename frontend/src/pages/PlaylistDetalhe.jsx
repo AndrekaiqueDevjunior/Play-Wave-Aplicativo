@@ -82,13 +82,16 @@ export default function PlaylistDetalhe() {
       }
       return created;
     },
-    onSuccess: () => qc.invalidateQueries(["audio-folders"]),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-folders"]);
+      setFolderManagerOpen(false);
+      setEditingFolder(null);
+    },
   });
 
   const updateFolderMut = useMutation({
     mutationFn: async ({ folderId, folder, currentTrackIds }) => {
       await atualizarPasta(folderId, folder);
-      // Busca tracks atuais para calcular diff
       const existingItems = await listarFaixasDaPasta(folderId).catch(() => []);
       const existingTrackIds = existingItems.map((i) => String(i.track_id || i.id));
       const wanted = (currentTrackIds || []).map(String);
@@ -99,12 +102,20 @@ export default function PlaylistDetalhe() {
         await Promise.all(toRemove.map((item) => removerFaixaDaPasta(folderId, item.id)));
       }
     },
-    onSuccess: () => qc.invalidateQueries(["audio-folders"]),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-folders"]);
+      setFolderManagerOpen(false);
+      setEditingFolder(null);
+    },
   });
 
   const deleteFolderMut = useMutation({
     mutationFn: (folderId) => deletarPasta(folderId),
-    onSuccess: () => qc.invalidateQueries(["audio-folders"]),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-folders"]);
+      setFolderManagerOpen(false);
+      setEditingFolder(null);
+    },
   });
 
   // ── Mutações de folder schedule ────────────────────────────────────────────
@@ -154,6 +165,14 @@ export default function PlaylistDetalhe() {
     mutationFn: (id) => deletarSpotSchedule(playlistId, id),
     onSuccess: () => qc.invalidateQueries(["spot-schedules", playlistId]),
   });
+
+  // handlers com mutateAsync para fechar dialog após sucesso
+  const handleCreateSpot    = (payload) => createSpotMut.mutateAsync(payload);
+  const handleUpdateSpot    = (id, payload) => updateSpotMut.mutateAsync({ id, ...payload });
+  const handleDeleteSpot    = (id) => deleteSpotMut.mutate(id);
+  const handleCreateSchedule = (payload) => addSpotScheduleMut.mutateAsync(payload);
+  const handleUpdateSchedule = (id, payload) => updateSpotScheduleMut.mutateAsync({ id, ...payload });
+  const handleDeleteSchedule = (id) => deleteSpotScheduleMut.mutate(id);
 
   if (loadingPlaylist) {
     return (
@@ -242,14 +261,14 @@ export default function PlaylistDetalhe() {
           <AudioFolderManager
             open={folderManagerOpen}
             onOpenChange={setFolderManagerOpen}
-            folders={editingFolder ? [editingFolder] : []}
+            folders={folders}
             tracks={allTracks}
             loading={createFolderMut.isPending || updateFolderMut.isPending}
             onSave={(folderData, trackIds) =>
-              createFolderMut.mutate({ folder: folderData, trackIds })
+              createFolderMut.mutateAsync({ folder: folderData, trackIds })
             }
             onUpdate={(folderId, folderData, currentTrackIds) =>
-              updateFolderMut.mutate({ folderId, folder: folderData, currentTrackIds })
+              updateFolderMut.mutateAsync({ folderId, folder: folderData, currentTrackIds })
             }
             onDelete={(folderId) => deleteFolderMut.mutate(folderId)}
           />
@@ -275,13 +294,13 @@ export default function PlaylistDetalhe() {
             spots={spots}
             spotSchedules={spotSchedules}
             tracks={allTracks}
-            loading={loadingSpots || loadingSpotSchedules}
-            onSpotCreate={(payload) => createSpotMut.mutate(payload)}
-            onSpotUpdate={({ id, ...payload }) => updateSpotMut.mutate({ id, ...payload })}
-            onSpotDelete={(id) => deleteSpotMut.mutate(id)}
-            onScheduleCreate={(payload) => addSpotScheduleMut.mutate(payload)}
-            onScheduleUpdate={({ id, ...payload }) => updateSpotScheduleMut.mutate({ id, ...payload })}
-            onScheduleDelete={(id) => deleteSpotScheduleMut.mutate(id)}
+            loading={createSpotMut.isPending || updateSpotMut.isPending || addSpotScheduleMut.isPending || updateSpotScheduleMut.isPending}
+            onCreateSpot={handleCreateSpot}
+            onUpdateSpot={handleUpdateSpot}
+            onDeleteSpot={handleDeleteSpot}
+            onCreateSchedule={handleCreateSchedule}
+            onUpdateSchedule={handleUpdateSchedule}
+            onDeleteSchedule={handleDeleteSchedule}
           />
         </TabsContent>
       </Tabs>

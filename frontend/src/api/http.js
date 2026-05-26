@@ -136,7 +136,7 @@ export async function apiFetch(path, options = {}) {
 
   if (res.status === 401 && redirectOnUnauthorized) {
     clearStoredSession();
-    window.location.href = "/login";
+    window.dispatchEvent(new CustomEvent("pw:session-expired"));
     return null;
   }
 
@@ -183,7 +183,7 @@ export async function apiUpload(path, formData, options = {}) {
 
   if (res.status === 401) {
     clearStoredSession();
-    window.location.href = "/login";
+    window.dispatchEvent(new CustomEvent("pw:session-expired"));
     return null;
   }
 

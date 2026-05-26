@@ -15,6 +15,13 @@ import AudioControlPanel from "@/components/audio/AudioControlPanel";
 import { logTrackStarted, logTrackEnded, logSpotStarted } from "@/lib/playbackEventLogger";
 import { AUDIO_STATE, AUDIO_MODE } from "@/lib/audioManager";
 import { Loader2, AlertCircle } from "lucide-react";
+import {
+  resolveActiveFolderForNow,
+  resolveActiveSpotsForNow,
+  shouldPlaySpotNow,
+  hasFolderChanged,
+  createPlaybackQueue,
+} from "@/utils/audioScheduleResolver";
 
 /**
  * Exemplo de uso em um player ou aplicação que reproduz rádio
@@ -26,6 +33,8 @@ export default function PlayerAudio() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [playlist, setPlaylist] = useState(null);
+  const [currentFolder, setCurrentFolder] = useState(null);
+  const [spotTimers, setSpotTimers] = useState(new Map());
 
   // Refs dos players
   const radioRef = useRef(null);
@@ -33,7 +42,7 @@ export default function PlayerAudio() {
   const spotRef = useRef(null);
 
   // AudioManager
-  const { initPlayers, loadRadioPlaylist, playRadio, playSpot, state } =
+  const { initPlayers, loadRadioPlaylist, playRadio, playSpot, silence, state } =
     useAudioManager({
       fadeMs: 200,
     });
@@ -110,7 +119,13 @@ export default function PlayerAudio() {
 
           // 3. Carregar playlist rádio
           if (mockPlaylist.items) {
-            loadRadioPlaylist(mockPlaylist.items, AUDIO_MODE.SEQUENTIAL);
+            // Usar modo shuffle_enabled da playlist se configurado
+            const mode = mockPlaylist.shuffle_enabled 
+              ? AUDIO_MODE.SHUFFLE 
+              : AUDIO_MODE.SEQUENTIAL;
+            
+            const queue = createPlaybackQueue(mockPlaylist.items, mode);
+            loadRadioPlaylist(queue, mode);
 
             // 4. Iniciar reprodução
             await playRadio();
@@ -153,30 +168,117 @@ export default function PlayerAudio() {
     }
   }, [state.current, state.isPlaying, deviceId, playlistId, playlist]);
 
-  // Implementar resolver de agenda (em produção)
+  // Resolver de agenda - troca pasta automaticamente conforme horário
   useEffect(() => {
-    // Timer que reavalia qual pasta deve tocar a cada hora
-    const scheduleCheckInterval = setInterval(() => {
-      // const activeFolder = resolveActiveFolderForNow(
-      //   playlist.folder_schedules
-      // );
-      // Se mudou, load novas tracks dessa pasta
-    }, 60000); // A cada minuto
+    if (!playlist?.folder_schedules || playlist.folder_schedules.length === 0) {
+      return;
+    }
 
-    return () => clearInterval(scheduleCheckInterval);
-  }, [playlist]);
+    const checkSchedule = () => {
+      const activeFolder = resolveActiveFolderForNow(playlist.folder_schedules);
+      
+      if (hasFolderChanged(currentFolder, activeFolder)) {
+        console.log('[player-audio] Mudança de pasta detectada:', {
+          previous: currentFolder?.name || 'nenhuma',
+          current: activeFolder?.name || 'nenhuma',
+          time: new Date().toLocaleTimeString(),
+        });
+        
+        setCurrentFolder(activeFolder);
+        
+        // Carregar faixas da nova pasta
+        if (activeFolder?.tracks && activeFolder.tracks.length > 0) {
+          const mode = activeFolder.play_mode || AUDIO_MODE.SEQUENTIAL;
+          const queue = createPlaybackQueue(activeFolder.tracks, mode);
+          
+          console.log('[player-audio] Carregando faixas da pasta:', {
+            folder: activeFolder.name,
+            mode,
+            trackCount: queue.length,
+          });
+          
+          loadRadioPlaylist(queue, mode);
+          playRadio();
+        } else if (!activeFolder) {
+          // Nenhuma pasta ativa no horário atual
+          console.log('[player-audio] Nenhuma pasta ativa no horário atual');
+          silence();
+        }
+      }
+    };
 
-  // Implementar resolver de spots
+    // Verificar imediatamente
+    checkSchedule();
+    
+    // Verificar a cada minuto
+    const interval = setInterval(checkSchedule, 60000);
+
+    return () => clearInterval(interval);
+  }, [playlist, currentFolder, loadRadioPlaylist, playRadio, silence]);
+
+  // Resolver de spots - toca spots no intervalo configurado
   useEffect(() => {
-    // Timer que verifica se é hora de um spot
-    const spotCheckInterval = setInterval(async () => {
-      // const nextSpot = resolveNextSpot(playlist.spot_schedules);
-      // Se chegou a hora, toca
-      // await playSpot(nextSpot.track_url);
-    }, 30000); // A cada 30 segundos
+    if (!playlist?.spot_schedules || playlist.spot_schedules.length === 0) {
+      return;
+    }
 
-    return () => clearInterval(spotCheckInterval);
-  }, [playlist]);
+    const checkSpots = async () => {
+      const activeSpots = resolveActiveSpotsForNow(playlist.spot_schedules);
+      
+      if (activeSpots.length === 0) {
+        return;
+      }
+
+      for (const spotSchedule of activeSpots) {
+        const lastPlayed = spotTimers.get(spotSchedule.id);
+        
+        if (shouldPlaySpotNow(spotSchedule, lastPlayed)) {
+          console.log('[player-audio] Tocando spot:', {
+            spot: spotSchedule.spot?.name || spotSchedule.spot_id,
+            interval: spotSchedule.interval_seconds,
+            lastPlayed: lastPlayed?.toLocaleTimeString() || 'nunca',
+            now: new Date().toLocaleTimeString(),
+          });
+          
+          try {
+            // Buscar track do spot
+            const spotTrack = spotSchedule.spot?.track || spotSchedule.track;
+            
+            if (spotTrack?.file_url) {
+              const policy = spotSchedule.spot?.insertion_policy || 'INTERRUPT';
+              await playSpot(spotTrack.file_url, policy);
+              
+              // Registrar log de reprodução
+              await logSpotStarted(
+                deviceId,
+                spotSchedule.spot_id,
+                playlistId
+              ).catch(console.error);
+              
+              // Atualizar timer
+              setSpotTimers(prev => {
+                const newTimers = new Map(prev);
+                newTimers.set(spotSchedule.id, new Date());
+                return newTimers;
+              });
+            } else {
+              console.warn('[player-audio] Spot sem track:', spotSchedule.id);
+            }
+          } catch (err) {
+            console.error('[player-audio] Erro ao tocar spot:', err);
+          }
+        }
+      }
+    };
+
+    // Verificar imediatamente
+    checkSpots();
+    
+    // Verificar a cada 30 segundos
+    const interval = setInterval(checkSpots, 30000);
+
+    return () => clearInterval(interval);
+  }, [playlist, spotTimers, playSpot, deviceId, playlistId]);
 
   if (loading) {
     return (

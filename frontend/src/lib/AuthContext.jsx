@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from "react";
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
@@ -53,6 +53,8 @@ function clearSession() {
   });
 }
 
+const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutos
+
 // ─── Context ─────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext(null);
@@ -63,6 +65,8 @@ export function AuthProvider({ children }) {
   const [user, setUser]                     = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth]   = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const inactivityTimer = useRef(null);
 
   // Verifica sessão ao carregar o app
   const checkAuth = useCallback(async () => {
@@ -110,6 +114,33 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  // Timer de inatividade + listener do evento pw:session-expired
+  useEffect(() => {
+    const handleExpired = () => setSessionExpired(true);
+    window.addEventListener("pw:session-expired", handleExpired);
+
+    const resetTimer = () => {
+      clearTimeout(inactivityTimer.current);
+      // Só conta inatividade quando autenticado
+      if (sessionStorage.getItem("pw_access_token") || localStorage.getItem("pw_access_token")) {
+        inactivityTimer.current = setTimeout(() => {
+          clearSession();
+          setSessionExpired(true);
+        }, INACTIVITY_MS);
+      }
+    };
+
+    const EVENTS = ["mousemove", "keydown", "mousedown", "touchstart", "scroll"];
+    EVENTS.forEach((e) => window.addEventListener(e, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      window.removeEventListener("pw:session-expired", handleExpired);
+      EVENTS.forEach((e) => window.removeEventListener(e, resetTimer));
+      clearTimeout(inactivityTimer.current);
+    };
+  }, []);
 
   // Login — lança exceção com mensagem traduzida se falhar
   const login = useCallback(async (email, password, remember = false) => {
@@ -170,12 +201,21 @@ export function AuthProvider({ children }) {
     return false;
   }, [user]);
 
+  const dismissSessionExpired = useCallback(() => {
+    setSessionExpired(false);
+    setUser(null);
+    setIsAuthenticated(false);
+    navigate("/login", { replace: true });
+  }, [navigate]);
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isAuthenticated,
         isLoadingAuth,
+        sessionExpired,
+        dismissSessionExpired,
         login,
         logout,
         getToken,
