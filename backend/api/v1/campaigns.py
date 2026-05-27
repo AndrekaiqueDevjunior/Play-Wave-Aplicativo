@@ -469,7 +469,7 @@ def update_campaign_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     campaign_id: str,
-    status: CampaignStatusEnum
+    new_status: CampaignStatusEnum = Query(..., alias="status")
 ):
     """
     Atualiza status da campanha
@@ -480,20 +480,20 @@ def update_campaign_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Campanha não encontrada"
         )
-    
+
     # Verificar permissão
     if current_user.role != "admin" and str(campaign.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para atualizar esta campanha"
         )
-    
-    campaign = crud_campaign.update_status(db, db_obj=campaign, status=status)
+
+    campaign = crud_campaign.update_status(db, db_obj=campaign, status=new_status)
     # Increment config_version to signal playlist change
     campaign = crud_campaign.increment_config_version(db, db_obj=campaign)
     _invalidate_device_playlist_cache(_campaign_device_cache_keys(db, campaign))
-    _broadcast_playlist_invalidated(db, campaign, reason=f"status_changed:{status}")
-    return {"message": f"Status atualizado para {status}"}
+    _broadcast_playlist_invalidated(db, campaign, reason=f"status_changed:{new_status}")
+    return {"message": f"Status atualizado para {new_status}"}
 
 
 @router.post("/{campaign_id}/increment-views")
