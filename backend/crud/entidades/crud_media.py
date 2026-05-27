@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast, String
 from core.models import Media, Tenant
 from core.schemas_completos import MediaCreate, MediaUpdate, MediaResponse
 from .crud_base import CRUDBase
@@ -61,7 +61,7 @@ class CRUDMedia(CRUDBase[Media, MediaCreate, MediaUpdate]):
                     Media.name.ilike(f"%{query}%"),
                     Media.description.ilike(f"%{query}%"),
                     Media.category.ilike(f"%{query}%"),
-                    Media.tags.contains([query])
+                    cast(Media.tags, String).ilike(f"%{query}%"),
                 )
             )
             .offset(skip)

@@ -37,7 +37,7 @@ export default function DestructiveCommandConfirmDialog({
   onConfirm,
   loading = false,
 }) {
-  const label = commandLabel(commandType);
+  const label = commandLabel(commandType) ?? "";
   const isShutdown = commandType === "shutdown_device";
   const isReboot = commandType === "restart_device";
 

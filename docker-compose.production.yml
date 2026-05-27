@@ -130,8 +130,8 @@ services:
       CELERY_TIMEZONE: America/Sao_Paulo
       CELERY_ENABLE_UTC: true
 
-      # Security — TROCAR em produção!
-      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      # Security
+      SECRET_KEY: "46959be5a547fb2226701d909c52164315805f365febf33872ee38cccee73117889e621491ffa70a0e4df9a41991fe7f6e323c5963967c9afa96db3c8b2ace10"
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
 
@@ -151,7 +151,7 @@ services:
       ADMIN_INITIAL_EMAIL: admin@playwave.com
       ADMIN_INITIAL_PASSWORD: "&2p0Kw45A&lLNX4bM%gpH*cy"
       OPERATOR_INITIAL_EMAIL: operador@playwave.com
-      OPERATOR_INITIAL_PASSWORD: Troque@456!
+      OPERATOR_INITIAL_PASSWORD: "9cd8c7f3201b1e021369e24cb3d114f6161c97c43ff4e655ccc58b9e9a98d905"
 
       # Upload
       UPLOAD_DIR: uploads
@@ -210,7 +210,7 @@ services:
       CELERY_BROKER_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
       CELERY_RESULT_BACKEND: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
       CELERY_TIMEZONE: America/Sao_Paulo
-      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      SECRET_KEY: "46959be5a547fb2226701d909c52164315805f365febf33872ee38cccee73117889e621491ffa70a0e4df9a41991fe7f6e323c5963967c9afa96db3c8b2ace10"
       ENVIRONMENT: production
       DEBUG: "false"
       LOG_LEVEL: INFO
@@ -247,7 +247,7 @@ services:
       CELERY_BROKER_URL: amqp://playwave:T5nK8pQ3vR7xY2wZ9mL4sD6fG1hB8cE@rabbitmq:5672/playwave
       CELERY_RESULT_BACKEND: redis://:R4hM7pQ2tW8xY5zK9vL3nD6fG1bB8cE@redis:6379/0
       CELERY_TIMEZONE: America/Sao_Paulo
-      SECRET_KEY: "PROD_J8mN3pQ5rT7vW2xZ9kL4sD6fG1hB8cE_change_me"
+      SECRET_KEY: "46959be5a547fb2226701d909c52164315805f365febf33872ee38cccee73117889e621491ffa70a0e4df9a41991fe7f6e323c5963967c9afa96db3c8b2ace10"
       ENVIRONMENT: production
       DEBUG: "false"
       LOG_LEVEL: INFO

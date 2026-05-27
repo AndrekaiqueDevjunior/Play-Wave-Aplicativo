@@ -22,13 +22,15 @@ import {
   hasFolderChanged,
   createPlaybackQueue,
 } from "@/utils/audioScheduleResolver";
+import { buscarPlaylistAudio } from "@/api/audio";
+import { useParams } from "react-router-dom";
 
-/**
- * Exemplo de uso em um player ou aplicação que reproduz rádio
- */
 export default function PlayerAudio() {
-  const deviceId = "device-123"; // Seria obtido do store/auth
-  const playlistId = "playlist-456"; // Seria obtido de params
+  const { playlistId: playlistIdParam } = useParams();
+  const playlistId = playlistIdParam;
+  const deviceId = typeof window !== "undefined"
+    ? localStorage.getItem("device_id") || null
+    : null;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -53,78 +55,25 @@ export default function PlayerAudio() {
       try {
         setLoading(true);
 
-        // 1. Buscar playlist + agendamentos
-        // const response = await fetch(`/audio/playlists/${playlistId}`);
-        // const data = await response.json();
-        // setPlaylist(data);
+        if (!playlistId) {
+          throw new Error("ID da playlist não informado");
+        }
 
-        // Mock para exemplo
-        const mockPlaylist = {
-          id: playlistId,
-          items: [
-            {
-              id: "track-1",
-              name: "Música 1",
-              file_url: "/audio/track1.mp3",
-              duration_seconds: 180,
-            },
-            {
-              id: "track-2",
-              name: "Música 2",
-              file_url: "/audio/track2.mp3",
-              duration_seconds: 240,
-            },
-            {
-              id: "track-3",
-              name: "Música 3",
-              file_url: "/audio/track3.mp3",
-              duration_seconds: 200,
-            },
-          ],
-          folder_schedules: [
-            {
-              id: "sched-1",
-              folder_id: "folder-1",
-              start_time: "06:00",
-              end_time: "12:00",
-              play_mode: "sequential",
-              priority: 1,
-            },
-            {
-              id: "sched-2",
-              folder_id: "folder-2",
-              start_time: "12:00",
-              end_time: "18:00",
-              play_mode: "shuffle",
-              priority: 1,
-            },
-          ],
-          spot_schedules: [
-            {
-              id: "spot-sched-1",
-              spot_id: "spot-1",
-              interval_seconds: 1800,
-              start_time: "06:00",
-              end_time: "22:00",
-              priority: 5,
-            },
-          ],
-        };
-
-        setPlaylist(mockPlaylist);
+        // 1. Buscar playlist + agendamentos via API
+        const data = await buscarPlaylistAudio(playlistId);
+        setPlaylist(data);
 
         // 2. Inicializar players (HTML audio elements)
         if (radioRef.current && mediaRef.current && spotRef.current) {
           initPlayers(radioRef.current, mediaRef.current, spotRef.current);
 
           // 3. Carregar playlist rádio
-          if (mockPlaylist.items) {
-            // Usar modo shuffle_enabled da playlist se configurado
-            const mode = mockPlaylist.shuffle_enabled 
-              ? AUDIO_MODE.SHUFFLE 
+          if (data.items && data.items.length > 0) {
+            const mode = data.shuffle_enabled
+              ? AUDIO_MODE.SHUFFLE
               : AUDIO_MODE.SEQUENTIAL;
-            
-            const queue = createPlaybackQueue(mockPlaylist.items, mode);
+
+            const queue = createPlaybackQueue(data.items, mode);
             loadRadioPlaylist(queue, mode);
 
             // 4. Iniciar reprodução
