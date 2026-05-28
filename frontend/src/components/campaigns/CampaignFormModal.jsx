@@ -88,6 +88,7 @@ export default function CampaignFormModal({
   mediaList = [],
   devices = [],
   audioPlaylists = [],
+  onMediaUploaded,
 }) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [playlistItems, setPlaylistItems] = useState([]);
@@ -395,6 +396,7 @@ export default function CampaignFormModal({
                 items={playlistItems}
                 onChange={setPlaylistItems}
                 mediaList={mediaList}
+                onMediaUploaded={onMediaUploaded}
                 loading={playlistItemsLoading}
               />
             )}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Plus,
   Search,
@@ -13,6 +13,8 @@ import {
   LayoutGrid,
   List,
   X,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +54,7 @@ import {
   criarMidiaExterna,
   atualizarMidia,
   deletarMidia,
+  substituirArquivoMidia,
 } from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
 import { assetUrl } from "@/utils/mediaUtils";
@@ -108,6 +111,8 @@ export default function BibliotecaMidias() {
   const [editMedia, setEditMedia] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [previewMedia, setPreviewMedia] = useState(null);
+  const [replacingMedia, setReplacingMedia] = useState(null);
+  const replaceFileRef = useRef(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -168,6 +173,26 @@ export default function BibliotecaMidias() {
   const openNew = () => {
     setEditMedia(null);
     setModalOpen(true);
+  };
+
+  const handleReplaceFile = async (e) => {
+    const newFile = e.target.files?.[0];
+    if (!newFile || !replacingMedia) return;
+    try {
+      await substituirArquivoMidia(replacingMedia.id, newFile);
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast({ title: "Arquivo substituído!", description: `${replacingMedia.name} foi atualizada.` });
+    } catch {
+      toast({ title: "Erro ao substituir arquivo", variant: "destructive" });
+    } finally {
+      setReplacingMedia(null);
+      e.target.value = "";
+    }
+  };
+
+  const openReplaceFile = (m) => {
+    setReplacingMedia(m);
+    replaceFileRef.current?.click();
   };
 
   return (
@@ -344,6 +369,12 @@ export default function BibliotecaMidias() {
                           <Pencil className="w-4 h-4 mr-2" />
                           Editar
                         </DropdownMenuItem>
+                        {media.type !== "external_url" && (
+                          <DropdownMenuItem onClick={() => openReplaceFile(media)}>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Substituir arquivo
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-destructive"
@@ -460,6 +491,12 @@ export default function BibliotecaMidias() {
                             <Pencil className="w-4 h-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
+                          {media.type !== "external_url" && (
+                            <DropdownMenuItem onClick={() => openReplaceFile(media)}>
+                              <RefreshCw className="w-4 h-4 mr-2" />
+                              Substituir arquivo
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
@@ -503,6 +540,15 @@ export default function BibliotecaMidias() {
         onConfirm={handleDelete}
         title="Excluir mídia?"
         description={`"${deleteTarget?.name}" será removida permanentemente.`}
+      />
+
+      {/* Input oculto para substituição de arquivo */}
+      <input
+        ref={replaceFileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,video/mp4,audio/*"
+        className="hidden"
+        onChange={handleReplaceFile}
       />
 
       <Dialog open={!!previewMedia} onOpenChange={() => setPreviewMedia(null)}>

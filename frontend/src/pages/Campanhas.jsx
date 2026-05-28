@@ -398,6 +398,7 @@ export default function Campanhas() {
         mediaList={mediaList}
         devices={devices}
         audioPlaylists={audioPlaylists}
+        onMediaUploaded={() => queryClient.invalidateQueries({ queryKey: ["media"] })}
       />
       <ConfirmDialog
         open={!!deleteTarget}

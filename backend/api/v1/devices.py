@@ -1109,6 +1109,10 @@ def update_device(
             _invalidate_device_playlist_cache(device_id=str(device.id))
         if "audio_policy_default" in device_in.model_fields_set:
             _publish_device_playlist_invalidated(device, reason="device_audio_policy_updated")
+        # BUG D2 FIX: quando pairing_code muda, notifica o player via SSE para que
+        # ele volte para tela de pareamento imediatamente (sem esperar próximo request 401).
+        if pairing_code_changed:
+            _publish_pairing_revoked(device.id, "code_changed")
         return device
     except IntegrityError as exc:
         db.rollback()

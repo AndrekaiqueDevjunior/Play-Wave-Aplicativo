@@ -95,9 +95,8 @@ export class AudioManager {
       this.players.mediaAudio.addEventListener('ended', () => this._onTrackEnded('media'));
     }
 
-    if (this.players.spot) {
-      this.players.spot.addEventListener('ended', () => this._onTrackEnded('spot'));
-    }
+    // Spot ended is handled by the per-play _spotEndedHandler registered in playSpot()
+
   }
 
   /**
@@ -187,7 +186,18 @@ export class AudioManager {
   async playSpot(spotUrl, insertionPolicy = 'wait_silence') {
     if (!this.players.spot) return;
 
-    const previous = this.state.current;
+    // BUG D3 FIX: captura o estado ANTES de entrar em SPOT.
+    // Se já estamos em SPOT (travado), usa RADIO como fallback para não tentar
+    // retomar um spot como se fosse a fonte de fundo.
+    const previous = this.state.current === AUDIO_STATE.SPOT
+      ? (this.players.radio?.src ? AUDIO_STATE.RADIO : AUDIO_STATE.SILENT)
+      : this.state.current;
+
+    // Cancela listener anterior para evitar retomadas duplicadas
+    if (this._spotEndedHandler) {
+      this.players.spot.removeEventListener("ended", this._spotEndedHandler);
+      this._spotEndedHandler = null;
+    }
 
     // Política de inserção
     if (insertionPolicy === 'interrupt') {
@@ -197,16 +207,22 @@ export class AudioManager {
       );
     } else if (insertionPolicy === 'wait_silence') {
       // Aguarda pausa natural (não implementado aqui)
-      // Player deve avisar quando há silêncio
     } else if (insertionPolicy === 'fade_mix') {
-      // Reduz volume de fundo
       const player = previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio;
       if (player) player.volume = 0.3;
     }
 
+    // BUG D3 FIX: registra listener `ended` para retomar o rádio automaticamente.
+    // { once: true } garante que o handler é removido após disparar uma vez.
+    this._spotEndedHandler = () => {
+      this._spotEndedHandler = null;
+      this._resumeAfterSpot(previous).catch(() => {});
+    };
+    this.players.spot.addEventListener("ended", this._spotEndedHandler, { once: true });
+
     // Toca spot
     this.players.spot.src = spotUrl;
-    await this._fadeIn(this.players.spot, 100); // Fade rápido
+    await this._fadeIn(this.players.spot, 100);
 
     this._notify({ current: AUDIO_STATE.SPOT, isPlaying: true });
   }
@@ -406,8 +422,6 @@ export class AudioManager {
   _onTrackEnded(source) {
     if (source === 'radio') {
       this.nextTrack();
-    } else if (source === 'spot') {
-      this._resumeAfterSpot(this.state.current);
     }
   }
 
@@ -435,6 +449,10 @@ export class AudioManager {
    * Destruir manager
    */
   destroy() {
+    if (this._spotEndedHandler && this.players.spot) {
+      this.players.spot.removeEventListener("ended", this._spotEndedHandler);
+      this._spotEndedHandler = null;
+    }
     this.listeners = [];
     this.silence();
   }

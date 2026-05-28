@@ -719,7 +719,21 @@ export default function Player() {
       }
     };
 
-    const onPlaylistInvalidated = () => triggerReload("playlist_invalidated");
+    const onPlaylistInvalidated = (evt) => {
+      // BUG E1 FIX: só reinicia se o config_version do evento é diferente do atual.
+      // Evita reinício desnecessário quando o gerenciador muda campos que não
+      // afetam o conteúdo do player (ex: nome da campanha, descrição).
+      try {
+        const data = JSON.parse(evt.data);
+        if (data.config_version && data.config_version === campaignConfigVersion) {
+          console.log("[player] SSE playlist_invalidated ignorado — config_version igual:", data.config_version);
+          return;
+        }
+      } catch {
+        // payload inválido → recarrega por precaução
+      }
+      triggerReload("playlist_invalidated");
+    };
 
     // SPEC 003 — comando recém-criado: disparar polling imediato em vez de
     // esperar próximo tick de 10s.

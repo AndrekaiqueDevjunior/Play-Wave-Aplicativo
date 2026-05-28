@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -10,6 +10,7 @@ import {
   Repeat,
   Search,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import MediaThumb from "@/components/media/MediaThumb";
 import { cn } from "@/lib/utils";
+import { uploadMidia } from "@/api/midias";
 
 const TYPE_LABEL = {
   image: "Imagem",
@@ -103,10 +105,13 @@ export default function CampaignPlaylistBuilder({
   items,
   onChange,
   mediaList = [],
+  onMediaUploaded,
   loading = false,
 }) {
   const [search, setSearch] = useState("");
   const [draggingIndex, setDraggingIndex] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const uploadRef = useRef(null);
 
   const mediaById = useMemo(
     () => new Map((mediaList || []).map((media) => [media.id, media])),
@@ -149,6 +154,26 @@ export default function CampaignPlaylistBuilder({
 
   function commit(nextItems) {
     onChange(normalizeCampaignPlaylistItems(nextItems));
+  }
+
+  async function handleQuickUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const isVideo = file.type.startsWith("video/");
+        const uploaded = await uploadMidia(file, {
+          name: file.name.replace(/\.[^/.]+$/, ""),
+          type: isVideo ? "video" : "image",
+          status: "available",
+        });
+        if (uploaded?.id) onMediaUploaded?.(uploaded);
+      }
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   }
 
   function addMedia(media) {
@@ -369,15 +394,35 @@ export default function CampaignPlaylistBuilder({
       )}
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <Label>Biblioteca de midias</Label>
-          <div className="relative w-64 max-w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Buscar midia..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
+          <div className="flex items-center gap-2">
+            <div className="relative w-48 max-w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar midia..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={uploading}
+              onClick={() => uploadRef.current?.click()}
+            >
+              <Upload className="w-3.5 h-3.5 mr-1.5" />
+              {uploading ? "Enviando..." : "Upload"}
+            </Button>
+            <input
+              ref={uploadRef}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,video/mp4"
+              className="hidden"
+              onChange={handleQuickUpload}
             />
           </div>
         </div>

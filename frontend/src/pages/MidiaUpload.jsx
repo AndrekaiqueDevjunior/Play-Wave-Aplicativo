@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Image, Film, X, CheckCircle2, Loader2 } from "lucide-react";
+import { Upload, Image, Film, X, CheckCircle2, Loader2, Clock, Calendar } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { uploadMidia } from "@/api/midias";
 
@@ -15,11 +15,14 @@ export default function MidiaUpload() {
   const fileRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState(null);
+  const [detectedDuration, setDetectedDuration] = useState(null);
   const [form, setForm] = useState({
     name: "",
     duration: 10,
     tags: "",
     notes: "",
+    starts_at: "",
+    ends_at: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -32,29 +35,50 @@ export default function MidiaUpload() {
 
   const handleFile = (f) => {
     setFile(f);
+    setDetectedDuration(null);
     setForm((prev) => ({ ...prev, name: f.name.split(".")[0] }));
+
+    if (f.type.startsWith("video/")) {
+      const url = URL.createObjectURL(f);
+      const vid = document.createElement("video");
+      vid.preload = "metadata";
+      vid.onloadedmetadata = () => {
+        const secs = Math.round(vid.duration);
+        setDetectedDuration(isFinite(secs) ? secs : null);
+        URL.revokeObjectURL(url);
+      };
+      vid.onerror = () => URL.revokeObjectURL(url);
+      vid.src = url;
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    const tags = form.tags
-      ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
-      : [];
-    await uploadMidia(file, {
-      name: form.name,
-      type: isVideo ? "video" : "image",
-      // Vídeo: sem duration manual — toca até o fim natural do arquivo.
-      duration: isVideo ? null : form.duration,
-      notes: form.notes,
-      tags: JSON.stringify(tags),
-      status: "available",
-    });
-    toast({
-      title: "Mídia enviada!",
-      description: `${form.name} foi enviada com sucesso.`,
-    });
-    navigate("/midias");
+    try {
+      const tags = form.tags
+        ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
+        : [];
+      await uploadMidia(file, {
+        name: form.name,
+        type: isVideo ? "video" : "image",
+        duration: isVideo ? null : form.duration,
+        notes: form.notes,
+        tags: JSON.stringify(tags),
+        status: "available",
+        starts_at: form.starts_at || undefined,
+        ends_at: form.ends_at || undefined,
+      });
+      toast({
+        title: "Mídia enviada!",
+        description: `${form.name} foi enviada com sucesso.`,
+      });
+      navigate("/midias");
+    } catch {
+      toast({ title: "Erro ao enviar", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const isVideo = file?.type?.startsWith("video");
@@ -143,6 +167,14 @@ export default function MidiaUpload() {
                 required
               />
             </div>
+            {isVideo && detectedDuration !== null && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                <Clock className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  Duração detectada: <strong>{detectedDuration}s</strong> — será usada automaticamente
+                </p>
+              </div>
+            )}
             {!isVideo && (
               <div className="space-y-2">
                 <Label>Duração padrão (segundos)</Label>
@@ -159,6 +191,33 @@ export default function MidiaUpload() {
                 </p>
               </div>
             )}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" />
+                Período de exibição (opcional)
+              </Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Início</Label>
+                  <Input
+                    type="datetime-local"
+                    value={form.starts_at}
+                    onChange={(e) => setForm({ ...form, starts_at: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Fim</Label>
+                  <Input
+                    type="datetime-local"
+                    value={form.ends_at}
+                    onChange={(e) => setForm({ ...form, ends_at: e.target.value })}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Se não preenchido, a mídia fica ativa indefinidamente
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>Tags</Label>
               <Input
