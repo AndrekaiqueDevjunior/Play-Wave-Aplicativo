@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { uploadMultipleFaixas } from "@/api/audio";
 import {
   Sheet,
@@ -45,7 +45,6 @@ const ACCEPTED_TYPES = [
   "audio/wave", "audio/ogg", "audio/opus", "audio/m4a",
   "audio/x-m4a", "audio/mp4", "audio/aac", "audio/flac",
   "audio/webm", "audio/x-flac",
-  "video/mpeg",
 ];
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|opus|m4a|aac|flac|weba|mp4|mpeg|mpg)$/i;
@@ -66,9 +65,30 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [results, setResults] = useState(null);
   const [error, setError] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef(null);
+
+  function handleDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true);
+    else if (e.type === "dragleave") setDragActive(false);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const dropped = e.dataTransfer.files;
+    if (dropped?.length) processFileList(dropped);
+  }
 
   function handleFiles(e) {
-    const selectedFiles = Array.from(e.target.files);
+    if (e.target.files?.length) processFileList(e.target.files);
+  }
+
+  function processFileList(fileList) {
+    const selectedFiles = Array.from(fileList);
     const validFiles = [];
     const errors = [];
 
@@ -182,8 +202,19 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
               <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Arquivos de Áudio *
               </Label>
-              <label className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-border rounded-xl p-8 cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
-                <Upload className="w-8 h-8 text-muted-foreground" />
+              <div
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => !loading && fileInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${
+                  dragActive
+                    ? "border-primary bg-primary/10"
+                    : "border-border hover:border-primary hover:bg-primary/5"
+                }`}
+              >
+                <Upload className={`w-8 h-8 ${dragActive ? "text-primary" : "text-muted-foreground"}`} />
                 <div className="text-center">
                   <p className="text-sm font-medium">
                     Arraste ou clique para selecionar múltiplos arquivos
@@ -191,6 +222,7 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
                   <p className="text-xs text-muted-foreground mt-1">{FORMAT_DESC}</p>
                 </div>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept={ACCEPT_ATTR}
                   multiple
@@ -198,7 +230,7 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
                   onChange={handleFiles}
                   disabled={loading}
                 />
-              </label>
+              </div>
             </div>
           )}
 

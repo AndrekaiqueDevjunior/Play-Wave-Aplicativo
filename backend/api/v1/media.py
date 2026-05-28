@@ -299,7 +299,7 @@ def _decorate_media(db: Session, media: Media) -> Media:
 def _decorate_media_list(db: Session, media_list: List[Media]) -> List[Media]:
     for media in media_list:
         _decorate_media(db, media)
-    return _decorate_media_list(db, media_list)
+    return media_list
 
 
 def _invalidate_device_playlist_cache(device_ids: Optional[set[str]] = None) -> None:
