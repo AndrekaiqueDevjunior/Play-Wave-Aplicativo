@@ -32,6 +32,7 @@ export default function PlayerOSD({
   deviceName,
   currentAudioTrack,
   audioEnabled = true,
+  radioActive = false,
   osdConfig = DEFAULT_OSD_CONFIG,
 }) {
   const [showInfo, setShowInfo] = useState(true);
@@ -50,7 +51,9 @@ export default function PlayerOSD({
   }, []);
 
   useEffect(() => {
-    if (!audioEnabled || !currentAudioTrack || !osdConfig.show_current_audio) {
+    // Show OSD when radio is active OR when audioEnabled (video audio)
+    const shouldShow = (radioActive || audioEnabled) && !!currentAudioTrack && osdConfig.show_current_audio;
+    if (!shouldShow) {
       setShowAudioOverlay(false);
       return;
     }
@@ -62,6 +65,7 @@ export default function PlayerOSD({
   }, [
     currentAudioTrack?.id,
     audioEnabled,
+    radioActive,
     osdConfig.show_current_audio,
     osdConfig.duration_seconds,
   ]);

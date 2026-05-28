@@ -71,6 +71,8 @@ export default function AudioFolderManager({
     start_time: "00:00",
     end_time: "23:59",
     is_active: true,
+    starts_at: "",
+    ends_at: "",
   });
   const [selectedTracks, setSelectedTracks] = useState([]);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -85,6 +87,8 @@ export default function AudioFolderManager({
       start_time: "00:00",
       end_time: "23:59",
       is_active: true,
+      starts_at: "",
+      ends_at: "",
     });
     setSelectedTracks([]);
   };
@@ -99,6 +103,8 @@ export default function AudioFolderManager({
       start_time: folder.start_time || "00:00",
       end_time: folder.end_time || "23:59",
       is_active: folder.is_active ?? true,
+      starts_at: folder.starts_at ? folder.starts_at.slice(0, 10) : "",
+      ends_at: folder.ends_at ? folder.ends_at.slice(0, 10) : "",
     });
     setSelectedTracks((folder.tracks || []).map((t) => t.track_id || t.id));
   };
@@ -267,6 +273,31 @@ export default function AudioFolderManager({
                       }
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Período de validade (opcional)</Label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <Label htmlFor="starts-at" className="text-xs">Início</Label>
+                      <Input
+                        id="starts-at"
+                        type="date"
+                        value={form.starts_at}
+                        onChange={(e) => setForm({ ...form, starts_at: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="ends-at" className="text-xs">Fim</Label>
+                      <Input
+                        id="ends-at"
+                        type="date"
+                        value={form.ends_at}
+                        onChange={(e) => setForm({ ...form, ends_at: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Sem data = pasta sempre válida</p>
                 </div>
 
                 <div className="space-y-2">

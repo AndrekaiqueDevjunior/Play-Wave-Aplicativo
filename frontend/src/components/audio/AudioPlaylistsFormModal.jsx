@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Music2, GripVertical, X, Plus, Loader2, Volume2 } from "lucide-react";
+import AudioTrackSelector from "./AudioTrackSelector";
 
 export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -42,7 +43,7 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
   const [error, setError] = useState("");
   const [draggingIdx, setDraggingIdx] = useState(null);
 
-  const { data: allTracks = [] } = useQuery({
+  const { data: allTracks = [], isLoading: tracksLoading } = useQuery({
     queryKey: ["audio-tracks"],
     queryFn: () => listarFaixas({ status: "active" }),
   });
@@ -232,29 +233,21 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
 
           {/* ABA FAIXAS */}
           <TabsContent value="tracks" className="mt-4 space-y-4">
-            {/* Adicionar faixa */}
-            {availableToAdd.length > 0 && (
-              <div>
-                <Label>Adicionar faixa</Label>
-                <div className="mt-1.5 border rounded-lg max-h-40 overflow-y-auto divide-y">
-                  {availableToAdd.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => addTrack(t.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-accent text-left transition-colors"
-                    >
-                      <Plus className="w-4 h-4 text-primary flex-shrink-0" />
-                      <span className="flex-1 text-sm font-medium truncate">
-                        {t.name}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        {categoryLabels[t.category] || t.category}
-                      </Badge>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Seleção múltipla com checkbox */}
+            <div>
+              <Label>Selecionar faixas</Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Marque as faixas que farão parte desta playlist
+              </p>
+              <AudioTrackSelector
+                tracks={allTracks}
+                selectedIds={form.track_ids}
+                onSelectionChange={(ids) => setForm((prev) => ({ ...prev, track_ids: ids }))}
+                loading={tracksLoading}
+                showCategory
+                showDuration
+              />
+            </div>
 
             {/* Ordem das faixas */}
             <div>

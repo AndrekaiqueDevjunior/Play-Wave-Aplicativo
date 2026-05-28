@@ -735,27 +735,9 @@ export default function Player() {
       triggerReload("playlist_invalidated");
     };
 
-    // SPEC 003 — comando recém-criado: disparar polling imediato em vez de
-    // esperar próximo tick de 10s.
-    const onCommandNew = (evt) => {
-      try {
-        const data = JSON.parse(evt.data);
-        console.log("[player] SSE command:new", data?.data || data);
-      } catch {
-        console.log("[player] SSE command:new");
-      }
-      // pollCommands() é a função declarada no useEffect anterior; uma ref
-      // ou função estável seria mais limpa, mas como é apenas um trigger
-      // imediato + o polling já cobre, basta forçar reload da fase de
-      // commands via setPhase no mesmo estado (não há side-effect).
-      // Aqui invocamos buscarComandosPendentes diretamente.
-      buscarComandosPendentes(deviceId, deviceToken).then((commands) => {
-        if (commands && commands.length > 0) {
-          // O effect 6 (poll) já está agendado e pegará no próximo tick;
-          // só precisamos garantir que estamos no estado correto.
-          console.log("[player] SSE triggered immediate fetch:", commands.length);
-        }
-      }).catch((err) => console.warn("[player] SSE command:new fetch error:", err));
+    // SPEC 003 — comando recém-criado: executa polling imediato sem esperar tick de 10s.
+    const onCommandNew = () => {
+      pollCommands();
     };
 
     const onError = (err) => {
@@ -989,6 +971,7 @@ export default function Player() {
             deviceName={deviceName}
             currentAudioTrack={currentAudioTrack}
             audioEnabled={audioEnabled && phase === "playing"}
+            radioActive={audioManagerCurrent === AUDIO_STATE.RADIO && phase === "playing"}
             osdConfig={osdConfig}
           />
           <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-white text-sm">
