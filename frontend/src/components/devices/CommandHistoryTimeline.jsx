@@ -95,7 +95,17 @@ function CommandRow({ cmd, onCancel, cancelling }) {
 
       <TimelineSteps cmd={cmd} />
 
-      {cmd.error_message && (
+      {cmd.status === "failed" && errorCode === "BROWSER_ENVIRONMENT" && (
+        <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+          <ShieldOff className="w-3 h-3 mt-0.5 shrink-0" />
+          <span>
+            Comando não executado — o player está rodando no browser (web). Reiniciar/desligar
+            físico requer o app Android ou Electron instalado no dispositivo.
+          </span>
+        </div>
+      )}
+
+      {cmd.error_message && errorCode !== "BROWSER_ENVIRONMENT" && (
         <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 flex items-start gap-1.5">
           <XCircle className="w-3 h-3 mt-0.5 shrink-0" />
           <div className="flex-1 break-words">

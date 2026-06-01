@@ -8,8 +8,9 @@ from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, Field
+import sqlalchemy as sa
 from sqlalchemy.exc import DataError, IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from core.database import get_db
 from core.dependencies import get_current_user
@@ -481,7 +482,7 @@ def _audio_playlist_track_payload(
     track_ids = {track_id for _, track_id in entries}
     tracks = db.query(AudioTrack).filter(
         AudioTrack.id.in_(track_ids),
-        AudioTrack.status == AudioTrackStatus.ACTIVE,
+        sa.cast(AudioTrack.status, sa.Text) == "active",
     ).all()
     track_map = {str(t.id): t for t in tracks}
     ordered = []
@@ -532,7 +533,7 @@ def _build_folder_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
                 str(t.id): t
                 for t in db.query(AudioTrack).filter(
                     AudioTrack.id.in_(track_ids),
-                    AudioTrack.status == AudioTrackStatus.ACTIVE,
+                    sa.cast(AudioTrack.status, sa.Text) == "active",
                 ).all()
             }
             for tid in track_ids:
@@ -575,7 +576,7 @@ def _build_spot_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
             continue
         track: Optional[AudioTrack] = db.query(AudioTrack).filter(
             AudioTrack.id == spot.track_id,
-            AudioTrack.status == AudioTrackStatus.ACTIVE,
+            sa.cast(AudioTrack.status, sa.Text) == "active",
         ).first()
         if not track:
             continue
@@ -613,7 +614,8 @@ def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
     if not device.audio_playlist_id:
         return None
     playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
-    if not playlist or playlist.status != AudioPlaylistStatus.ACTIVE:
+    status_val = playlist.status.value if hasattr(playlist.status, "value") else str(playlist.status)
+    if not playlist or status_val != "active":
         return None
     return _build_audio_playlist_from_model(playlist, db)
 
@@ -645,7 +647,8 @@ def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
     audio_playlist = None
     if campaign.audio_playlist_id:
         playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
-        if playlist and playlist.status == AudioPlaylistStatus.ACTIVE:
+        _ps = playlist.status.value if hasattr(playlist.status, "value") else str(playlist.status)
+        if playlist and _ps == "active":
             audio_playlist = _build_audio_playlist_from_model(playlist, db)
     elif device.audio_playlist_id:
         audio_playlist = _build_audio_playlist(device, db)
@@ -932,7 +935,12 @@ def get_device(
     current_user: User = Depends(get_current_user),
     device_id: str,
 ):
-    device = crud_device.get(db, id=device_id)
+    device = (
+        db.query(Device)
+        .options(joinedload(Device.tenant))
+        .filter(Device.id == device_id)
+        .first()
+    )
     if not device:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
@@ -957,7 +965,12 @@ def update_device_osd_config(
     device_id: str,
     body: DeviceOSDConfigUpdate,
 ):
-    device = crud_device.get(db, id=device_id)
+    device = (
+        db.query(Device)
+        .options(joinedload(Device.tenant))
+        .filter(Device.id == device_id)
+        .first()
+    )
     if not device:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
@@ -974,7 +987,13 @@ def update_device_osd_config(
         setattr(device, OSD_DEVICE_FIELDS[field], _enum_value(value))
     db.add(device)
     db.commit()
-    db.refresh(device)
+
+    device = (
+        db.query(Device)
+        .options(joinedload(Device.tenant))
+        .filter(Device.id == device_id)
+        .first()
+    )
 
     _invalidate_device_playlist_cache(device_id=str(device.id))
     _publish_device_playlist_invalidated(device, reason="device_osd_config_updated")

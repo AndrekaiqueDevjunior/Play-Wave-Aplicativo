@@ -228,7 +228,11 @@ class Device(Base):
 
     @property
     def osd_config_effective(self) -> dict:
-        tenant_config = self.tenant.osd_config if self.tenant else {
+        try:
+            tenant_obj = self.tenant
+        except Exception:
+            tenant_obj = None
+        tenant_config = tenant_obj.osd_config if tenant_obj else {
             "show_current_audio": True,
             "position": "top_right",
             "duration_seconds": 8,
@@ -464,8 +468,8 @@ class AudioTrack(Base):
     mime_type = Column(String(100), nullable=True)
     file_size = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
-    category = Column(SQLEnum(AudioTrackCategory), default=AudioTrackCategory.MUSIC)
-    status = Column(SQLEnum(AudioTrackStatus), default=AudioTrackStatus.ACTIVE)
+    category = Column(String(50), default="music")
+    status = Column(String(50), default="active")
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -557,7 +561,7 @@ class AudioPlaylist(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    status = Column(SQLEnum(AudioPlaylistStatus), default=AudioPlaylistStatus.ACTIVE)
+    status = Column(String(50), default="active")
     volume_default = Column(Float, default=0.7)
     loop_enabled = Column(Boolean, default=True)
     shuffle_enabled = Column(Boolean, default=False)
