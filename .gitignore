@@ -126,6 +126,7 @@ Thumbs.db
 *.csr
 ssl/
 certs/
+nginx/certbot/
 
 # ===========================================
 # ALEMBIC
