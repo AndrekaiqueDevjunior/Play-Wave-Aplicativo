@@ -6,6 +6,46 @@
 
 ## 📋 LISTA DE BUGS
 
+### 🔴 CRÍTICO 8: Tela Branca ao Ver Detalhes do Dispositivo ✅ CORREÇÃO APLICADA
+
+**Problema:** Ao clicar em "Ver detalhes" no menu de ações do dispositivo, página fica em tela branca.
+
+**Investigação:**
+- [ ] Verificar erros no console do navegador (F12)
+- [ ] Verificar logs do componente DispositivoDetalhe
+- [ ] Verificar se todos os componentes importados existem
+- [ ] Verificar ErrorBoundary capturando erro
+
+**Possíveis Causas:**
+1. Componente importado não existe ou tem erro
+2. Erro de runtime não tratado
+3. Query falhando sem tratamento
+4. Rota mal configurada
+
+**Correção Aplicada:**
+1. ✅ Criado `ErrorBoundary.jsx` para capturar erros
+2. ✅ Adicionado ErrorBoundary ao app.jsx
+3. ✅ Adicionado console.log detalhado no DispositivoDetalhe
+4. ✅ Adicionado tratamento de erro na query
+
+**Como Testar:**
+```
+1. Abrir DevTools (F12)
+2. Ir na aba Console
+3. Clicar em "Ver detalhes" de um dispositivo
+4. Ver logs: [DispositivoDetalhe] Componente montado
+5. Ver logs: [DispositivoDetalhe] Device ID: xxx
+6. Ver logs: [DispositivoDetalhe] Device data: {...}
+7. Se houver erro, ErrorBoundary vai capturar e mostrar mensagem
+```
+
+**Próximos Passos:**
+- Testar e coletar erro exato do console
+- Se for componente faltando, criar/importar corretamente
+- Se for query falhando, adicionar fallback/loading
+
+---
+
 ### 🔴 CRÍTICO 1: Conteúdo da Campanha Não Passa no Player
 
 **Problema:** Ao criar campanha e adicionar mídias, o player não exibe nada.
@@ -344,15 +384,16 @@ pollCommands();
 
 ## 📊 PRIORIZAÇÃO
 
-| Bug | Severidade | Impacto | Prioridade |
-|-----|------------|---------|------------|
-| #1 Campanha não passa | 🔴 Crítico | Alto | **P0** |
-| #2 Player reinicia | 🔴 Crítico | Médio | **P1** |
-| #4 Spot bloqueia playlist | 🔴 Crítico | Alto | **P0** |
-| #5 Pasta não funciona | 🔴 Crítico | Alto | **P0** |
-| #6 Comandos não funcionam | 🔴 Crítico | Médio | **P1** |
-| #3 Confusão agendamento | 🟠 Importante | Baixo | **P2** |
-| #7 Dúvida prioridade | 🟡 Dúvida | Baixo | **P3** |
+| Bug | Severidade | Impacto | Prioridade | Status |
+|-----|------------|---------|------------|--------|
+| #8 Tela branca detalhes | 🔴 Crítico | Alto | **P0** | ✅ Correção aplicada |
+| #1 Campanha não passa | 🔴 Crítico | Alto | **P0** | 🔍 Investigar |
+| #2 Player reinicia | 🔴 Crítico | Médio | **P1** | 🔍 Investigar |
+| #4 Spot bloqueia playlist | 🔴 Crítico | Alto | **P0** | 🔍 Investigar |
+| #5 Pasta não funciona | 🔴 Crítico | Alto | **P0** | 🔍 Investigar |
+| #6 Comandos não funcionam | 🔴 Crítico | Médio | **P1** | 🔍 Investigar |
+| #3 Confusão agendamento | 🟠 Importante | Baixo | **P2** | 📝 Documentar |
+| #7 Dúvida prioridade | 🟡 Dúvida | Baixo | **P3** | 📝 Documentar |
 
 **P0 = Bloqueia uso do sistema**  
 **P1 = Afeta experiência crítica**  
