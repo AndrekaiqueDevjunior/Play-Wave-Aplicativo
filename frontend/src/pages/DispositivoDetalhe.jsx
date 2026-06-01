@@ -53,7 +53,11 @@ import ForceRepairDialog from "@/components/devices/ForceRepairDialog";
 import PairingEventTimeline from "@/components/devices/PairingEventTimeline";
 
 export default function DispositivoDetalhe() {
+  console.log("[DispositivoDetalhe] Componente montado");
+  
   const { id } = useParams();
+  console.log("[DispositivoDetalhe] Device ID:", id);
+  
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -68,12 +72,16 @@ export default function DispositivoDetalhe() {
   const [forceRepairLoading, setForceRepairLoading] = useState(false);
   const [osdLocalConfig, setOsdLocalConfig] = useState({});
 
-  const { data: device, isLoading } = useQuery({
+  const { data: device, isLoading, error } = useQuery({
     queryKey: ["device", id],
     queryFn: () => buscarDispositivo(id),
     enabled: !!id,
     refetchInterval: 10_000,
   });
+
+  console.log("[DispositivoDetalhe] Device data:", device);
+  console.log("[DispositivoDetalhe] Loading:", isLoading);
+  console.log("[DispositivoDetalhe] Error:", error);
 
   useEffect(() => {
     if (!device?.osd_config_local) return;

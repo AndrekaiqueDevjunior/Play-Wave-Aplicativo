@@ -6,6 +6,7 @@ import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider } from "@/lib/AuthContext";
 import ProtectedRoute from "@/components/shared/ProtectedRoute";
 import SessionExpiredModal from "@/components/shared/SessionExpiredModal";
+import ErrorBoundary from "@/components/shared/ErrorBoundary";
 
 // Layout
 import AppLayout from "@/components/layout/AppLayout";
@@ -73,7 +74,8 @@ function App() {
     <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <QueryClientProvider client={queryClientInstance}>
-          <Routes>
+          <ErrorBoundary>
+            <Routes>
             {/* Pública */}
             <Route path="/login" element={<Login />} />
 
@@ -185,6 +187,7 @@ function App() {
 
             <Route path="*" element={<PageNotFound />} />
           </Routes>
+          </ErrorBoundary>
 
           <Toaster />
           <SessionExpiredModal />
