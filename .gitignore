@@ -171,6 +171,9 @@ config/secrets.json
 # ARQUIVOS LOCAIS / SENSÍVEIS
 # ===========================================
 icones e favicon.ico/
+.env.vps.credenciais
+COMANDOS_VPS.md
+rebuild_vps_sshpass.sh
 *.jpeg
 *.jpg
 !frontend/src/assets/**/*.jpg
