@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
 import { OSDConfigForm } from "@/components/shared/OSDConfigForm";
 import {
@@ -34,6 +34,15 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listarCampanhas } from "@/api/campanhas";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tv2, PlayCircle, Music2, CheckCircle2, ExternalLink } from "lucide-react";
 import {
   buscarDispositivo,
   atualizarDispositivo,
@@ -86,6 +95,37 @@ export default function DispositivoDetalhe() {
   const [forceRepairDialogOpen, setForceRepairDialogOpen] = useState(false);
   const [forceRepairLoading, setForceRepairLoading] = useState(false);
   const [osdLocalConfig, setOsdLocalConfig] = useState({});
+  const [campaignLinking, setCampaignLinking] = useState(false);
+  const [campaignLinked, setCampaignLinked] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState(null);
+
+  const { data: campaignList = [] } = useQuery({
+    queryKey: ["campaigns-list"],
+    queryFn: () => listarCampanhas({ status: "active" }),
+    enabled: isApiConfigured(),
+  });
+
+  const handleLinkCampaign = useCallback(async (campaignId) => {
+    setCampaignLinking(true);
+    setCampaignLinked(false);
+    try {
+      await atualizarDispositivo(id, { current_campaign_id: campaignId || null });
+      queryClient.invalidateQueries({ queryKey: ["device", id] });
+      if (campaignId) await sendDeviceCommand(id, "sync", {});
+      setCampaignLinked(true);
+      setTimeout(() => setCampaignLinked(false), 3000);
+      toast({
+        title: campaignId ? "✅ Campanha vinculada!" : "Campanha removida",
+        description: campaignId
+          ? "O player irá sincronizar a nova campanha em instantes."
+          : "Dispositivo sem campanha ativa.",
+      });
+    } catch (err) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setCampaignLinking(false);
+    }
+  }, [id, queryClient, toast]);
 
   const {
     data: device,
@@ -98,9 +138,9 @@ export default function DispositivoDetalhe() {
     refetchInterval: 10_000,
   });
 
-  console.log("[DispositivoDetalhe] Device data:", device);
-  console.log("[DispositivoDetalhe] Loading:", isLoading);
-  console.log("[DispositivoDetalhe] Error:", error);
+  const activeCampaignInfo = campaignList.find(
+    (c) => c.id === (selectedCampaignId ?? device?.current_campaign_id)
+  ) ?? null;
 
   useEffect(() => {
     if (!device?.osd_config_local) return;
@@ -605,6 +645,91 @@ export default function DispositivoDetalhe() {
         onConfirm={handleConfirmForceRepair}
         loading={forceRepairLoading}
       />
+
+      {/* ── Campanha Ativa ─────────────────────────────────────────────── */}
+      <Card className={cn(campaignLinked && "ring-2 ring-emerald-400 transition-all")}>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Tv2 className="w-4 h-4 text-primary" />
+              <CardTitle className="text-base">Campanha Ativa</CardTitle>
+            </div>
+            {campaignLinked && (
+              <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium animate-in fade-in">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Sincronizando...
+              </span>
+            )}
+            {device.current_campaign && !campaignLinked && (
+              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">
+                <PlayCircle className="w-3 h-3 mr-1" /> Reproduzindo
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Info da campanha atual */}
+          {device.current_campaign && (
+            <div className="rounded-lg border bg-muted/30 p-3 flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">{device.current_campaign}</p>
+                {activeCampaignInfo?.audio_playlist_id && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Music2 className="w-3 h-3" />
+                    Rádio indoor configurado
+                  </p>
+                )}
+                {activeCampaignInfo && (
+                  <p className="text-xs text-muted-foreground">
+                    {activeCampaignInfo.total_items ?? activeCampaignInfo.media_ids?.length ?? "—"} mídia(s)
+                    {activeCampaignInfo.priority > 1 && ` · Prioridade ${activeCampaignInfo.priority}`}
+                  </p>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="shrink-0 h-7 text-xs" asChild>
+                <a href={`/campanhas`}><ExternalLink className="w-3 h-3 mr-1" />Ver</a>
+              </Button>
+            </div>
+          )}
+
+          {/* Trocar campanha */}
+          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+            <Select
+              value={selectedCampaignId ?? device.current_campaign_id ?? "none"}
+              onValueChange={(v) => setSelectedCampaignId(v === "none" ? "" : v)}
+            >
+              <SelectTrigger className="flex-1 sm:max-w-xs">
+                <SelectValue placeholder="Selecionar campanha..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— Sem campanha —</SelectItem>
+                {campaignList.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    <span className="flex items-center gap-2">
+                      {c.name}
+                      {c.id === device.current_campaign_id && (
+                        <Badge className="text-[10px] h-4 bg-emerald-100 text-emerald-700 border-0">ativa</Badge>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              disabled={campaignLinking || selectedCampaignId === null}
+              onClick={() => handleLinkCampaign(selectedCampaignId)}
+              className={cn("shrink-0", campaignLinked && "bg-emerald-600 hover:bg-emerald-700")}
+            >
+              {campaignLinking ? (
+                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Aplicando...</>
+              ) : campaignLinked ? (
+                <><CheckCircle2 className="w-4 h-4 mr-2" />Aplicado!</>
+              ) : (
+                "Aplicar Campanha"
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>

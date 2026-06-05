@@ -340,13 +340,10 @@ export default function CampaignFormModal({
                   <Select
                     value={form.audio_playlist_id || NO_AUDIO_PLAYLIST}
                     onValueChange={(v) =>
-                      set(
-                        "audio_playlist_id",
-                        v === NO_AUDIO_PLAYLIST ? "" : v,
-                      )
+                      set("audio_playlist_id", v === NO_AUDIO_PLAYLIST ? "" : v)
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className={form.audio_playlist_id ? "border-emerald-400 ring-1 ring-emerald-300" : ""}>
                       <SelectValue placeholder="Sem rádio indoor" />
                     </SelectTrigger>
                     <SelectContent>
@@ -357,9 +354,16 @@ export default function CampaignFormModal({
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    A playlist de áudio tocará junto com as mídias da campanha.
-                  </p>
+                  {form.audio_playlist_id ? (
+                    <p className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                      Playlist reconhecida — tocará durante a campanha
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      A playlist de áudio tocará junto com as mídias da campanha.
+                    </p>
+                  )}
                 </div>
                 {/* SPEC 005 — política de áudio */}
                 <AudioPolicySelector
@@ -404,9 +408,20 @@ export default function CampaignFormModal({
             {/* ── TVs tab ──────────────────────────────────── */}
             {tab === "devices" && (
               <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  {selectedDeviceIds.length} TV(s) selecionada(s)
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    {selectedDeviceIds.length > 0 ? (
+                      <span className="text-emerald-600 font-medium">{selectedDeviceIds.length} TV(s) selecionada(s)</span>
+                    ) : (
+                      "Nenhuma TV selecionada"
+                    )}
+                  </p>
+                  {selectedDeviceIds.length > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {activeDevices.filter(d => selectedDeviceIds.includes(d.id) && d.status === "online").length} online agora
+                    </span>
+                  )}
+                </div>
                 {activeDevices.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-4 text-center">
                     Nenhum dispositivo cadastrado
@@ -414,6 +429,7 @@ export default function CampaignFormModal({
                 ) : (
                   activeDevices.map((d) => {
                     const selected = selectedDeviceIds.includes(d.id);
+                    const hasDiffCampaign = d.current_campaign && campaign?.name && d.current_campaign !== campaign?.name;
                     return (
                       <div
                         key={d.id}
@@ -431,26 +447,31 @@ export default function CampaignFormModal({
                             : "border-border hover:border-primary/30",
                         )}
                       >
-                        <Monitor className="w-5 h-5 text-muted-foreground shrink-0" />
-                        <div className="flex-1">
+                        <div className={cn(
+                          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                          d.status === "online" ? "bg-emerald-100" : "bg-muted"
+                        )}>
+                          <Monitor className={cn("w-4 h-4", d.status === "online" ? "text-emerald-600" : "text-muted-foreground")} />
+                        </div>
+                        <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium">{d.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {d.location}
-                            {d.group ? ` · ${d.group}` : ""}
+                          <p className="text-xs text-muted-foreground truncate">
+                            {d.location}{d.group ? ` · ${d.group}` : ""}
+                            {hasDiffCampaign && (
+                              <span className="text-amber-600 ml-1">· exibindo "{d.current_campaign}"</span>
+                            )}
+                            {d.current_campaign && !hasDiffCampaign && selected && (
+                              <span className="text-emerald-600 ml-1">· já nesta campanha</span>
+                            )}
                           </p>
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "text-xs shrink-0",
-                            d.status === "online"
-                              ? "text-emerald-600"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {d.status}
-                        </Badge>
-                        <SelectCheckbox checked={selected} />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={cn(
+                            "w-1.5 h-1.5 rounded-full",
+                            d.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40"
+                          )} />
+                          <SelectCheckbox checked={selected} />
+                        </div>
                       </div>
                     );
                   })

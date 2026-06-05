@@ -17,6 +17,7 @@
 
 import { useMemo } from "react";
 import { AUDIO_POLICY } from "../utils/audioPolicy";
+import { hasAnyRadioContent } from "../player-core/radioScheduleResolver";
 
 export function useAudioConflictResolver({
   currentMedia,
@@ -30,7 +31,8 @@ export function useAudioConflictResolver({
       return { videoMuted: true, audioEnabled: true, audioDucked: false };
     }
 
-    const hasRadio = !!(audioPlaylist?.tracks?.length);
+    // hasRadio considera faixas base E pastas agendadas com faixas.
+    const hasRadio = hasAnyRadioContent(audioPlaylist);
 
     if (!currentMedia) {
       return { videoMuted: true, audioEnabled: hasRadio, audioDucked: false };
@@ -64,6 +66,7 @@ export function useAudioConflictResolver({
     currentMedia?.audio_policy_effective,
     currentMedia?.has_audio,
     audioPlaylist?.tracks?.length,
+    audioPlaylist?.folder_schedules?.length,
     currentSpot,
     fallbackPolicy,
   ]);

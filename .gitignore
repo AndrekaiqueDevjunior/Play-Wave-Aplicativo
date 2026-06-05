@@ -8,6 +8,12 @@
 .env.test
 !.env.example
 
+# Guia de deploy com credenciais SSH/produção — mantido apenas localmente
+DEPLOY_VPS.md
+
+# Diretório do agente Claude Code
+.claude/
+
 # ===========================================
 # NODE.JS
 # ===========================================

@@ -56,7 +56,7 @@ function clearSession() {
   });
 }
 
-const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutos
+const INACTIVITY_MS = 8 * 60 * 60 * 1000; // 8 horas
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -120,16 +120,24 @@ export function AuthProvider({ children }) {
 
   // Timer de inatividade + listener do evento pw:session-expired
   useEffect(() => {
-    const handleExpired = () => setSessionExpired(true);
+    const handleExpired = () => {
+      clearSession();
+      setUser(null);
+      setIsAuthenticated(false);
+      setSessionExpired(true);
+      navigate("/login", { replace: true });
+    };
     window.addEventListener("pw:session-expired", handleExpired);
 
     const resetTimer = () => {
       clearTimeout(inactivityTimer.current);
-      // Só conta inatividade quando autenticado
       if (sessionStorage.getItem("pw_access_token") || localStorage.getItem("pw_access_token")) {
         inactivityTimer.current = setTimeout(() => {
           clearSession();
+          setUser(null);
+          setIsAuthenticated(false);
           setSessionExpired(true);
+          navigate("/login", { replace: true });
         }, INACTIVITY_MS);
       }
     };

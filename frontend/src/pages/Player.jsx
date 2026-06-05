@@ -31,6 +31,7 @@ import { isMediaCurrentlyPlayable } from "@/utils/mediaSchedule";
 import { PairingStorage, PlaylistCache, PlayerState } from "@/player-core/storage";
 import { executeCommand } from "@/player-core/commands";
 import { createCommandPoller } from "@/player-core/commandPoller";
+import { resolveActiveRadio, hasAnyRadioContent } from "@/player-core/radioScheduleResolver";
 import { onForceRepair } from "@/player-core/repair";
 import { createWindowExposureScheduler } from "@/player-core/windowExposureScheduler";
 import { createDesktopExposureTimeScheduler } from "@/player-core/desktopExposureTimeScheduler";
@@ -210,6 +211,12 @@ export default function Player() {
   // SPEC 010 — eventos de exposição de desktop por horário do dia.
   const [desktopExposureEvents, setDesktopExposureEvents] = useState([]);
   const [currentAudioTrack, setCurrentAudioTrack] = useState(null);
+  // Fonte de rádio ativa resolvida (pasta agendada ou playlist base).
+  const [activeRadioSource, setActiveRadioSource] = useState({
+    source: "playlist",
+    folderName: null,
+    scheduleId: null,
+  });
   const [campaignId, setCampaignId] = useState(null);
   const [campaignConfigVersion, setCampaignConfigVersion] = useState(null);
   const [campaign, setCampaign] = useState(null); // SPEC 005: objeto campanha completo
@@ -490,6 +497,8 @@ export default function Player() {
       }
       setVideoMuted(res?.campaign?.video_muted !== false);
       const ap = res?.audio_playlist || null;
+      // hasRadio considera tanto faixas base quanto pastas agendadas com faixas.
+      const hasRadio = hasAnyRadioContent(ap);
       setAudioPlaylist(ap);
       audioPlaylistIdRef.current = ap?.id || null;
       setOsdConfig(
@@ -527,11 +536,21 @@ export default function Player() {
         setCurrentIndex(0);
         setProgress(0);
         setPhase("playing");
-        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(
-          () => {},
-        );
+        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(() => {});
         return true;
       }
+
+      // Campanha só com rádio (sem mídias visuais): vai para playing para o
+      // AudioManager poder iniciar a reprodução do rádio indoor.
+      if (hasRadio) {
+        console.log("[player] radio-only campaign — entering playing phase");
+        setPlaylist([]);
+        setCurrentIndex(0);
+        setProgress(0);
+        setPhase("playing");
+        return true;
+      }
+
       return false;
     } catch (err) {
       console.error("[player] loadPlaylist error:", err);
@@ -584,6 +603,16 @@ export default function Player() {
         }
       });
   }, [phase, deviceId, deviceToken, loadPlaylist]);
+
+  // ── 3.1. Retry automático a cada 30s quando não há campanha ─────────────
+  useEffect(() => {
+    if (phase !== "no_campaign" || !deviceId || !deviceToken) return;
+    const t = setInterval(() => {
+      console.log("[player] no_campaign retry — checking for campaign/radio");
+      setPhase("loading");
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [phase, deviceId, deviceToken]);
 
   // ── 3.5. Initialize config version monitor and smart playlist updater (TASK 21) ──
   useEffect(() => {
@@ -1128,11 +1157,9 @@ export default function Player() {
       fallbackPolicy,
     });
 
-  // Compat: se a mídia não tem audio_policy_effective (player antigo ou campo ausente),
-  // usa o video_muted legado da campanha.
-  const finalVideoMuted = current?.audio_policy_effective
-    ? resolvedVideoMuted
-    : videoMuted;
+  // Sempre usa o resolver — ele já tem fallback AUTO para mídias sem política definida.
+  // O `videoMuted` legado só é aplicado se explicitamente enviado por SSE (comando mute).
+  const finalVideoMuted = resolvedVideoMuted;
 
   // Log de diagnóstico
   useEffect(() => {
@@ -1151,20 +1178,54 @@ export default function Player() {
     if (mgr) mgr.state.fadeMs = audioFadeMs;
   }, [audioFadeMs]);
 
-  // ── Audio Manager: carrega playlist no manager quando audioPlaylist muda ──
+  // ── Audio Manager: carrega faixas resolvidas (pasta agendada > playlist) ──
+  // Re-avalia a cada minuto pois folder_schedules dependem do horário/dia.
   useEffect(() => {
     const mgr = audioManagerRef.current;
     if (!mgr) return;
-    const rawTracks = audioPlaylist?.tracks || [];
-    const tracks = rawTracks.map((t) => ({
-      ...t,
-      file_url: assetUrl(t.file_url),
-    }));
-    const mode = audioPlaylist?.shuffle
-      ? AUDIO_MODE.SHUFFLE
-      : AUDIO_MODE.SEQUENTIAL;
-    mgr.loadRadioPlaylist(tracks, mode);
-  }, [audioPlaylist?.id, audioPlaylist?.shuffle]);
+    if (!audioPlaylist) {
+      mgr.loadRadioPlaylist([], AUDIO_MODE.SEQUENTIAL);
+      setActiveRadioSource({ source: "empty", folderName: null, scheduleId: null });
+      return;
+    }
+
+    const lastScheduleRef = { current: undefined };
+
+    const applyActiveRadio = () => {
+      const resolved = resolveActiveRadio(audioPlaylist, new Date());
+      // Só recarrega a fila quando a fonte realmente muda (evita reiniciar a
+      // faixa atual a cada tick de 1 min).
+      if (lastScheduleRef.current === resolved.scheduleId) return;
+      lastScheduleRef.current = resolved.scheduleId;
+
+      const tracks = resolved.tracks.map((t) => ({
+        ...t,
+        file_url: assetUrl(t.file_url),
+      }));
+      console.log(
+        `[player] rádio fonte=${resolved.source}`,
+        resolved.folderName ? `pasta="${resolved.folderName}"` : "",
+        `(${tracks.length} faixas, modo=${resolved.mode})`,
+      );
+      mgr.loadRadioPlaylist(tracks, resolved.mode);
+      setActiveRadioSource({
+        source: resolved.source,
+        folderName: resolved.folderName,
+        scheduleId: resolved.scheduleId,
+      });
+      // Se já estamos em fase playing e há faixas, garante que o rádio toque.
+      if (tracks.length && audioEnabled && phase === "playing") {
+        mgr.playRadio().catch(() => {});
+      }
+    };
+
+    applyActiveRadio();
+    const tick = setInterval(applyActiveRadio, 60_000);
+    return () => clearInterval(tick);
+    // audioEnabled/phase intencionalmente fora das deps: o efeito de play/stop
+    // abaixo cuida disso. Aqui só reagimos à playlist em si.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioPlaylist]);
 
   // ── Audio Manager: play/stop rádio conforme política + fase ──────────────
   useEffect(() => {
@@ -1350,6 +1411,35 @@ export default function Player() {
         </div>
         <PlayerDebugOverlay data={debugData} />
       </>
+    );
+  }
+
+  // Campanha só com rádio — sem mídias visuais
+  if (phase === "playing" && playlist.length === 0) {
+    return (
+      <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-4">
+        <div className="w-20 h-20 rounded-2xl bg-primary/20 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+          </svg>
+        </div>
+        {deviceName && <p className="text-white/40 text-xs">{deviceName}</p>}
+        {currentAudioTrack ? (
+          <div className="text-center space-y-1">
+            <p className="text-white/60 text-xs uppercase tracking-widest">Tocando agora</p>
+            <p className="text-white font-semibold text-lg max-w-xs truncate">{currentAudioTrack.name}</p>
+            {currentAudioTrack.artist && (
+              <p className="text-white/50 text-sm">{currentAudioTrack.artist}</p>
+            )}
+            {activeRadioSource.source === "folder" && activeRadioSource.folderName && (
+              <p className="text-primary/70 text-xs mt-1">📁 {activeRadioSource.folderName}</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-white/40 text-sm">Rádio indoor ativo</p>
+        )}
+        <PlayerDebugOverlay data={debugData} />
+      </div>
     );
   }
 

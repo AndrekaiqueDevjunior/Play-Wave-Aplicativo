@@ -301,14 +301,23 @@ export default function Dispositivos() {
                       <TableCell className="hidden lg:table-cell text-sm">
                         {device.current_campaign ? (
                           <Link
-                            to={`/campanhas`}
-                            className="text-primary hover:underline font-medium truncate max-w-[140px] block"
+                            to={`/dispositivos/${device.id}`}
+                            className="flex items-center gap-1.5 group max-w-[160px]"
                             title={device.current_campaign}
                           >
-                            {device.current_campaign}
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                            <span className="text-foreground font-medium truncate group-hover:text-primary transition-colors">
+                              {device.current_campaign}
+                            </span>
                           </Link>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <Link
+                            to={`/dispositivos/${device.id}`}
+                            className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors text-xs"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />
+                            Sem campanha
+                          </Link>
                         )}
                       </TableCell>
                       <TableCell>

@@ -1,5 +1,4 @@
 {
   "backend_url": "http://localhost:8000",
-  "player_url": "http://localhost:3000/player",
-  "environment": "development"
+  "environment": "production"
 }

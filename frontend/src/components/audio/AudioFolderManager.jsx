@@ -202,11 +202,20 @@ export default function AudioFolderManager({
                           <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">
                             {FOLDER_STATUS[folder.status]}
                           </span>
-                          <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded">
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            (folder.tracks || []).length === 0
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-purple-100 text-purple-700"
+                          }`}>
                             {(folder.tracks || []).length} faixa
                             {(folder.tracks || []).length !== 1 ? "s" : ""}
                           </span>
                         </div>
+                        {(folder.tracks || []).length === 0 && (
+                          <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
+                            ⚠ Pasta vazia — adicione faixas para que toque no player
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
                         <Button
@@ -350,18 +359,18 @@ export default function AudioFolderManager({
                     </Button>
                   </div>
                   <Select
-                    value={form.category_id}
+                    value={form.category_id || "none"}
                     onValueChange={(v) =>
-                      setForm({ ...form, category_id: v })
+                      setForm({ ...form, category_id: v === "none" ? "" : v })
                     }
                   >
                     <SelectTrigger id="folder-category">
                       <SelectValue placeholder="Selecione uma categoria" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Sem categoria</SelectItem>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.slug || cat.id} value={cat.id || cat.slug}>
+                      <SelectItem value="none">Sem categoria</SelectItem>
+                      {categories.filter((cat) => cat.id).map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
                           {cat.name}
                         </SelectItem>
                       ))}

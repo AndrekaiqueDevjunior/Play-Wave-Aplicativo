@@ -124,7 +124,7 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl w-[90vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {playlist ? "Editar Playlist" : "Nova Playlist Sonora"}
