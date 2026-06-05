@@ -150,6 +150,7 @@ def get_audio_playlists(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     status: Optional[AudioPlaylistStatusEnum] = Query(None),
+    category_id: Optional[str] = Query(None),
     tenant_id: Optional[str] = Query(None)
 ):
     """
@@ -158,7 +159,7 @@ def get_audio_playlists(
     # Se não for admin, filtra apenas do tenant do usuário
     if current_user.role != "admin" and not tenant_id:
         tenant_id = str(current_user.tenant_id)
-    
+
     # Aplicar filtros específicos
     if status:
         playlists = crud_audio_playlist.get_by_status(db, status=status)
@@ -168,11 +169,14 @@ def get_audio_playlists(
         playlists = crud_audio_playlist.search(db, query=search, skip=skip, limit=limit)
     else:
         playlists = crud_audio_playlist.get_multi(db, skip=skip, limit=limit)
-    
+
     # Filtrar por tenant se não for admin
     if current_user.role != "admin":
         playlists = [p for p in playlists if str(p.tenant_id) == str(current_user.tenant_id)]
-    
+
+    if category_id:
+        playlists = [p for p in playlists if str(p.category_id) == str(category_id)]
+
     return playlists
 
 

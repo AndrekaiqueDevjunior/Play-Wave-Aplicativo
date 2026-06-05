@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { uploadFaixa, atualizarFaixa } from "@/api/audio";
+import { useQuery } from "@tanstack/react-query";
+import { uploadFaixa, atualizarFaixa, listarCategoriasAudio } from "@/api/audio";
 import {
   Sheet,
   SheetContent,
@@ -55,6 +56,7 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
     name: "",
     description: "",
     category: "music",
+    category_id: null,
     status: "active",
     notes: "",
   });
@@ -62,17 +64,41 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const { data: categories = [] } = useQuery({
+    queryKey: ["audio-categories"],
+    queryFn: () => listarCategoriasAudio(),
+  });
+
   useEffect(() => {
     if (track) {
       setForm({
         name: track.name || "",
         description: track.description || "",
         category: track.category || "music",
+        category_id: track.category_id || null,
         status: track.status || "active",
         notes: track.notes || "",
       });
     }
   }, [track]);
+
+  // Valor combinado do select: custom:<id> (categoria personalizada) ou
+  // default:<slug> (categoria padrão).
+  const selectedCategoryValue = form.category_id
+    ? `custom:${form.category_id}`
+    : `default:${form.category}`;
+
+  function handleCategoryChange(value) {
+    if (value.startsWith("custom:")) {
+      setForm((prev) => ({ ...prev, category_id: value.slice(7) }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        category: value.slice(8),
+        category_id: null,
+      }));
+    }
+  }
 
   function handleFile(e) {
     const f = e.target.files[0];
@@ -212,16 +238,27 @@ export default function AudioTrackFormModal({ track, onClose, onSaved }) {
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Categoria</Label>
               <Select
-                value={form.category}
-                onValueChange={(v) => setForm({ ...form, category: v })}
+                value={selectedCategoryValue}
+                onValueChange={handleCategoryChange}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(CATEGORY_LABELS).map(([v, l]) => (
-                    <SelectItem key={v} value={v}>{l}</SelectItem>
-                  ))}
+                  {categories
+                    .filter((c) => c.is_default)
+                    .map((c) => (
+                      <SelectItem key={c.slug} value={`default:${c.slug}`}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  {categories
+                    .filter((c) => !c.is_default)
+                    .map((c) => (
+                      <SelectItem key={c.id} value={`custom:${c.id}`}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

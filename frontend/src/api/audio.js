@@ -71,6 +71,27 @@ export const atualizarFaixa = (id, payload) =>
 export const deletarFaixa = (id) =>
   apiFetch(`/audio/tracks/${id}`, { method: "DELETE" });
 
+// ── Categorias de áudio (TASK 02) ───────────────────────────────────────────
+export const listarCategoriasAudio = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/audio/categories${qs ? `?${qs}` : ""}`);
+};
+
+export const criarCategoriaAudio = (payload) =>
+  apiFetch("/audio/categories/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const atualizarCategoriaAudio = (id, payload) =>
+  apiFetch(`/audio/categories/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const deletarCategoriaAudio = (id) =>
+  apiFetch(`/audio/categories/${id}`, { method: "DELETE" });
+
 // ── Playlists ──────────────────────────────────────────────────────────────
 export const listarPlaylistsAudio = (params = {}) => {
   const qs = new URLSearchParams(params).toString();

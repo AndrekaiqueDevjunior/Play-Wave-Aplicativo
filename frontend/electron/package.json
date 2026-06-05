@@ -2,30 +2,35 @@
   "name": "playwave-player-desktop",
   "version": "3.1.0",
   "description": "PlayWave Digital Signage Player — Desktop (Windows + Linux)",
-  "homepage":    "https://playwave.com.br",
-  "author":      "PlayWave <suporte@playwave.com.br>",
+  "homepage": "https://playwave.com.br",
+  "author": "PlayWave <suporte@playwave.com.br>",
   "main": "main.js",
   "scripts": {
-    "start":        "electron .",
-    "build:win":    "electron-builder --win",
-    "build:linux":  "electron-builder --linux",
-    "build:all":    "electron-builder --win --linux"
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development VITE_PLAYER_URL=http://localhost:3000/player electron .",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --linux"
   },
   "build": {
-    "appId":          "com.playwave.player",
-    "productName":    "PlayWave Player",
-    "copyright":      "Copyright © 2025 PlayWave",
+    "appId": "com.playwave.player",
+    "productName": "PlayWave Player",
+    "copyright": "Copyright © 2025 PlayWave",
     "directories": {
       "output": "dist-electron"
     },
     "files": [
       "main.js",
+      "preload.js",
+      "config.json"
+    ],
+    "asarUnpack": [
       "preload.js"
     ],
     "extraResources": [
       {
         "from": "../dist",
-        "to":   "dist"
+        "to": "dist"
       }
     ],
     "extraMetadata": {
@@ -33,8 +38,18 @@
     },
     "win": {
       "target": [
-        { "target": "nsis",     "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "../../frontend/public/icon.ico",
       "forceCodeSigning": false,
@@ -42,25 +57,43 @@
       "certificateSubjectName": null
     },
     "nsis": {
-      "oneClick":            false,
-      "allowElevation":      true,
+      "oneClick": false,
+      "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "runAfterFinish":      true
+      "runAfterFinish": true
     },
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64", "arm64"] },
-        { "target": "deb",      "arch": ["x64", "arm64"] },
-        { "target": "rpm",      "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "icon":       "../../frontend/public/icon.png",
-      "category":   "Utility",
+      "icon": "../../frontend/public/icon.png",
+      "category": "Utility",
       "maintainer": "PlayWave <suporte@playwave.com>"
     }
   },
   "devDependencies": {
-    "electron":          "^28.0.0",
-    "electron-builder":  "^24.0.0"
+    "cross-env": "^10.1.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
   }
 }

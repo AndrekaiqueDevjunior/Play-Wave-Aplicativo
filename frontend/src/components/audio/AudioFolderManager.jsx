@@ -36,8 +36,11 @@ import {
   Edit,
   Loader2,
   Music,
+  Settings,
 } from "lucide-react";
 import AudioTrackSelector from "./AudioTrackSelector";
+import useAudioCategories from "@/hooks/useAudioCategories";
+import AudioCategoryDrawer from "./AudioCategoryDrawer";
 
 const FOLDER_STATUS = {
   active: "Ativo",
@@ -57,6 +60,8 @@ export default function AudioFolderManager({
 }) {
   const [editingFolder, setEditingFolder] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
+  const { categories } = useAudioCategories();
 
   useEffect(() => {
     if (!open) {
@@ -73,6 +78,9 @@ export default function AudioFolderManager({
     is_active: true,
     starts_at: "",
     ends_at: "",
+    loop_enabled: true,
+    shuffle_enabled: false,
+    category_id: "",
   });
   const [selectedTracks, setSelectedTracks] = useState([]);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -89,6 +97,9 @@ export default function AudioFolderManager({
       is_active: true,
       starts_at: "",
       ends_at: "",
+      loop_enabled: true,
+      shuffle_enabled: false,
+      category_id: "",
     });
     setSelectedTracks([]);
   };
@@ -105,6 +116,9 @@ export default function AudioFolderManager({
       is_active: folder.is_active ?? true,
       starts_at: folder.starts_at ? folder.starts_at.slice(0, 10) : "",
       ends_at: folder.ends_at ? folder.ends_at.slice(0, 10) : "",
+      loop_enabled: folder.loop_enabled ?? true,
+      shuffle_enabled: folder.shuffle_enabled ?? false,
+      category_id: folder.category_id || "",
     });
     setSelectedTracks((folder.tracks || []).map((t) => t.track_id || t.id));
   };
@@ -321,6 +335,68 @@ export default function AudioFolderManager({
                   </Select>
                 </div>
 
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="folder-category">Categoria (opcional)</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCategoryDrawerOpen(true)}
+                      className="h-7 text-xs"
+                    >
+                      <Settings className="w-3 h-3 mr-1" />
+                      Gerenciar
+                    </Button>
+                  </div>
+                  <Select
+                    value={form.category_id}
+                    onValueChange={(v) =>
+                      setForm({ ...form, category_id: v })
+                    }
+                  >
+                    <SelectTrigger id="folder-category">
+                      <SelectValue placeholder="Selecione uma categoria" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Sem categoria</SelectItem>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat.slug || cat.id} value={cat.id || cat.slug}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-3 pt-4 border-t">
+                  <Label className="text-sm font-semibold">Modo de Reprodução</Label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="shuffle"
+                      checked={form.shuffle_enabled}
+                      onCheckedChange={(checked) =>
+                        setForm({ ...form, shuffle_enabled: checked })
+                      }
+                    />
+                    <Label htmlFor="shuffle" className="cursor-pointer text-sm">
+                      Embaralhado (aleatório)
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="loop"
+                      checked={form.loop_enabled}
+                      onCheckedChange={(checked) =>
+                        setForm({ ...form, loop_enabled: checked })
+                      }
+                    />
+                    <Label htmlFor="loop" className="cursor-pointer text-sm">
+                      Loop (repetir pasta)
+                    </Label>
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="is-active"
@@ -391,6 +467,9 @@ export default function AudioFolderManager({
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Drawer de categorias */}
+      <AudioCategoryDrawer open={categoryDrawerOpen} onOpenChange={setCategoryDrawerOpen} />
     </>
   );
 }

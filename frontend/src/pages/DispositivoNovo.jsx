@@ -48,7 +48,7 @@ export default function DispositivoNovo() {
     group: "",
     pairing_code: "",
     device_type: "tv",
-    os: "Web Player",
+    os: "web_player",
     audio_playlist_id: "",  // Adicionar campo que existe no schema backend
   });
   const [saving, setSaving] = useState(false);
@@ -161,11 +161,11 @@ export default function DispositivoNovo() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Web Player">Web Player</SelectItem>
-                    <SelectItem value="Android TV">Android TV</SelectItem>
-                    <SelectItem value="Windows">Windows</SelectItem>
-                    <SelectItem value="iOS">iOS</SelectItem>
-                    <SelectItem value="Linux">Linux</SelectItem>
+                    <SelectItem value="web_player">Web Player</SelectItem>
+                    <SelectItem value="android_tv">Android TV</SelectItem>
+                    <SelectItem value="windows">Windows</SelectItem>
+                    <SelectItem value="ios">iOS</SelectItem>
+                    <SelectItem value="linux">Linux</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -193,12 +193,12 @@ export default function DispositivoNovo() {
               <Input
                 placeholder="Ex: TV-4821"
                 value={form.pairing_code}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    pairing_code: e.target.value.toUpperCase(),
-                  })
-                }
+                onChange={(e) => {
+                  let code = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                  if (code.length > 6) code = code.slice(0, 6);
+                  if (code.length > 2) code = code.slice(0, 2) + "-" + code.slice(2);
+                  setForm({ ...form, pairing_code: code });
+                }}
                 className="font-mono text-lg tracking-widest"
                 required
               />

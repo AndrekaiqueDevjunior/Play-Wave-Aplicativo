@@ -46,6 +46,9 @@ from core.schemas_completos import (
     DeviceCommandCreate,
     DeviceCommandResponse,
     DeviceCreate,
+    DeviceDesktopExposureConfig,
+    DeviceDesktopExposureConfigResponse,
+    DeviceDesktopExposureConfigUpdate,
     DeviceOSDConfigUpdate,
     DevicePairingCodeCreate,
     DevicePairingEventResponse,
@@ -348,6 +351,12 @@ def _media_is_valid_for_player(media: Media, *, now: Optional[datetime] = None) 
         return False
     if media.ends_at and media.ends_at < now:
         return False
+
+    # TASK 17: Validar período de mídia (data, hora, dias da semana)
+    from services.media_period_validator import is_media_in_period
+    if not is_media_in_period(media, now=now):
+        return False
+
     return True
 
 
@@ -642,6 +651,7 @@ def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
             "campaign": None,
             "media": [],
             "audio_playlist": _build_audio_playlist(device, db),
+            "desktop_exposure_config": device.desktop_exposure_config,
         }
 
     audio_playlist = None
@@ -659,6 +669,7 @@ def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
         "campaign": _campaign_payload(campaign, device=device, tenant=tenant),
         "media": _build_media_payload(db, campaign=campaign, device=device, tenant=tenant),
         "audio_playlist": audio_playlist,
+        "desktop_exposure_config": device.desktop_exposure_config,
     }
 
 
@@ -928,6 +939,180 @@ def get_device_playlist(
     return response
 
 
+@router.get("/{device_id}/debug-playback")
+def debug_playback(
+    device_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Debug de playback (TASK 34): diagnóstico real-time do que DEVERIA tocar.
+
+    Mostra: campanha ativa, mídias válidas, mídias ignoradas (+ motivo),
+    playlist sonora ativa, spots elegíveis, versões de sincronização.
+
+    Acesso: admin ou operador do tenant do dispositivo.
+    """
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    now = datetime.utcnow()
+    campaign = _resolve_player_campaign(db, device=device)
+    campaign_media = []
+    campaign_media_ignored = []
+
+    # TASK 35: Log quando campanha é carregada
+    from core.event_logger import log_event, EventType, log_campaign_media_selected, log_campaign_media_ignored
+    if campaign:
+        log_event(
+            EventType.CAMPAIGN_LOADED,
+            device_id=str(device.id),
+            details={"campaign_id": str(campaign.id), "campaign_name": campaign.name},
+        )
+
+    if campaign:
+        entries = _resolve_playlist_entries(db, campaign=campaign)
+        media_ids = {media_id for _, media_id in entries}
+        media_items = db.query(Media).filter(Media.id.in_(media_ids)).all()
+        media_by_id = {str(m.id): m for m in media_items}
+
+        for item, media_id in entries:
+            media = media_by_id.get(media_id)
+            if not media:
+                campaign_media_ignored.append({"media_id": media_id, "reason": "not_found"})
+                continue
+            if not _media_is_valid_for_player(media, now=now):
+                # TASK 17: Diagnóstico de rejeição por período
+                from services.media_period_validator import get_media_availability_status
+
+                if media.status.value != "available":
+                    reason = f"status_{media.status.value}"
+                elif not media.is_active:
+                    reason = "inactive"
+                elif media.starts_at and media.starts_at > now:
+                    reason = "not_started"
+                elif media.ends_at and media.ends_at < now:
+                    reason = "expired"
+                else:
+                    # Rejeição por período (hora, dia da semana)
+                    reason = f"period_{get_media_availability_status(media, now=now)}"
+
+                # TASK 35: Log mídia ignorada
+                log_campaign_media_ignored(
+                    str(device.id),
+                    str(campaign.id),
+                    str(media.id),
+                    media.name,
+                    reason,
+                )
+                campaign_media_ignored.append({"media_id": str(media.id), "media_name": media.name, "reason": reason})
+                continue
+            if item and not _item_window_active(item, now=now):
+                if item.starts_at and item.starts_at > now:
+                    reason = "item_not_started"
+                elif item.ends_at and item.ends_at < now:
+                    reason = "item_expired"
+                else:
+                    reason = "item_inactive"
+                campaign_media_ignored.append({"media_id": str(media.id), "media_name": media.name, "reason": reason})
+                continue
+            # TASK 35: Log mídia selecionada
+            log_campaign_media_selected(
+                str(device.id),
+                str(campaign.id),
+                str(media.id),
+                media.name,
+            )
+            campaign_media.append({
+                "media_id": str(media.id),
+                "media_name": media.name,
+                "type": media.type.value if hasattr(media.type, "value") else media.type,
+                "file_url": media.file_url[:80] if media.file_url else None,
+            })
+
+    audio_playlist_detail = None
+    audio_folder_active = None
+    audio_spots = []
+
+    if campaign and campaign.audio_playlist_id:
+        playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
+    elif device.audio_playlist_id:
+        playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
+    else:
+        playlist = None
+
+    if playlist:
+        from services.audio_schedule_resolver import resolve_active_folder
+        from services.audio_spot_scheduler import get_eligible_spots
+
+        active_folder = resolve_active_folder(db, playlist_id=str(playlist.id), now=now)
+        audio_folder_active = {
+            "folder_id": str(active_folder.id),
+            "folder_name": active_folder.name,
+        } if active_folder else None
+
+        eligible = get_eligible_spots(db, playlist_id=str(playlist.id), now=now)
+        audio_spots = [
+            {
+                "spot_id": str(s[0].id),
+                "spot_name": s[0].name,
+                "interval_seconds": s[1].interval_seconds,
+                "priority": s[1].priority,
+                "insertion_policy": s[0].insertion_policy.value if hasattr(s[0].insertion_policy, "value") else s[0].insertion_policy,
+                "start_time": s[1].start_time,
+                "end_time": s[1].end_time,
+            }
+            for s in eligible
+        ]
+
+        # TASK 08: Adicionar próximo spot due para diagnosticar
+        next_spot_info = None
+        if eligible:
+            from services.audio_spot_scheduler import get_next_spot_time
+            next_spot_result = get_next_spot_time(db, playlist_id=str(playlist.id), now=now)
+            if next_spot_result:
+                spot_time, spot, schedule = next_spot_result
+                time_until = (spot_time - now).total_seconds()
+                next_spot_info = {
+                    "spot_id": str(spot.id),
+                    "spot_name": spot.name,
+                    "will_play_at": spot_time.isoformat(),
+                    "seconds_until_play": time_until,
+                    "interval_seconds": schedule.interval_seconds,
+                }
+
+        audio_playlist_detail = {
+            "playlist_id": str(playlist.id),
+            "playlist_name": playlist.name,
+            "active_folder": audio_folder_active,
+            "eligible_spots_count": len(audio_spots),
+            "next_spot_due": next_spot_info,
+        }
+
+    return {
+        "timestamp": now.isoformat(),
+        "device": {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "status": device.status.value if hasattr(device.status, "value") else device.status,
+            "config_version": device.config_version,
+        },
+        "campaign": {
+            "campaign_id": str(campaign.id) if campaign else None,
+            "campaign_name": campaign.name if campaign else None,
+            "config_version": campaign.config_version if campaign else None,
+            "media_valid": campaign_media,
+            "media_ignored": campaign_media_ignored,
+        },
+        "audio_playlist": audio_playlist_detail,
+        "audio_spots": audio_spots,
+        "info": "Se conteúdo não toca, procure em 'campaign.media_ignored' ou 'audio_playlist'",
+    }
+
+
 @router.get("/{device_id}", response_model=DeviceResponse)
 def get_device(
     *,
@@ -955,6 +1140,77 @@ def get_device(
     if current_user.role != "admin":
         response.device_token = None
     return response
+
+
+def _validate_desktop_exposure_config(
+    *,
+    enabled: bool,
+    interval_seconds: Optional[int],
+    duration_seconds: Optional[int],
+) -> None:
+    if not enabled:
+        return
+    if interval_seconds is None or duration_seconds is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="desktop exposure requires interval_seconds and duration_seconds when enabled",
+        )
+    if duration_seconds >= interval_seconds:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="duration_seconds must be less than interval_seconds",
+        )
+
+
+@router.patch("/{device_id}/desktop-exposure-config", response_model=DeviceDesktopExposureConfigResponse)
+def update_device_desktop_exposure_config(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    device_id: str,
+    body: DeviceDesktopExposureConfigUpdate,
+):
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Dispositivo não encontrado",
+        )
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Sem permissão para atualizar este dispositivo",
+        )
+
+    payload = body.model_dump(exclude_unset=True)
+    if "enabled" in payload:
+        device.desktop_exposure_enabled = payload["enabled"]
+    if "interval_seconds" in payload:
+        device.desktop_exposure_interval_seconds = payload["interval_seconds"]
+    if "duration_seconds" in payload:
+        device.desktop_exposure_duration_seconds = payload["duration_seconds"]
+    if "restore_fullscreen" in payload:
+        device.desktop_exposure_restore_fullscreen = payload["restore_fullscreen"]
+
+    self_enabled = bool(device.desktop_exposure_enabled)
+    _validate_desktop_exposure_config(
+        enabled=self_enabled,
+        interval_seconds=device.desktop_exposure_interval_seconds,
+        duration_seconds=device.desktop_exposure_duration_seconds,
+    )
+
+    device.desktop_exposure_updated_at = datetime.utcnow()
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+    _invalidate_device_playlist_cache(device_id=str(device.id))
+    _publish_device_playlist_invalidated(device, reason="device_desktop_exposure_config_updated")
+
+    return {
+        "id": str(device.id),
+        "desktop_exposure_config": device.desktop_exposure_config,
+    }
 
 
 @router.patch("/{device_id}/osd-config", response_model=DeviceResponse)
@@ -1661,6 +1917,9 @@ VALID_COMMANDS = {
     "refresh_playlist",
     "clear_cache",
     "reload_player",
+    "minimize_player",
+    "restore_player",
+    "show_desktop",
     "restart_app",
     "restart",
     "restart_device",
@@ -1671,6 +1930,23 @@ VALID_COMMANDS = {
     "mute",
     "unmute",
 }
+
+
+def _validate_device_command_payload(command_type: str, payload: Optional[dict]) -> None:
+    if command_type != "show_desktop":
+        return
+
+    duration = (payload or {}).get("duration_seconds", 10)
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="duration_seconds deve ser um numero entre 1 e 300.",
+        )
+    if duration < 1 or duration > 300:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="duration_seconds deve estar entre 1 e 300.",
+        )
 
 
 @router.get("/{device_id}/sessions", response_model=List[DeviceSessionResponse])
@@ -1718,6 +1994,8 @@ def send_device_command(
         )
 
     # SPEC 003 — comandos destrutivos exigem usuario identificado para auditoria.
+    _validate_device_command_payload(body.command_type, body.payload)
+
     if body.command_type in DESTRUCTIVE_COMMAND_TYPES and not getattr(current_user, "email", None):
         raise HTTPException(
             status_code=403,
@@ -2111,4 +2389,154 @@ def revoke_device_token(
         "ok": True,
         "token_version": device.token_version,
         "revoked_sessions_count": revoked_count,
+    }
+
+
+# ─── TASK 08: Debug de Spots ──────────────────────────────────────────────────
+
+@router.get("/{device_id}/debug-spots")
+def debug_device_spots(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Diagnostica problemas com spots não tocando.
+
+    Retorna:
+    - Todos os spots agendados na playlist do dispositivo
+    - Quais estão elegíveis agora
+    - Por que outros foram rejeitados
+    - Próximo spot que deve tocar
+
+    TASK 08: Logs estruturados para diagnosticar spots.
+    """
+    device = crud_device.get(db, id=device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
+
+    if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    now = datetime.utcnow()
+
+    # Obter playlist ativa do dispositivo
+    playlist = device.audio_playlist if device.audio_playlist_id else None
+
+    if not playlist:
+        return {
+            "timestamp": now.isoformat(),
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "error": "Dispositivo não tem playlist sonora configurada",
+        }
+
+    # Obter TODOS os agendamentos de spot (mesmo inativos)
+    all_schedules = (
+        db.query(AudioSpotSchedule)
+        .filter(AudioSpotSchedule.playlist_id == str(playlist.id))
+        .all()
+    )
+
+    spot_diagnostics = []
+
+    for schedule in all_schedules:
+        spot = db.query(AudioSpot).filter(AudioSpot.id == schedule.spot_id).first()
+        if not spot:
+            spot_diagnostics.append({
+                "schedule_id": str(schedule.id),
+                "status": "ERROR",
+                "reason": "Spot não encontrado",
+                "spot_id": str(schedule.spot_id),
+            })
+            continue
+
+        # Verificar por que está ou não elegível
+        from services.audio_spot_scheduler import get_eligible_spots
+
+        eligible_spots = get_eligible_spots(db, playlist_id=str(playlist.id), now=now)
+        is_eligible = any(s[0].id == spot.id for s in eligible_spots)
+
+        diagnosis = {
+            "spot_id": str(spot.id),
+            "spot_name": spot.name,
+            "schedule_id": str(schedule.id),
+            "is_schedule_active": schedule.is_active,
+            "is_spot_active": spot.status.value if hasattr(spot.status, "value") else spot.status,
+            "interval_seconds": schedule.interval_seconds,
+            "priority": schedule.priority,
+            "insertion_policy": spot.insertion_policy.value if hasattr(spot.insertion_policy, "value") else spot.insertion_policy,
+            "eligible_now": is_eligible,
+            "start_time": schedule.start_time,
+            "end_time": schedule.end_time,
+            "starts_at": schedule.starts_at.isoformat() if schedule.starts_at else None,
+            "ends_at": schedule.ends_at.isoformat() if schedule.ends_at else None,
+        }
+
+        # Diagnosticar por que não é elegível
+        if not is_eligible:
+            reasons = []
+
+            if not schedule.is_active:
+                reasons.append("Agendamento inativo")
+
+            if spot.status.value != "active" if hasattr(spot.status, "value") else spot.status != "active":
+                reasons.append(f"Spot inativo ({spot.status})")
+
+            # Verificar tempo
+            current_time = now.time()
+            current_date = now.date()
+
+            if schedule.start_time or schedule.end_time:
+                from services.audio_spot_scheduler import parse_time_str
+                start_t = parse_time_str(schedule.start_time) if schedule.start_time else None
+                end_t = parse_time_str(schedule.end_time) if schedule.end_time else None
+
+                if start_t and current_time < start_t:
+                    reasons.append(f"Antes do horário ({schedule.start_time})")
+                elif end_t and current_time >= end_t:
+                    reasons.append(f"Depois do horário ({schedule.end_time})")
+
+            # Verificar período
+            if schedule.starts_at and current_date < schedule.starts_at.date():
+                reasons.append(f"Ainda não começou (inicia em {schedule.starts_at.date()})")
+            elif schedule.ends_at and current_date > schedule.ends_at.date():
+                reasons.append(f"Já terminou (terminou em {schedule.ends_at.date()})")
+
+            diagnosis["why_not_eligible"] = reasons if reasons else ["Razão desconhecida"]
+
+        spot_diagnostics.append(diagnosis)
+
+    # Próximo spot que deve tocar
+    from services.audio_spot_scheduler import get_next_spot_time
+    next_spot_result = get_next_spot_time(db, playlist_id=str(playlist.id), now=now)
+
+    next_spot_info = None
+    if next_spot_result:
+        spot_time, spot, schedule = next_spot_result
+        time_until = (spot_time - now).total_seconds()
+        next_spot_info = {
+            "spot_id": str(spot.id),
+            "spot_name": spot.name,
+            "will_play_at": spot_time.isoformat(),
+            "seconds_until_play": time_until,
+            "interval_seconds": schedule.interval_seconds,
+            "priority": schedule.priority,
+        }
+
+    return {
+        "timestamp": now.isoformat(),
+        "device": {
+            "device_id": str(device.id),
+            "device_name": device.name,
+        },
+        "playlist": {
+            "playlist_id": str(playlist.id),
+            "playlist_name": playlist.name,
+        },
+        "total_spot_schedules": len(all_schedules),
+        "eligible_now_count": sum(1 for d in spot_diagnostics if d.get("eligible_now")),
+        "spot_diagnostics": spot_diagnostics,
+        "next_spot_due": next_spot_info,
+        "info": "Use para diagnosticar por que spots não tocam. Procure 'eligible_now': false com 'why_not_eligible'",
     }

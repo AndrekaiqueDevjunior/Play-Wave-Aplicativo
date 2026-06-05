@@ -31,6 +31,20 @@ Objetivo: consolidar auditoria e plano tecnico das melhorias solicitadas, reapro
 - [ ] Implementar Fase D: radio indoor v2 frontend.
 - [ ] Implementar Fase E: audio manager do player.
 
+## SPEC-009 - Minimizacao Programada do Player
+
+Objetivo: permitir comandos remotos e rotina cronometrada para minimizar/restaurar o Player Electron e expor a area de trabalho por tempo configuravel.
+
+**Detalhamento em `docs/specs/009-minimizacao-programada-player/`.**
+
+- [x] Auditoria de estado atual backend/frontend/player.
+- [x] Definicao de dominio principal: dispositivos/player behavior.
+- [x] SPEC tecnica criada com requisitos, design, banco, API, frontend, player, tasks e testes.
+- [ ] PR 1: comandos manuais `minimize_player`, `restore_player`, `show_desktop`.
+- [ ] PR 2: configuracao persistente por dispositivo.
+- [ ] PR 3: cronometro frontend e scheduler local no Player.
+- [ ] PR 4: hardening, docs e rollout.
+
 ## SPEC-001 — Midias Inteligentes
 
 Objetivo: midia com duracao real, periodo de exibicao, versionamento e substituicao segura de arquivo.

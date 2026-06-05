@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    setupFiles: "src/test.setup.js",
   },
   plugins: [react()],
   resolve: {
@@ -15,6 +16,6 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    strictPort: true,
+    strictPort: false,
   },
 });

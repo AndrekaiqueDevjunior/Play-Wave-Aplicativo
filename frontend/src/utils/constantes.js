@@ -72,4 +72,4 @@ export const CATEGORIAS_AUDIO = {
 
 export const HEARTBEAT_INTERVALO_MS = 30_000;
 export const POLL_PAREAMENTO_MS = 3_000;
-export const PLAYER_VERSION = "3.0.0";
+export const PLAYER_VERSION = "3.1.0";

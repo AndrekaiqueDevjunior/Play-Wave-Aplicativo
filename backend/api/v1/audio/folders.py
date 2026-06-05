@@ -71,6 +71,7 @@ def list_audio_folders(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     status: Optional[AudioFolderStatusEnum] = Query(None),
+    category_id: Optional[str] = Query(None),
     tenant_id: Optional[str] = Query(None),
 ):
     query = db.query(AudioFolder)
@@ -83,6 +84,8 @@ def list_audio_folders(
         query = query.filter(AudioFolder.tenant_id == effective_tenant_id)
     if status:
         query = query.filter(AudioFolder.status == status.value)
+    if category_id:
+        query = query.filter(AudioFolder.category_id == category_id)
     if search:
         like = f"%{search}%"
         query = query.filter(

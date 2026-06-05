@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { assetUrl } from "@/utils/mediaUtils";
+import PlaybackQueueManager from "@/player-core/playbackQueueManager";
 
 const FADE_INTERVAL_MS = 25;
 
@@ -61,6 +62,7 @@ export default function AudioPlayer({
   const fadeIdRef = useRef(null);  // SPEC 005: cancelar fade anterior
   const trackChangeDebounceRef = useRef(null);
   const lastReportedTrackIdRef = useRef(null);
+  const queueManagerRef = useRef(null);  // TASK 06: gerenciar fila com shuffle/loop
 
   // ── 1. Cria o elemento <audio> UMA vez, nunca o recria ──────────────────
   useEffect(() => {
@@ -90,6 +92,14 @@ export default function AudioPlayer({
 
     if (samePlaylist) {
       console.log("[AudioPlayer] playlist unchanged, skipping reset");
+      // Mas atualizar opções de playback se mudaram
+      if (queueManagerRef.current) {
+        queueManagerRef.current.updateOptions({
+          shuffle_enabled: audioPlaylist?.shuffle_enabled ?? false,
+          loop_enabled: audioPlaylist?.loop_enabled ?? true,
+          playback_mode: audioPlaylist?.playback_mode ?? 'sequential',
+        });
+      }
       return;
     }
 
@@ -100,14 +110,32 @@ export default function AudioPlayer({
       console.log("[AudioPlayer] empty playlist, pausing");
       audioRef.current?.pause();
       lastReportedTrackIdRef.current = null;
+      queueManagerRef.current = null;
       onTrackChange?.(null);
       return;
     }
 
-    // Só reseta índice se for playlist diferente
-    console.log("[AudioPlayer] resetting to track 0");
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
+    // TASK 06: Inicializar QueueManager com opções de playback
+    queueManagerRef.current = new PlaybackQueueManager(tracks, {
+      shuffle_enabled: audioPlaylist?.shuffle_enabled ?? false,
+      loop_enabled: audioPlaylist?.loop_enabled ?? true,
+      playback_mode: audioPlaylist?.playback_mode ?? 'sequential',
+    });
+
+    console.log("[AudioPlayer] QueueManager initialized", queueManagerRef.current.getQueueInfo());
+
+    // Obter primeira faixa do queue
+    const firstTrack = queueManagerRef.current.getNext();
+    if (firstTrack && tracksRef.current.some(t => t.id === firstTrack.id)) {
+      const idx = tracksRef.current.findIndex(t => t.id === firstTrack.id);
+      console.log("[AudioPlayer] starting from track index:", idx);
+      setCurrentIndex(idx);
+      currentIndexRef.current = idx;
+    } else {
+      console.log("[AudioPlayer] resetting to track 0");
+      setCurrentIndex(0);
+      currentIndexRef.current = 0;
+    }
   }, [audioPlaylist?.id]);
 
   // ── SPEC 006: reporta faixa atual com debounce ─────────────────────────
@@ -155,6 +183,21 @@ export default function AudioPlayer({
     console.warn("[AudioPlayer] error on track", currentIndexRef.current);
     const tracks = tracksRef.current;
     if (!tracks.length) return;
+
+    // TASK 06: Usar QueueManager para obter próxima faixa
+    if (queueManagerRef.current) {
+      const nextTrack = queueManagerRef.current.skipToNext();
+      if (nextTrack) {
+        const nextIndex = tracks.findIndex(t => t.id === nextTrack.id);
+        if (nextIndex >= 0) {
+          currentIndexRef.current = nextIndex;
+          setCurrentIndex(nextIndex);
+          return;
+        }
+      }
+    }
+
+    // Fallback para comportamento legado
     const next = currentIndexRef.current + 1;
     if (next < tracks.length) {
       currentIndexRef.current = next;
@@ -169,6 +212,25 @@ export default function AudioPlayer({
     console.log("[AudioPlayer] track ended:", currentIndexRef.current);
     const tracks = tracksRef.current;
     if (!tracks.length) return;
+
+    // TASK 06: Usar QueueManager para obter próxima faixa
+    if (queueManagerRef.current) {
+      const nextTrack = queueManagerRef.current.skipToNext();
+      if (nextTrack) {
+        const nextIndex = tracks.findIndex(t => t.id === nextTrack.id);
+        if (nextIndex >= 0) {
+          currentIndexRef.current = nextIndex;
+          setCurrentIndex(nextIndex);
+          return;
+        }
+      } else {
+        // Fila terminou e não tem loop
+        console.log("[AudioPlayer] queue finished, no loop");
+        return;
+      }
+    }
+
+    // Fallback para comportamento legado se não houver QueueManager
     const next = currentIndexRef.current + 1;
     if (next < tracks.length) {
       currentIndexRef.current = next;

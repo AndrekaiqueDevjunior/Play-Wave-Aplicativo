@@ -7,7 +7,7 @@ from .media import router as media_router
 from .users import router as users_router
 from .locations import router as locations_router
 from .user_logs import router as user_logs_router
-from .audio import tracks_router, playlists_router, audio_devices_router, audio_folders_router, spots_router, audio_events_router
+from .audio import tracks_router, categories_router, playlists_router, audio_devices_router, audio_folders_router, spots_router, audio_events_router
 from .dashboard import router as dashboard_router
 from .reports import router as reports_router
 from .schedule import router as schedule_router
@@ -24,6 +24,7 @@ __all__ = [
     "locations_router",
     "user_logs_router",
     "tracks_router",
+    "categories_router",
     "playlists_router",
     "audio_devices_router",
     "audio_folders_router",

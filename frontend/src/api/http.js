@@ -9,10 +9,16 @@
  * O token de device pode ser passado via options.deviceToken.
  */
 
-const BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+let BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
+// Se rodando no Electron, usar a URL exposta pelo preload
+if (typeof window !== "undefined" && window.__ELECTRON__?.backendUrl) {
+  BASE_URL = window.__ELECTRON__.backendUrl;
+  console.log("[api] Usando URL do Electron:", BASE_URL);
+}
 
 export const isApiConfigurada = () => true; // sempre true: BASE_URL vazio = URL relativa
-export const getBaseUrl       = () => BASE_URL;
+export const getBaseUrl = () => BASE_URL;
 
 // SPEC 004 — chave do localStorage onde o player guarda token_version.
 // Inline aqui para evitar dependência circular com player-core/storage.js.
@@ -33,7 +39,9 @@ function getDeviceTokenVersion() {
 const TOKEN_KEY = "pw_access_token";
 
 function getStoredJwt() {
-  return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? null;
+  return (
+    sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? null
+  );
 }
 
 function clearStoredSession() {
@@ -88,13 +96,12 @@ export async function apiFetch(path, options = {}) {
   // SPEC 004 — quando a chamada é do player (deviceTok presente), envia
   // também a versão atual do token. Backend valida via get_device_by_token.
   // Permite override via fetchOptions.headers.
-  const deviceTokenVersion =
-    deviceTok ? getDeviceTokenVersion() : null;
+  const deviceTokenVersion = deviceTok ? getDeviceTokenVersion() : null;
 
   const headers = {
     "Content-Type": "application/json",
-    ...(jwt       ? { Authorization: `Bearer ${jwt}` }  : {}),
-    ...(deviceTok ? { "X-Device-Token": deviceTok }     : {}),
+    ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    ...(deviceTok ? { "X-Device-Token": deviceTok } : {}),
     ...(deviceTokenVersion != null
       ? { "X-Device-Token-Version": String(deviceTokenVersion) }
       : {}),
@@ -112,7 +119,8 @@ export async function apiFetch(path, options = {}) {
       const body = await cloned.json();
       // FastAPI HTTPException com dict no detail vira { detail: {error_code, ...} };
       // se já vem flat, lê direto.
-      const inner = body?.detail && typeof body.detail === "object" ? body.detail : body;
+      const inner =
+        body?.detail && typeof body.detail === "object" ? body.detail : body;
       errorCode = inner?.error_code ?? body?.error_code ?? null;
     } catch {
       /* body não-JSON, ignora */
@@ -137,6 +145,12 @@ export async function apiFetch(path, options = {}) {
   if (res.status === 401 && redirectOnUnauthorized) {
     clearStoredSession();
     window.dispatchEvent(new CustomEvent("pw:session-expired"));
+    try {
+      // Some test environments mock window.location; assign where possible.
+      window.location.href = "/login";
+    } catch (err) {
+      /* ignore */
+    }
     return null;
   }
 
@@ -151,7 +165,11 @@ export async function apiFetch(path, options = {}) {
           : body.detail || body.message;
       detail = parseErrorDetail(rawDetail) || detail;
     } catch {
-      try { detail = (await res.text()) || detail; } catch { /* ignore */ }
+      try {
+        detail = (await res.text()) || detail;
+      } catch {
+        /* ignore */
+      }
     }
     throw new Error(detail);
   }
@@ -167,7 +185,12 @@ export const verificarSaude = () => apiFetch("/health", { noAuth: true });
 export async function apiUpload(path, formData, options = {}) {
   // BASE_URL vazio = URL relativa
 
-  const { adminToken, noAuth, headers: customHeaders, ...fetchOptions } = options;
+  const {
+    adminToken,
+    noAuth,
+    headers: customHeaders,
+    ...fetchOptions
+  } = options;
   const jwt = adminToken ?? (!noAuth ? getStoredJwt() : null);
   const headers = {
     ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
@@ -184,6 +207,11 @@ export async function apiUpload(path, formData, options = {}) {
   if (res.status === 401) {
     clearStoredSession();
     window.dispatchEvent(new CustomEvent("pw:session-expired"));
+    try {
+      window.location.href = "/login";
+    } catch (err) {
+      /* ignore */
+    }
     return null;
   }
 
@@ -193,7 +221,11 @@ export async function apiUpload(path, formData, options = {}) {
       const body = await res.json();
       detail = parseErrorDetail(body.detail || body.message) || detail;
     } catch {
-      try { detail = (await res.text()) || detail; } catch { /* ignore */ }
+      try {
+        detail = (await res.text()) || detail;
+      } catch {
+        /* ignore */
+      }
     }
     throw new Error(detail);
   }

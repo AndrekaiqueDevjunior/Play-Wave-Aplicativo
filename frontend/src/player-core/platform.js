@@ -47,7 +47,12 @@ if (typeof window !== "undefined" && !window.PlayWaveNative) {
 }
 
 export const Platform = {
-  isElectron: typeof window !== "undefined" && !!window.__ELECTRON__,
+  get isElectron() {
+    if (typeof window === "undefined") return false;
+    if (window.__ELECTRON__) return true;
+    // Fallback: Electron injeta "Electron/X.Y.Z" no userAgent
+    return /Electron\//.test(navigator.userAgent);
+  },
 
   isCapacitor:
     typeof window !== "undefined" &&

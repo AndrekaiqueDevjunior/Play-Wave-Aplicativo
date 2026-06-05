@@ -8,6 +8,7 @@ from .crud_campaign import crud_campaign
 from .crud_media import crud_media
 from .crud_location import crud_location
 from .crud_audio_track import crud_audio_track
+from .crud_audio_category import crud_audio_category
 from .crud_audio_playlist import crud_audio_playlist
 from .crud_audio_playlist_item import crud_audio_playlist_item
 from .crud_audio_playlist_folder_schedule import crud_audio_playlist_folder_schedule
@@ -34,6 +35,7 @@ __all__ = [
     "crud_media",
     "crud_location",
     "crud_audio_track",
+    "crud_audio_category",
     "crud_audio_playlist",
     "crud_audio_playlist_item",
     "crud_audio_playlist_folder_schedule",

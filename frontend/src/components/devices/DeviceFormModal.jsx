@@ -36,7 +36,7 @@ const DEFAULT_FORM = {
   device_type: "tv",
   location: "",
   group: "",
-  os: "Web Player",
+  os: "web_player",
   notes: "",
   audio_playlist_id: "",
   audio_volume: 0.7,
@@ -151,11 +151,11 @@ export default function DeviceFormModal({ open, onClose, onSave, device }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Web Player">Web Player</SelectItem>
-                  <SelectItem value="Android TV">Android TV</SelectItem>
-                  <SelectItem value="Windows">Windows</SelectItem>
-                  <SelectItem value="iOS">iOS</SelectItem>
-                  <SelectItem value="Linux">Linux</SelectItem>
+                  <SelectItem value="web_player">Web Player</SelectItem>
+                  <SelectItem value="android_tv">Android TV</SelectItem>
+                  <SelectItem value="windows">Windows</SelectItem>
+                  <SelectItem value="ios">iOS</SelectItem>
+                  <SelectItem value="linux">Linux</SelectItem>
                 </SelectContent>
               </Select>
             </div>

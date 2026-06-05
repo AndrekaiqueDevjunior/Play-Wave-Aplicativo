@@ -53,6 +53,9 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # O .env carrega chaves informativas (ex.: URL_HOST) usadas por outras
+        # ferramentas; ignorar extras evita quebrar o boot por variáveis desconhecidas.
+        extra = "ignore"
 
 
 settings = Settings()

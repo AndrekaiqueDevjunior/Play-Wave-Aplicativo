@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listarFaixas, atualizarFaixa } from "@/api/audio";
+import { listarFaixas, atualizarFaixa, listarCategoriasAudio } from "@/api/audio";
 import { assetUrl } from "@/utils/mediaUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,9 +26,11 @@ import {
   CheckSquare,
   Square,
   X,
+  Tag,
 } from "lucide-react";
 import AudioTrackFormModal from "@/components/audio/AudioTrackFormModal";
 import AudioMultipleUploadModal from "@/components/audio/AudioMultipleUploadModal";
+import CategoryDrawer from "@/components/audio/CategoryDrawer";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import StatusBadge from "@/components/shared/StatusBadge";
 
@@ -60,6 +62,7 @@ export default function FaixasAudio() {
   const [filterCategory, setFilterCategory] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
   const [multipleUploadOpen, setMultipleUploadOpen] = useState(false);
+  const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
@@ -73,6 +76,27 @@ export default function FaixasAudio() {
     queryKey: ["audio-tracks"],
     queryFn: () => listarFaixas(),
   });
+
+  const { data: categories = [] } = useQuery({
+    queryKey: ["audio-categories"],
+    queryFn: () => listarCategoriasAudio(),
+  });
+
+  // Mapa id->nome das categorias personalizadas para exibir no badge da faixa.
+  const customCategoryName = React.useMemo(() => {
+    const map = {};
+    categories.forEach((c) => {
+      if (!c.is_default && c.id) map[c.id] = c.name;
+    });
+    return map;
+  }, [categories]);
+
+  function trackCategoryLabel(track) {
+    if (track.category_id && customCategoryName[track.category_id]) {
+      return customCategoryName[track.category_id];
+    }
+    return categoryLabels[track.category] || track.category;
+  }
 
   const deleteMutation = useMutation({
     mutationFn: (id) => atualizarFaixa(id, { status: "archived" }),
@@ -115,7 +139,13 @@ export default function FaixasAudio() {
 
   const filtered = tracks.filter((t) => {
     if (filterStatus !== "all" && t.status !== filterStatus) return false;
-    if (filterCategory !== "all" && t.category !== filterCategory) return false;
+    if (filterCategory !== "all") {
+      if (filterCategory.startsWith("custom:")) {
+        if (t.category_id !== filterCategory.slice(7)) return false;
+      } else if (filterCategory.startsWith("default:")) {
+        if (t.category !== filterCategory.slice(8)) return false;
+      }
+    }
     if (search && !t.name.toLowerCase().includes(search.toLowerCase()))
       return false;
     return true;
@@ -290,13 +320,26 @@ export default function FaixasAudio() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas</SelectItem>
-            {Object.entries(categoryLabels).map(([v, l]) => (
-              <SelectItem key={v} value={v}>
-                {l}
-              </SelectItem>
-            ))}
+            {categories
+              .filter((c) => c.is_default)
+              .map((c) => (
+                <SelectItem key={c.slug} value={`default:${c.slug}`}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            {categories
+              .filter((c) => !c.is_default)
+              .map((c) => (
+                <SelectItem key={c.id} value={`custom:${c.id}`}>
+                  {c.name}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
+        <Button variant="outline" onClick={() => setCategoryDrawerOpen(true)}>
+          <Tag className="w-4 h-4 mr-2" />
+          Categorias
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -383,7 +426,7 @@ export default function FaixasAudio() {
                       {track.name}
                     </span>
                     <Badge variant="outline" className="text-xs">
-                      {categoryLabels[track.category] || track.category}
+                      {trackCategoryLabel(track)}
                     </Badge>
                     <StatusBadge status={track.status} />
                   </div>
@@ -447,6 +490,10 @@ export default function FaixasAudio() {
           }}
         />
       )}
+      <CategoryDrawer
+        open={categoryDrawerOpen}
+        onOpenChange={setCategoryDrawerOpen}
+      />
       {deleteTarget && (
         <ConfirmDialog
           title="Arquivar faixa"

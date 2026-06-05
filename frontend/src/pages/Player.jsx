@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   isApiConfigured,
   pairRequest,
@@ -22,14 +28,39 @@ import MediaRenderer from "@/components/player/MediaRenderer";
 import PlayerOSD from "@/components/player/PlayerOSD";
 import { assetUrl } from "@/utils/mediaUtils";
 import { isMediaCurrentlyPlayable } from "@/utils/mediaSchedule";
-import { PairingStorage, PlaylistCache } from "@/player-core/storage";
-import { executeCommand, DESTRUCTIVE_COMMANDS } from "@/player-core/commands";
+import { PairingStorage, PlaylistCache, PlayerState } from "@/player-core/storage";
+import { executeCommand } from "@/player-core/commands";
+import { createCommandPoller } from "@/player-core/commandPoller";
 import { onForceRepair } from "@/player-core/repair";
-import Platform, { acquireWakeLock, releaseWakeLock } from "@/player-core/platform";
-import { startWatchdog, stopWatchdog, notifyHeartbeatOk, useOnlineStatus } from "@/player-core/network";
+import { createWindowExposureScheduler } from "@/player-core/windowExposureScheduler";
+import { createDesktopExposureTimeScheduler } from "@/player-core/desktopExposureTimeScheduler";
+import Platform, {
+  acquireWakeLock,
+  releaseWakeLock,
+} from "@/player-core/platform";
+import {
+  startWatchdog,
+  stopWatchdog,
+  notifyHeartbeatOk,
+  useOnlineStatus,
+} from "@/player-core/network";
 import { useAudioConflictResolver } from "@/hooks/useAudioConflictResolver";
-import { createAudioManager, AUDIO_STATE, AUDIO_MODE } from "@/lib/audioManager";
+import {
+  createAudioManager,
+  AUDIO_STATE,
+  AUDIO_MODE,
+} from "@/lib/audioManager";
 import { logTrackStarted, logTrackEnded } from "@/lib/playbackEventLogger";
+import ConfigVersionMonitor from "@/player-core/configVersionMonitor";
+import SmartPlaylistUpdater from "@/player-core/smartPlaylistUpdater";
+import PlaylistCacheManager from "@/player-core/playlistCacheManager";
+import CacheCommandHandler from "@/player-core/cacheCommandHandler";
+import { apiFetch } from "@/api/http";
+
+const apiClient = {
+  get: (path, opts) => apiFetch(path, { method: "GET", ...opts }),
+  post: (path, body, opts) => apiFetch(path, { method: "POST", body: JSON.stringify(body), ...opts }),
+};
 
 const HEARTBEAT_INTERVAL = 30_000;
 const POLL_PAIRING_INTERVAL = 3_000;
@@ -41,14 +72,20 @@ function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return (
     "TV-" +
-    Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
+    Array.from(
+      { length: 4 },
+      () => chars[Math.floor(Math.random() * chars.length)],
+    ).join("")
   );
 }
 
 function getDebugMode() {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
-  return params.get("debug") === "true" || localStorage.getItem("pw_player_debug") === "true";
+  return (
+    params.get("debug") === "true" ||
+    localStorage.getItem("pw_player_debug") === "true"
+  );
 }
 
 function mediaVersionToken(media) {
@@ -62,7 +99,8 @@ function withMediaVersion(url, media) {
   try {
     const parsed = new URL(url, window.location.origin);
     parsed.searchParams.set("v", String(media.file_version || 1));
-    if (media.file_hash) parsed.searchParams.set("h", String(media.file_hash).slice(0, 12));
+    if (media.file_hash)
+      parsed.searchParams.set("h", String(media.file_hash).slice(0, 12));
     return parsed.toString();
   } catch {
     const sep = url.includes("?") ? "&" : "?";
@@ -70,10 +108,11 @@ function withMediaVersion(url, media) {
   }
 }
 
-
 function normalizePlaylistMedia(media) {
   const absoluteUrl = assetUrl(media.file_url);
-  const absoluteThumb = media.thumbnail_url ? assetUrl(media.thumbnail_url) : media.thumbnail_url;
+  const absoluteThumb = media.thumbnail_url
+    ? assetUrl(media.thumbnail_url)
+    : media.thumbnail_url;
   return {
     ...media,
     id: media.id || media.media_id,
@@ -88,21 +127,33 @@ function PlayerDebugOverlay({ data }) {
   const rows = [
     ["device", data.deviceId || "-"],
     ["pairing", data.pairingCode || "-"],
-    ["platform", `${data.platform} / capacitor=${data.isCapacitor ? "yes" : "no"}`],
+    [
+      "platform",
+      `${data.platform} / capacitor=${data.isCapacitor ? "yes" : "no"}`,
+    ],
     ["phase", data.phase],
     ["online", String(data.isOnline)],
     ["campaign", data.campaignId || "-"],
     ["index", `${data.currentIndex + 1}/${data.totalItems}`],
-    ["loops", data.schedule?.loopCount
-      ? `${data.loopsCompleted}/${data.schedule.loopCount}`
-      : `${data.loopsCompleted}/∞`],
+    [
+      "loops",
+      data.schedule?.loopCount
+        ? `${data.loopsCompleted}/${data.schedule.loopCount}`
+        : `${data.loopsCompleted}/∞`,
+    ],
     ["stopAt", data.schedule?.endDate || data.schedule?.scheduleEndTime || "-"],
     ["media", data.media ? `${data.media.type} - ${data.media.name}` : "-"],
     ["url", data.media?.file_url || "-"],
-    ["next", data.nextMedia ? `${data.nextMedia.type} - ${data.nextMedia.name}` : "-"],
+    [
+      "next",
+      data.nextMedia ? `${data.nextMedia.type} - ${data.nextMedia.name}` : "-",
+    ],
     ["lastSync", data.lastSync || "-"],
     ["videoEvent", data.video?.event || "-"],
-    ["ready/network", `${data.video?.readyState ?? "-"} / ${data.video?.networkState ?? "-"}`],
+    [
+      "ready/network",
+      `${data.video?.readyState ?? "-"} / ${data.video?.networkState ?? "-"}`,
+    ],
     ["play", data.video?.paused === false ? "playing" : "not playing"],
     ["videoError", data.video?.error?.name || data.lastError?.event || "-"],
   ];
@@ -111,7 +162,10 @@ function PlayerDebugOverlay({ data }) {
     <div className="fixed left-2 top-2 z-50 max-w-[92vw] w-[460px] rounded bg-black/80 p-3 text-[11px] leading-snug text-lime-100 font-mono pointer-events-none">
       <div className="mb-1 text-white font-semibold">PLAYWAVE DEBUG</div>
       {rows.map(([key, value]) => (
-        <div key={key} className="grid grid-cols-[90px_1fr] gap-2 border-t border-white/10 py-0.5">
+        <div
+          key={key}
+          className="grid grid-cols-[90px_1fr] gap-2 border-t border-white/10 py-0.5"
+        >
           <span className="text-white/50">{key}</span>
           <span className="truncate">{String(value)}</span>
         </div>
@@ -126,17 +180,19 @@ export default function Player() {
   const debugMode = useMemo(getDebugMode, []);
 
   // Generate or reuse pairing code (setter usado em renovação por expiração ou forceRepair)
-  const [pairingCode, setPairingCode] = useState(() => saved.code || generateCode());
-
-  // If we already have device credentials, start in "loading" to skip pairing
-  const [phase, setPhase] = useState(
-    () => (saved.id && saved.token ? "loading" : "waiting"),
+  const [pairingCode, setPairingCode] = useState(
+    () => saved.code || generateCode(),
   );
 
-  const [deviceId,    setDeviceId]    = useState(saved.id);
+  // If we already have device credentials, start in "loading" to skip pairing
+  const [phase, setPhase] = useState(() =>
+    saved.id && saved.token ? "loading" : "waiting",
+  );
+
+  const [deviceId, setDeviceId] = useState(saved.id);
   const [deviceToken, setDeviceToken] = useState(saved.token);
-  const [deviceName,  setDeviceName]  = useState("");
-  const [playlist,    setPlaylist]    = useState([]);
+  const [deviceName, setDeviceName] = useState("");
+  const [playlist, setPlaylist] = useState([]);
   const [audioPlaylist, setAudioPlaylist] = useState(null);
   const [osdConfig, setOsdConfig] = useState({
     show_current_audio: true,
@@ -145,20 +201,30 @@ export default function Player() {
     opacity: 0.6,
     font_size: "medium",
   });
+  const [desktopExposureConfig, setDesktopExposureConfig] = useState({
+    enabled: false,
+    interval_seconds: 10,
+    duration_seconds: 10,
+    restore_fullscreen: true,
+  });
+  // SPEC 010 — eventos de exposição de desktop por horário do dia.
+  const [desktopExposureEvents, setDesktopExposureEvents] = useState([]);
   const [currentAudioTrack, setCurrentAudioTrack] = useState(null);
   const [campaignId, setCampaignId] = useState(null);
   const [campaignConfigVersion, setCampaignConfigVersion] = useState(null);
-  const [campaign, setCampaign] = useState(null);  // SPEC 005: objeto campanha completo
+  const [campaign, setCampaign] = useState(null); // SPEC 005: objeto campanha completo
   const [videoMuted, setVideoMuted] = useState(true); // legado — mantido para compat SSE
-  const [audioManagerCurrent, setAudioManagerCurrent] = useState(AUDIO_STATE.SILENT);
+  const [audioManagerCurrent, setAudioManagerCurrent] = useState(
+    AUDIO_STATE.SILENT,
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [progress,   setProgress]    = useState(0);
-  const [viewsCount, setViewsCount]  = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [viewsCount, setViewsCount] = useState(0);
   // Critérios de parada da campanha — preenchidos pelo /playlist
   // schedule: { endDate?: ISO, scheduleEndTime?: "HH:MM", loopCount?: number }
   const [campaignSchedule, setCampaignSchedule] = useState(null);
   const [loopsCompleted, setLoopsCompleted] = useState(0);
-  const [apiStatus,  setApiStatus]   = useState(
+  const [apiStatus, setApiStatus] = useState(
     isApiConfigured() ? "connecting" : "no_api",
   );
   const [videoDebug, setVideoDebug] = useState(null);
@@ -168,29 +234,67 @@ export default function Player() {
   // na tela de pareamento.
   const [forceRepairReason, setForceRepairReason] = useState(null);
 
-  const pollPairRef      = useRef(null);
-  const pollPlaylistRef  = useRef(null);
-  const pollCommandsRef  = useRef(null);
-  const heartbeatRef     = useRef(null);
-  const progressRef      = useRef(null);
-  const startTimeRef     = useRef(null);
-  const deviceTokenRef   = useRef(deviceToken);
-  const sseRef           = useRef(null);
+  const pollPairRef = useRef(null);
+  const pollPlaylistRef = useRef(null);
+  const pollCommandsTimerRef = useRef(null);
+  const heartbeatRef = useRef(null);
+  const progressRef = useRef(null);
+  const startTimeRef = useRef(null);
+  const desktopExposureSchedulerRef = useRef(null);
+  const desktopExposureTimeSchedulerRef = useRef(null);
+  const deviceTokenRef = useRef(deviceToken);
+  const sseRef = useRef(null);
   const failedMediaIdsRef = useRef(new Set());
   const trackStartedAtRef = useRef(null);
-  const audioManagerRef  = useRef(null);
-  const deviceIdRef      = useRef(deviceId);
+  const audioManagerRef = useRef(null);
+  const deviceIdRef = useRef(deviceId);
   const audioPlaylistIdRef = useRef(null);
   const prevAudioTrackRef = useRef(null);
+  const campaignConfigVersionRef = useRef(campaignConfigVersion);
+  const configVersionMonitorRef = useRef(null);
+  const cacheManagerRef = useRef(null);
+  const cacheCommandHandlerRef = useRef(null);
 
   // Keep refs in sync so mount-time closures always see latest values
-  useEffect(() => { deviceTokenRef.current = deviceToken; }, [deviceToken]);
-  useEffect(() => { deviceIdRef.current = deviceId; }, [deviceId]);
+  useEffect(() => {
+    deviceTokenRef.current = deviceToken;
+  }, [deviceToken]);
+  useEffect(() => {
+    deviceIdRef.current = deviceId;
+  }, [deviceId]);
+  useEffect(() => {
+    campaignConfigVersionRef.current = campaignConfigVersion;
+  }, [campaignConfigVersion]);
+
+  const commandPoller = useMemo(
+    () =>
+      createCommandPoller({
+        getDeviceId: () => deviceIdRef.current,
+        getDeviceToken: () => deviceTokenRef.current,
+        buscarComandosPendentes,
+        marcarComandoRecebido,
+        marcarComandoIniciado,
+        ackComando,
+        executeCommand,
+        setPhase,
+        setPlaylist,
+        setCurrentIndex,
+        setProgress,
+      }),
+    [],
+  );
 
   // ── 0. Inicialização da plataforma ────────────────────────────────────────
   useEffect(() => {
     const apiBase = getBaseUrl();
-    console.log("[player] platform:", Platform.name, "online:", isOnline, "api:", apiBase || "(relative)");
+    console.log(
+      "[player] platform:",
+      Platform.name,
+      "online:",
+      isOnline,
+      "api:",
+      apiBase || "(relative)",
+    );
     // Sanity-check: APK/Capacitor com base em localhost = APK foi compilado com .env de dev.
     // No celular, localhost aponta para o próprio aparelho — API e mídia nunca carregam.
     if (Platform.isCapacitor && /localhost|127\.0\.0\.1/.test(apiBase)) {
@@ -265,13 +369,23 @@ export default function Player() {
           const durationSecs = startedAt
             ? Math.round((Date.now() - new Date(startedAt).getTime()) / 1000)
             : null;
-          logTrackEnded(deviceIdRef.current, prevTrack.id, durationSecs, audioPlaylistIdRef.current).catch(() => {});
+          logTrackEnded(
+            deviceIdRef.current,
+            prevTrack.id,
+            durationSecs,
+            audioPlaylistIdRef.current,
+          ).catch(() => {});
         }
 
         if (newTrack) {
           const now = new Date().toISOString();
           trackStartedAtRef.current = now;
-          logTrackStarted(deviceIdRef.current, newTrack.id, audioPlaylistIdRef.current, now).catch(() => {});
+          logTrackStarted(
+            deviceIdRef.current,
+            newTrack.id,
+            audioPlaylistIdRef.current,
+            now,
+          ).catch(() => {});
         } else {
           trackStartedAtRef.current = null;
         }
@@ -289,15 +403,21 @@ export default function Player() {
     return () => {
       unsub();
       mgr.destroy();
-      radio.pause(); radio.src = "";
-      spot.pause(); spot.src = "";
+      radio.pause();
+      radio.src = "";
+      spot.pause();
+      spot.src = "";
     };
   }, []);
 
   // ── 1. Register pairing code ─────────────────────────────────────────────
   useEffect(() => {
     if (!isApiConfigured() || phase !== "waiting") return;
-    pairRequest({ pairing_code: pairingCode, player_version: PLAYER_VERSION, os: "Web Player" })
+    pairRequest({
+      pairing_code: pairingCode,
+      player_version: PLAYER_VERSION,
+      os: "Web Player",
+    })
       .then(() => setApiStatus("connected"))
       .catch(() => setApiStatus("error"));
   }, [pairingCode, phase]);
@@ -362,7 +482,7 @@ export default function Player() {
       if (res?.campaign?.id) {
         setCampaignId(res.campaign.id);
         setCampaignConfigVersion(res.campaign.config_version || null);
-        setCampaign(res.campaign);  // SPEC 005: guarda objeto completo
+        setCampaign(res.campaign); // SPEC 005: guarda objeto completo
       } else {
         setCampaignId(null);
         setCampaignConfigVersion(null);
@@ -372,18 +492,33 @@ export default function Player() {
       const ap = res?.audio_playlist || null;
       setAudioPlaylist(ap);
       audioPlaylistIdRef.current = ap?.id || null;
-      setOsdConfig(res?.osd_config || {
-        show_current_audio: true,
-        position: "top_right",
-        duration_seconds: 8,
-        opacity: 0.6,
-        font_size: "medium",
-      });
-      setCampaignSchedule(res?.campaign ? {
-        endDate: res.campaign.end_date || null,
-        scheduleEndTime: res.campaign.schedule_end_time || null,
-        loopCount: res.campaign.loop_count ?? null,
-      } : null);
+      setOsdConfig(
+        res?.osd_config || {
+          show_current_audio: true,
+          position: "top_right",
+          duration_seconds: 8,
+          opacity: 0.6,
+          font_size: "medium",
+        },
+      );
+      setDesktopExposureConfig(
+        res?.desktop_exposure_config || {
+          enabled: false,
+          interval_seconds: 10,
+          duration_seconds: 10,
+          restore_fullscreen: true,
+        },
+      );
+      setDesktopExposureEvents(res?.desktop_exposure_events || []);
+      setCampaignSchedule(
+        res?.campaign
+          ? {
+              endDate: res.campaign.end_date || null,
+              scheduleEndTime: res.campaign.schedule_end_time || null,
+              loopCount: res.campaign.loop_count ?? null,
+            }
+          : null,
+      );
       setLoopsCompleted(0);
 
       if (medias.length > 0) {
@@ -392,7 +527,9 @@ export default function Player() {
         setCurrentIndex(0);
         setProgress(0);
         setPhase("playing");
-        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(() => {});
+        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(
+          () => {},
+        );
         return true;
       }
       return false;
@@ -405,36 +542,128 @@ export default function Player() {
   useEffect(() => {
     if (phase !== "loading" || !deviceId || !deviceToken) return;
 
-    loadPlaylist(deviceId, deviceToken).then((hasMedeia) => {
-      if (!hasMedeia) {
-        console.log("[player] no media yet, entering no_campaign phase");
-        setPhase("no_campaign");
-      }
-    }).catch(async (err) => {
-      const msg = err?.message || "";
-      const isAuthError = msg.includes("401") || msg.includes("403") || msg.includes("Token");
-      if (isAuthError) {
-        console.error("[player] auth error, clearing saved pairing:", msg);
-        PairingStorage.clear();
-        setDeviceId(null);
-        setDeviceToken(null);
-        setPhase("waiting");
-      } else {
-        console.error("[player] playlist load failed — trying cache, then no_campaign:", msg);
-        const cached = await PlaylistCache.get(deviceId).catch(() => null);
-        const cachedMedias = (cached?.medias || []).filter((m) => isMediaCurrentlyPlayable(m));
-        if (cachedMedias.length > 0) {
-          console.log("[player] using cached playlist (", cachedMedias.length, "items)");
-          setPlaylist(cachedMedias);
-          setCurrentIndex(0);
-          setProgress(0);
-          setPhase("playing");
-        } else {
+    loadPlaylist(deviceId, deviceToken)
+      .then((hasMedeia) => {
+        if (!hasMedeia) {
+          console.log("[player] no media yet, entering no_campaign phase");
           setPhase("no_campaign");
         }
-      }
-    });
+      })
+      .catch(async (err) => {
+        const msg = err?.message || "";
+        const isAuthError =
+          msg.includes("401") || msg.includes("403") || msg.includes("Token");
+        if (isAuthError) {
+          console.error("[player] auth error, clearing saved pairing:", msg);
+          PairingStorage.clear();
+          setDeviceId(null);
+          setDeviceToken(null);
+          setPhase("waiting");
+        } else {
+          console.error(
+            "[player] playlist load failed — trying cache, then no_campaign:",
+            msg,
+          );
+          const cached = await PlaylistCache.get(deviceId).catch(() => null);
+          const cachedMedias = (cached?.medias || []).filter((m) =>
+            isMediaCurrentlyPlayable(m),
+          );
+          if (cachedMedias.length > 0) {
+            console.log(
+              "[player] using cached playlist (",
+              cachedMedias.length,
+              "items)",
+            );
+            setPlaylist(cachedMedias);
+            setCurrentIndex(0);
+            setProgress(0);
+            setPhase("playing");
+          } else {
+            setPhase("no_campaign");
+          }
+        }
+      });
   }, [phase, deviceId, deviceToken, loadPlaylist]);
+
+  // ── 3.5. Initialize config version monitor and smart playlist updater (TASK 21) ──
+  useEffect(() => {
+    if (!deviceId || phase === "waiting" || phase === "pairing") return;
+
+    // Initialize cache manager
+    if (!cacheManagerRef.current) {
+      cacheManagerRef.current = new PlaylistCacheManager(deviceId, apiClient);
+    }
+
+    // Initialize config version monitor
+    if (!configVersionMonitorRef.current) {
+      configVersionMonitorRef.current = new ConfigVersionMonitor(deviceId, apiClient);
+
+      // Start monitoring with smart updater
+      const updater = new SmartPlaylistUpdater(apiClient);
+      configVersionMonitorRef.current.start(async ({ changed, device }) => {
+        console.log("[player] Config version changed:", changed);
+
+        if (changed.schedule || changed.campaign || changed.playlist) {
+          // Refetch playlist with smart updater
+          const currentTrackId = playlist[currentIndex]?.id;
+          try {
+            await updater.updatePlaylist({
+              deviceId,
+              currentTrackId,
+              playlistId: campaignId || audioPlaylistIdRef.current,
+              onPlaylistUpdate: ({ playlist: newPlaylist }) => {
+                console.log("[player] Playlist updated intelligently");
+
+                // Update playlist state
+                const newMedias = (newPlaylist?.media || [])
+                  .filter((m) => isMediaCurrentlyPlayable(m))
+                  .map(normalizePlaylistMedia);
+
+                if (newMedias.length > 0) {
+                  setPlaylist(newMedias);
+
+                  // Try to keep current track playing
+                  if (currentTrackId) {
+                    const newIndex = newMedias.findIndex(
+                      (m) => m.id === currentTrackId
+                    );
+                    if (newIndex >= 0) {
+                      setCurrentIndex(newIndex);
+                    } else {
+                      setCurrentIndex(0);
+                    }
+                  } else {
+                    setCurrentIndex(0);
+                  }
+
+                  // Update campaign/playlist info
+                  if (newPlaylist?.id) {
+                    setCampaignId(newPlaylist.id);
+                  }
+                }
+              },
+            });
+          } catch (err) {
+            console.error("[player] Error updating playlist:", err);
+          }
+        }
+      });
+
+      // Initialize cache command handler
+      cacheCommandHandlerRef.current = new CacheCommandHandler(
+        deviceId,
+        apiClient,
+        cacheManagerRef.current
+      );
+    }
+
+    return () => {
+      // Cleanup on unmount or device change
+      if (configVersionMonitorRef.current) {
+        configVersionMonitorRef.current.stop();
+      }
+    };
+  }, [deviceId, phase, currentIndex, playlist]);
 
   // ── 4. Poll for campaign when device has no campaign yet ─────────────────
   useEffect(() => {
@@ -455,67 +684,146 @@ export default function Player() {
     return () => clearInterval(pollPlaylistRef.current);
   }, [phase, deviceId, deviceToken, loadPlaylist]);
 
-  const selectNextPlayableIndex = useCallback((fromIndex) => {
-    if (playlist.length <= 1) return 0;
-    for (let step = 1; step <= playlist.length; step += 1) {
-      const nextIndex = (fromIndex + step) % playlist.length;
-      const nextMedia = playlist[nextIndex];
-      if (nextMedia && !failedMediaIdsRef.current.has(nextMedia.id)) {
-        return nextIndex;
+  const selectNextPlayableIndex = useCallback(
+    (fromIndex) => {
+      if (playlist.length <= 1) return 0;
+      for (let step = 1; step <= playlist.length; step += 1) {
+        const nextIndex = (fromIndex + step) % playlist.length;
+        const nextMedia = playlist[nextIndex];
+        if (nextMedia && !failedMediaIdsRef.current.has(nextMedia.id)) {
+          return nextIndex;
+        }
       }
-    }
-    failedMediaIdsRef.current.clear();
-    return (fromIndex + 1) % playlist.length;
-  }, [playlist]);
+      failedMediaIdsRef.current.clear();
+      return (fromIndex + 1) % playlist.length;
+    },
+    [playlist],
+  );
 
-  const advanceMedia = useCallback((reason = "advance") => {
-    if (!playlist.length) return;
-    const currentMedia = playlist[currentIndex];
-    // Para playback log: usa tempo real desde o startTime quando duration não
-    // foi definida (vídeo/áudio com duração natural).
-    const elapsedMs = startTimeRef.current
-      ? Math.max(Date.now() - startTimeRef.current, 0)
-      : 0;
-    const duration = currentMedia?.duration && currentMedia.duration > 0
-      ? currentMedia.duration * 1000
-      : elapsedMs;
-    const failed = String(reason).startsWith("failed");
+  const advanceMedia = useCallback(
+    (reason = "advance") => {
+      if (!playlist.length) return;
+      const currentMedia = playlist[currentIndex];
+      // Para playback log: usa tempo real desde o startTime quando duration não
+      // foi definida (vídeo/áudio com duração natural).
+      const elapsedMs = startTimeRef.current
+        ? Math.max(Date.now() - startTimeRef.current, 0)
+        : 0;
+      const duration =
+        currentMedia?.duration && currentMedia.duration > 0
+          ? currentMedia.duration * 1000
+          : elapsedMs;
+      const failed = String(reason).startsWith("failed");
 
-    if (currentMedia && campaignId && deviceToken) {
-      registrarPlayback(deviceId, deviceToken, {
-        campaign_id: campaignId,
-        media_id: currentMedia.id,
-        started_at: new Date(Date.now() - duration).toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_ms: duration,
-        status: failed ? "failed" : "completed",
-      }).catch(() => {});
-    }
-
-    setCurrentIndex((prev) => {
-      const next = selectNextPlayableIndex(prev);
-      // Detecta volta completa da playlist: chegou no fim e voltou para 0 (ou retornou ao primeiro válido).
-      if (next <= prev) {
-        setLoopsCompleted((n) => n + 1);
+      if (currentMedia && campaignId && deviceToken) {
+        registrarPlayback(deviceId, deviceToken, {
+          campaign_id: campaignId,
+          media_id: currentMedia.id,
+          started_at: new Date(Date.now() - duration).toISOString(),
+          ended_at: new Date().toISOString(),
+          duration_ms: duration,
+          status: failed ? "failed" : "completed",
+        }).catch(() => {});
       }
-      return next;
-    });
-    setViewsCount((prev) => prev + 1);
-  }, [campaignId, currentIndex, deviceId, deviceToken, playlist, selectNextPlayableIndex]);
 
-  const handleMediaError = useCallback((payload) => {
-    const currentMedia = playlist[currentIndex];
-    const errorPayload = {
-      ...payload,
+      setCurrentIndex((prev) => {
+        const next = selectNextPlayableIndex(prev);
+        // Detecta volta completa da playlist: chegou no fim e voltou para 0 (ou retornou ao primeiro válido).
+        if (next <= prev) {
+          setLoopsCompleted((n) => n + 1);
+        }
+        return next;
+      });
+      setViewsCount((prev) => prev + 1);
+    },
+    [
+      campaignId,
       currentIndex,
-      media_id: currentMedia?.id || payload?.media?.id || null,
-      timestamp: new Date().toISOString(),
-    };
-    console.error("[player] media failed, skipping:", errorPayload);
-    setLastError(errorPayload);
-    if (currentMedia?.id) failedMediaIdsRef.current.add(currentMedia.id);
-    setTimeout(() => advanceMedia(`failed:${payload?.event || "media_error"}`), 500);
-  }, [advanceMedia, currentIndex, playlist]);
+      deviceId,
+      deviceToken,
+      playlist,
+      selectNextPlayableIndex,
+    ],
+  );
+
+  const handleMediaError = useCallback(
+    (payload) => {
+      const currentMedia = playlist[currentIndex];
+      const errorPayload = {
+        ...payload,
+        currentIndex,
+        media_id: currentMedia?.id || payload?.media?.id || null,
+        timestamp: new Date().toISOString(),
+      };
+      console.error("[player] media failed, skipping:", errorPayload);
+      setLastError(errorPayload);
+      if (currentMedia?.id) failedMediaIdsRef.current.add(currentMedia.id);
+      setTimeout(
+        () => advanceMedia(`failed:${payload?.event || "media_error"}`),
+        500,
+      );
+    },
+    [advanceMedia, currentIndex, playlist],
+  );
+
+  useEffect(() => {
+    desktopExposureSchedulerRef.current = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: Platform.isElectron,
+    });
+    return () => desktopExposureSchedulerRef.current?.stop();
+  }, []);
+
+  useEffect(() => {
+    desktopExposureSchedulerRef.current?.schedule({
+      desktopExposureConfig,
+      deviceId,
+      deviceToken,
+      phase,
+      commandContext: {
+        deviceId,
+        setPhase,
+        setPlaylist,
+        setCurrentIndex,
+        setProgress,
+      },
+    });
+  }, [desktopExposureConfig, deviceId, deviceToken, phase]);
+
+  // SPEC 010 — scheduler de exposição de desktop por HORÁRIO do dia.
+  // Reutiliza a primitiva `show_desktop` do Electron (minimiza + restaura) e
+  // recupera uma exposição em andamento caso o Player tenha reiniciado.
+  useEffect(() => {
+    const scheduler = createDesktopExposureTimeScheduler({
+      // Reusa o caminho oficial de comando (mesmo do scheduler por intervalo),
+      // que roteia show_desktop -> bridge nativa do Electron.
+      executeShowDesktop: (durationSeconds) =>
+        executeCommand(
+          {
+            command_type: "show_desktop",
+            payload: {
+              duration_seconds: durationSeconds,
+              restore_fullscreen: true,
+            },
+          },
+          { deviceId: PairingStorage.deviceId() },
+        ),
+      persist: (action) =>
+        PlayerState.set("desktop_exposure_pending", action),
+      loadPending: () => PlayerState.get("desktop_exposure_pending"),
+      isElectron: Platform.isElectron,
+    });
+    desktopExposureTimeSchedulerRef.current = scheduler;
+    scheduler.recover();
+    return () => scheduler.stop();
+  }, []);
+
+  useEffect(() => {
+    desktopExposureTimeSchedulerRef.current?.schedule({
+      events: desktopExposureEvents,
+      phase,
+    });
+  }, [desktopExposureEvents, phase]);
 
   // ── 5a. Stop condition: end_date / schedule_end_time / loop_count ────────
   // Programa um setTimeout cravado para o instante de parada e força recarga.
@@ -524,8 +832,16 @@ export default function Player() {
     if (phase !== "playing" || !campaignSchedule) return;
 
     // 1) Parada por loop_count atingido → força reload imediato
-    if (campaignSchedule.loopCount && loopsCompleted >= campaignSchedule.loopCount) {
-      console.log("[player] loop_count atingido:", loopsCompleted, "/", campaignSchedule.loopCount);
+    if (
+      campaignSchedule.loopCount &&
+      loopsCompleted >= campaignSchedule.loopCount
+    ) {
+      console.log(
+        "[player] loop_count atingido:",
+        loopsCompleted,
+        "/",
+        campaignSchedule.loopCount,
+      );
       setPhase("loading");
       return;
     }
@@ -536,7 +852,8 @@ export default function Player() {
 
     if (campaignSchedule.endDate) {
       const endDateMs = Date.parse(campaignSchedule.endDate);
-      if (Number.isFinite(endDateMs) && endDateMs > now) stopAtCandidates.push(endDateMs);
+      if (Number.isFinite(endDateMs) && endDateMs > now)
+        stopAtCandidates.push(endDateMs);
     }
 
     if (campaignSchedule.scheduleEndTime) {
@@ -553,10 +870,16 @@ export default function Player() {
 
     const stopAt = Math.min(...stopAtCandidates);
     const delay = Math.min(stopAt - now, 2_147_483_000); // cap setTimeout 32-bit
-    console.log("[player] stop scheduled for", new Date(stopAt).toISOString(), `(in ${Math.round(delay / 1000)}s)`);
+    console.log(
+      "[player] stop scheduled for",
+      new Date(stopAt).toISOString(),
+      `(in ${Math.round(delay / 1000)}s)`,
+    );
 
     const timer = setTimeout(() => {
-      console.log("[player] stop time reached — reloading playlist for re-evaluation");
+      console.log(
+        "[player] stop time reached — reloading playlist for re-evaluation",
+      );
       setPhase("loading");
     }, delay);
 
@@ -587,7 +910,10 @@ export default function Player() {
       setProgress(Math.min(elapsed / duration, 1));
     }, 250);
 
-    const advance = setTimeout(() => advanceMedia("duration_elapsed"), duration);
+    const advance = setTimeout(
+      () => advanceMedia("duration_elapsed"),
+      duration,
+    );
 
     return () => {
       clearInterval(progressRef.current);
@@ -599,98 +925,21 @@ export default function Player() {
   // SPEC 003 — comandos destrutivos (restart/shutdown) fazem pre-ACK ANTES de
   // executar, porque o processo do player morre durante a operação e nunca
   // conseguiria mandar o ACK final.
-  const pollCommandsRunningRef = useRef(false);
-
-  const pollCommands = useCallback(async () => {
-    if (!deviceId || !deviceToken) return;
-    if (pollCommandsRunningRef.current) return; // evita reentrância (polling + SSE)
-    pollCommandsRunningRef.current = true;
-    try {
-      const commands = await buscarComandosPendentes(deviceId, deviceToken);
-      if (!commands || commands.length === 0) return;
-
-      for (const cmd of commands) {
-        const isDestructive = DESTRUCTIVE_COMMANDS.has(cmd.command_type);
-        console.log(
-          "[player] executing command:",
-          cmd.command_type,
-          cmd.id,
-          isDestructive ? "(destructive)" : "",
-        );
-
-        await marcarComandoRecebido(deviceId, cmd.id, deviceToken).catch(() => {});
-        await marcarComandoIniciado(deviceId, cmd.id, deviceToken).catch(() => {});
-
-        // Pre-ACK otimista para destrutivos — registra "completed" antes do
-        // processo morrer. Se executeCommand falhar (web puro, sem bridge), o
-        // bloco abaixo sobrescreve com failed.
-        if (isDestructive) {
-          await ackComando(
-            deviceId,
-            cmd.id,
-            deviceToken,
-            true,
-            null,
-            {
-              platform: Platform.name,
-              command_type: cmd.command_type,
-              ack_phase: "pre_execution",
-              completed_at: new Date().toISOString(),
-            },
-          ).catch((err) => console.warn("[player] pre-ACK failed:", err));
-        }
-
-        const result = await executeCommand(cmd, {
-          deviceId,
-          setPhase,
-          setPlaylist,
-          setCurrentIndex,
-          setProgress,
-        });
-
-        // Não destrutivos: ACK final com resultado real.
-        // Destrutivos que falharam ANTES do shutdown (ex: web puro): sobrescreve
-        // o pre-ACK otimista com failed.
-        if (!isDestructive) {
-          await ackComando(
-            deviceId,
-            cmd.id,
-            deviceToken,
-            result.success,
-            result.errorMessage,
-            { ...(result.result || {}), ack_phase: "post_execution" },
-          );
-        } else if (!result.success) {
-          await ackComando(
-            deviceId,
-            cmd.id,
-            deviceToken,
-            false,
-            result.errorMessage,
-            { ...(result.result || {}), ack_phase: "post_execution_override" },
-          );
-        }
-
-        console.log(
-          "[player] command ACK sent:",
-          cmd.id,
-          result.success ? "success" : "failed",
-        );
-      }
-    } catch (err) {
-      console.warn("[player] poll commands error:", err);
-    } finally {
-      pollCommandsRunningRef.current = false;
-    }
-  }, [deviceId, deviceToken]);
+  const pollCommands = useCallback(
+    () => commandPoller.pollCommands(),
+    [commandPoller],
+  );
 
   useEffect(() => {
     if (!deviceId || !deviceToken) return;
     if (phase !== "playing" && phase !== "no_campaign") return;
 
     pollCommands();
-    pollCommandsRef.current = setInterval(pollCommands, POLL_COMMANDS_INTERVAL);
-    return () => clearInterval(pollCommandsRef.current);
+    pollCommandsTimerRef.current = setInterval(
+      () => pollCommands(),
+      POLL_COMMANDS_INTERVAL,
+    );
+    return () => clearInterval(pollCommandsTimerRef.current);
   }, [deviceId, deviceToken, phase, pollCommands]);
 
   // ── 6b. SSE — real-time playlist/config updates ──────────────────────────
@@ -714,6 +963,12 @@ export default function Player() {
         if (typeof data.video_muted === "boolean") {
           setVideoMuted(data.video_muted);
         }
+        if (data.desktop_exposure_config) {
+          setDesktopExposureConfig(data.desktop_exposure_config);
+        }
+        if (Array.isArray(data.desktop_exposure_events)) {
+          setDesktopExposureEvents(data.desktop_exposure_events);
+        }
       } catch (err) {
         console.warn("[player] SSE snapshot parse error:", err);
       }
@@ -725,8 +980,14 @@ export default function Player() {
       // afetam o conteúdo do player (ex: nome da campanha, descrição).
       try {
         const data = JSON.parse(evt.data);
-        if (data.config_version && data.config_version === campaignConfigVersion) {
-          console.log("[player] SSE playlist_invalidated ignorado — config_version igual:", data.config_version);
+        if (
+          data.config_version &&
+          data.config_version === campaignConfigVersionRef.current
+        ) {
+          console.log(
+            "[player] SSE playlist_invalidated ignorado — config_version igual:",
+            data.config_version,
+          );
           return;
         }
       } catch {
@@ -737,13 +998,28 @@ export default function Player() {
 
     // SPEC 003 — comando recém-criado: executa polling imediato sem esperar tick de 10s.
     const onCommandNew = () => {
+      console.log("[player] SSE command:new — polling pending commands");
       pollCommands();
     };
 
     const onError = (err) => {
       // EventSource já tenta reconectar automaticamente.
-      console.warn("[player] SSE error:", err);
+      const isClosed =
+        typeof EventSource !== "undefined" &&
+        es.readyState === EventSource.CLOSED;
+      if (isClosed) {
+        console.warn("[player] SSE closed permanently:", err);
+      } else {
+        console.warn("[player] SSE error:", err);
+      }
     };
+
+    // SPEC 003 — ao reconectar SSE, garante polling imediato para evitar atraso
+    // até o próximo tick de 10s se comandos tiverem sido emitidos durante a queda.
+    es.addEventListener("open", () => {
+      console.log("[player] SSE connection opened — polling pending commands");
+      pollCommands();
+    });
 
     // SPEC 004 — revogação remota do pareamento (regenerate, force-repair,
     // token_revoked, device_blocked). Player limpa storage e volta para tela
@@ -765,6 +1041,9 @@ export default function Player() {
       }
     };
 
+    es.addEventListener("open", () => {
+      console.log("[player] SSE connection opened");
+    });
     es.addEventListener("snapshot", onSnapshot);
     es.addEventListener("playlist_invalidated", onPlaylistInvalidated);
     es.addEventListener("command:new", onCommandNew);
@@ -785,7 +1064,6 @@ export default function Player() {
   // ── 7. Heartbeat ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!deviceId || !deviceToken) return;
-    if (phase !== "playing" && phase !== "no_campaign") return;
 
     const beat = async () => {
       try {
@@ -801,8 +1079,12 @@ export default function Player() {
           current_media_name: currentMedia?.name || null,
           current_audio_track_id: currentAudioTrack?.id || null,
           current_audio_track_name: currentAudioTrack?.name || null,
-          current_audio_track_started_at: currentAudioTrack ? trackStartedAtRef.current : null,
-          last_error: lastError ? JSON.stringify(lastError).slice(0, 1000) : null,
+          current_audio_track_started_at: currentAudioTrack
+            ? trackStartedAtRef.current
+            : null,
+          last_error: lastError
+            ? JSON.stringify(lastError).slice(0, 1000)
+            : null,
           playback_status: phase,
         });
         notifyHeartbeatOk();
@@ -816,7 +1098,18 @@ export default function Player() {
     beat();
     heartbeatRef.current = setInterval(beat, HEARTBEAT_INTERVAL);
     return () => clearInterval(heartbeatRef.current);
-  }, [deviceId, deviceToken, phase, currentIndex, viewsCount, playlist, campaignId, campaignConfigVersion, currentAudioTrack, lastError]);
+  }, [
+    deviceId,
+    deviceToken,
+    phase,
+    currentIndex,
+    viewsCount,
+    playlist,
+    campaignId,
+    campaignConfigVersion,
+    currentAudioTrack,
+    lastError,
+  ]);
 
   // ── SPEC 005: resolver de política de áudio ──────────────────────────────
   const current = playlist[currentIndex] || null;
@@ -824,14 +1117,16 @@ export default function Player() {
   const audioFadeMs = campaign?.audio_fade_ms ?? 200;
 
   // spotActive: truthy quando o AudioManager está tocando um spot
-  const spotActive = audioManagerCurrent === AUDIO_STATE.SPOT ? { id: "active" } : null;
+  const spotActive =
+    audioManagerCurrent === AUDIO_STATE.SPOT ? { id: "active" } : null;
 
-  const { videoMuted: resolvedVideoMuted, audioEnabled } = useAudioConflictResolver({
-    currentMedia: current,
-    audioPlaylist,
-    currentSpot: spotActive,
-    fallbackPolicy,
-  });
+  const { videoMuted: resolvedVideoMuted, audioEnabled } =
+    useAudioConflictResolver({
+      currentMedia: current,
+      audioPlaylist,
+      currentSpot: spotActive,
+      fallbackPolicy,
+    });
 
   // Compat: se a mídia não tem audio_policy_effective (player antigo ou campo ausente),
   // usa o video_muted legado da campanha.
@@ -861,8 +1156,13 @@ export default function Player() {
     const mgr = audioManagerRef.current;
     if (!mgr) return;
     const rawTracks = audioPlaylist?.tracks || [];
-    const tracks = rawTracks.map((t) => ({ ...t, file_url: assetUrl(t.file_url) }));
-    const mode = audioPlaylist?.shuffle ? AUDIO_MODE.SHUFFLE : AUDIO_MODE.SEQUENTIAL;
+    const tracks = rawTracks.map((t) => ({
+      ...t,
+      file_url: assetUrl(t.file_url),
+    }));
+    const mode = audioPlaylist?.shuffle
+      ? AUDIO_MODE.SHUFFLE
+      : AUDIO_MODE.SEQUENTIAL;
     mgr.loadRadioPlaylist(tracks, mode);
   }, [audioPlaylist?.id, audioPlaylist?.shuffle]);
 
@@ -910,7 +1210,10 @@ export default function Player() {
           (!sched.start_time || t >= sched.start_time) &&
           (!sched.end_time || t <= sched.end_time);
         if (!stillInWindow) return;
-        console.log("[player] spot scheduled:", sched.spot_name || sched.spot_id);
+        console.log(
+          "[player] spot scheduled:",
+          sched.spot_name || sched.spot_id,
+        );
         mgr.playSpot(url, policy).catch(() => {});
       }, intervalMs);
 
@@ -921,7 +1224,9 @@ export default function Player() {
   }, [audioPlaylist?.id, phase]);
 
   // `current` já declarado acima no bloco do resolver SPEC 005
-  const nextMedia = playlist.length ? playlist[(currentIndex + 1) % playlist.length] : null;
+  const nextMedia = playlist.length
+    ? playlist[(currentIndex + 1) % playlist.length]
+    : null;
   const debugData = {
     enabled: debugMode,
     deviceId,
@@ -946,7 +1251,11 @@ export default function Player() {
   if (phase === "waiting") {
     return (
       <>
-        <PairingScreen pairingCode={pairingCode} apiStatus={apiStatus} forceRepairReason={forceRepairReason} />
+        <PairingScreen
+          pairingCode={pairingCode}
+          apiStatus={apiStatus}
+          forceRepairReason={forceRepairReason}
+        />
         <PlayerDebugOverlay data={debugData} />
       </>
     );
@@ -971,7 +1280,9 @@ export default function Player() {
             deviceName={deviceName}
             currentAudioTrack={currentAudioTrack}
             audioEnabled={audioEnabled && phase === "playing"}
-            radioActive={audioManagerCurrent === AUDIO_STATE.RADIO && phase === "playing"}
+            radioActive={
+              audioManagerCurrent === AUDIO_STATE.RADIO && phase === "playing"
+            }
             osdConfig={osdConfig}
           />
           <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-white text-sm">
@@ -1011,14 +1322,30 @@ export default function Player() {
       <>
         <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-6">
           <div className="w-16 h-16 rounded-2xl bg-blue-600/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
+            <svg
+              className="w-8 h-8 text-blue-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3"
+              />
             </svg>
           </div>
           <div className="text-center">
-            <p className="text-lg font-semibold">{deviceName || "Dispositivo pareado"}</p>
-            <p className="text-sm text-white/40 mt-1">Aguardando campanha ativa...</p>
-            <p className="text-xs text-white/20 mt-3">O player verifica automaticamente a cada 30s</p>
+            <p className="text-lg font-semibold">
+              {deviceName || "Dispositivo pareado"}
+            </p>
+            <p className="text-sm text-white/40 mt-1">
+              Aguardando campanha ativa...
+            </p>
+            <p className="text-xs text-white/20 mt-3">
+              O player verifica automaticamente a cada 30s
+            </p>
           </div>
         </div>
         <PlayerDebugOverlay data={debugData} />

@@ -24,7 +24,10 @@ import Platform from "./platform.js";
  * `error_code` é propagado pelo `executeCommand` para o resultado do ACK.
  */
 class CommandUnsupportedError extends Error {
-  constructor(command, { errorCode = "COMMAND_NOT_IMPLEMENTED", reason = null } = {}) {
+  constructor(
+    command,
+    { errorCode = "COMMAND_NOT_IMPLEMENTED", reason = null } = {},
+  ) {
     super(`${command} não suportado na plataforma ${Platform.name}`);
     this.name = "CommandUnsupportedError";
     this.platformUnsupported = true;
@@ -44,14 +47,42 @@ function platformUnsupported(command, opts) {
  */
 async function callNativePowerCommand(command) {
   // @ts-ignore - Bridge nativo pode não estar definido em todas as plataformas
-  const nativeBridge = window.PlayWaveNative || window.AndroidPlayer || window.__ELECTRON__?.player;
+  const nativeBridge =
+    window.PlayWaveNative ||
+    window.AndroidPlayer ||
+    window.__ELECTRON__?.player;
   const fn = nativeBridge?.[command];
   if (typeof fn !== "function") {
     // Distinguir browser puro de plataforma reconhecida sem handler.
-    const errorCode = Platform.name === "web" ? "BROWSER_ENVIRONMENT" : "COMMAND_NOT_IMPLEMENTED";
+    const errorCode =
+      Platform.name === "web"
+        ? "BROWSER_ENVIRONMENT"
+        : "COMMAND_NOT_IMPLEMENTED";
     platformUnsupported(command, { errorCode });
   }
   return fn.call(nativeBridge);
+}
+
+async function callNativeWindowCommand(command, ...args) {
+  const nativeBridge = window.__ELECTRON__?.player;
+  const fn = nativeBridge?.[command];
+  console.log(`[commands] callNativeWindowCommand: ${command}, isElectron=${Platform.isElectron}, hasPlayer=${!!nativeBridge}, hasFn=${typeof fn}`);
+  if (typeof fn !== "function") {
+    const errorCode = Platform.isElectron
+      ? "COMMAND_NOT_IMPLEMENTED"
+      : "BROWSER_ENVIRONMENT";
+    platformUnsupported(command, {
+      errorCode,
+      reason: "window_control_requires_electron",
+    });
+  }
+  return fn.call(nativeBridge, ...args);
+}
+
+function normalizeDesktopDuration(payload) {
+  const raw = Number(payload?.duration_seconds ?? 10);
+  if (!Number.isFinite(raw)) return 10;
+  return Math.max(1, Math.min(300, Math.round(raw)));
 }
 
 export const COMMAND_HANDLERS = {
@@ -108,6 +139,39 @@ export const COMMAND_HANDLERS = {
       // Fallback web puro: reload da página.
       setTimeout(() => window.location.reload(), 300);
     }
+  },
+
+  minimize_player: async () => {
+    console.log("[commands] executing: minimize_player");
+    return await callNativeWindowCommand("minimizeWindow");
+  },
+
+  minimize_window: async () => {
+    console.log("[commands] executing: minimize_window");
+    return await callNativeWindowCommand("minimizeWindow");
+  },
+
+  restore_player: async () => {
+    console.log("[commands] executing: restore_player");
+    return await callNativeWindowCommand("restoreWindow");
+  },
+
+  restore_window: async () => {
+    console.log("[commands] executing: restore_window");
+    return await callNativeWindowCommand("restoreWindow");
+  },
+
+  show_desktop: async ({ payload }) => {
+    const durationSeconds = normalizeDesktopDuration(payload);
+    const restoreFullscreen = payload?.restore_fullscreen !== false;
+    console.log("[commands] executing: show_desktop", durationSeconds, {
+      restoreFullscreen,
+    });
+    return await callNativeWindowCommand(
+      "showDesktop",
+      durationSeconds,
+      restoreFullscreen,
+    );
   },
 
   restart_device: async () => {
@@ -203,13 +267,16 @@ export async function executeCommand(cmd, context) {
       },
     };
   }
-  
+
   try {
     console.log("[commands] ▶️  Iniciando execução...");
     const handlerResult = await handler({ ...context, payload: cmd.payload });
-    console.log("[commands] ✅ Comando executado com sucesso:", cmd.command_type);
+    console.log(
+      "[commands] ✅ Comando executado com sucesso:",
+      cmd.command_type,
+    );
     console.log("[commands] Resultado:", handlerResult);
-    
+
     return {
       success: true,
       errorMessage: null,
@@ -217,7 +284,9 @@ export async function executeCommand(cmd, context) {
         platform: Platform.name,
         command_type: cmd.command_type,
         completed_at: new Date().toISOString(),
-        ...(handlerResult && typeof handlerResult === "object" ? { handler: handlerResult } : {}),
+        ...(handlerResult && typeof handlerResult === "object"
+          ? { handler: handlerResult }
+          : {}),
       },
     };
   } catch (err) {
@@ -229,7 +298,7 @@ export async function executeCommand(cmd, context) {
     console.error("[commands] Error code:", err?.errorCode);
     console.error("[commands] Reason:", err?.reason);
     console.error("[commands] ========================================");
-    
+
     const isUnsupported = err?.platformUnsupported === true;
     return {
       success: false,
@@ -238,7 +307,9 @@ export async function executeCommand(cmd, context) {
         platform: Platform.name,
         command_type: cmd.command_type,
         platform_unsupported: isUnsupported,
-        error_code: err?.errorCode || (isUnsupported ? "COMMAND_NOT_IMPLEMENTED" : "EXECUTION_FAILED"),
+        error_code:
+          err?.errorCode ||
+          (isUnsupported ? "COMMAND_NOT_IMPLEMENTED" : "EXECUTION_FAILED"),
         reason: err?.reason || null,
         failed_at: new Date().toISOString(),
       },

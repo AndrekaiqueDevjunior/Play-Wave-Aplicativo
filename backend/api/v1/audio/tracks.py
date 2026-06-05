@@ -29,6 +29,7 @@ def get_audio_tracks(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     category: Optional[AudioTrackCategoryEnum] = Query(None),
+    category_id: Optional[str] = Query(None),
     status: Optional[AudioTrackStatusEnum] = Query(None),
     tenant_id: Optional[str] = Query(None)
 ):
@@ -45,6 +46,8 @@ def get_audio_tracks(
         query = query.filter(AudioTrack.tenant_id == effective_tenant_id)
     if category:
         query = query.filter(AudioTrack.category == category.value)
+    if category_id:
+        query = query.filter(AudioTrack.category_id == category_id)
     if status:
         query = query.filter(AudioTrack.status == status.value)
     if search:
@@ -193,6 +196,7 @@ def upload_audio_track(
     file: UploadFile = File(...),
     name: str = Form(...),
     category: Optional[AudioTrackCategoryEnum] = Form(AudioTrackCategoryEnum.MUSIC),
+    category_id: Optional[str] = Form(None),
     track_status: Optional[AudioTrackStatusEnum] = Form(AudioTrackStatusEnum.ACTIVE, alias="status"),
     description: Optional[str] = Form(None),
     duration_seconds: Optional[int] = Form(None),
@@ -252,6 +256,7 @@ def upload_audio_track(
         "file_size": os.path.getsize(file_path),
         "duration_seconds": duration_seconds,
         "category": category,
+        "category_id": category_id or None,
         "status": track_status,
         "notes": notes,
     }
@@ -365,6 +370,7 @@ def upload_multiple_tracks(
     current_user: User = Depends(get_current_user),
     files: List[UploadFile] = File(...),
     category: Optional[AudioTrackCategoryEnum] = Form(None),
+    category_id: Optional[str] = Form(None),
 ):
     """
     Upload múltiplo de faixas de áudio.
@@ -444,6 +450,7 @@ def upload_multiple_tracks(
                     mime_type=file.content_type or "audio/mpeg",
                     duration_seconds=duration_seconds,
                     category=category or AudioTrackCategoryEnum.MUSIC,
+                    category_id=category_id or None,
                     tenant_id=None if current_user.role == "admin" else str(current_user.tenant_id),
                 ),
             )

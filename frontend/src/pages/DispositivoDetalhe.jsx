@@ -1,11 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
 import { OSDConfigForm } from "@/components/shared/OSDConfigForm";
-import { OSDConfigPreview, normalizeOSDConfig } from "@/components/shared/OSDConfigPreview";
+import {
+  OSDConfigPreview,
+  normalizeOSDConfig,
+} from "@/components/shared/OSDConfigPreview";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   ArrowLeft,
   RefreshCw,
@@ -22,6 +29,8 @@ import {
   KeyRound,
   RotateCcw,
   Save,
+  Minimize2,
+  Maximize2,
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -29,6 +38,7 @@ import {
   buscarDispositivo,
   atualizarDispositivo,
   atualizarOSDConfigDispositivo,
+  atualizarDesktopExposureConfigDispositivo,
   listarComandosDispositivo,
   regenerarCodigoPareamento,
   cancelarComando,
@@ -42,10 +52,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import moment from "moment";
-import {
-  COMMANDS_BY_GROUP,
-  isDestructive,
-} from "@/utils/deviceCommands";
+import { COMMANDS_BY_GROUP, isDestructive } from "@/utils/deviceCommands";
 import CommandHistoryTimeline from "@/components/devices/CommandHistoryTimeline";
 import DestructiveCommandConfirmDialog from "@/components/devices/DestructiveCommandConfirmDialog";
 import RegenerateCodeDialog from "@/components/devices/RegenerateCodeDialog";
@@ -54,10 +61,10 @@ import PairingEventTimeline from "@/components/devices/PairingEventTimeline";
 
 export default function DispositivoDetalhe() {
   console.log("[DispositivoDetalhe] Componente montado");
-  
+
   const { id } = useParams();
   console.log("[DispositivoDetalhe] Device ID:", id);
-  
+
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -66,13 +73,25 @@ export default function DispositivoDetalhe() {
   const [syncLog, setSyncLog] = useState([]);
   const [pendingDestructive, setPendingDestructive] = useState(null); // { command, label }
   const [cancellingId, setCancellingId] = useState(null);
+  const [desktopExposureConfig, setDesktopExposureConfig] = useState({
+    enabled: false,
+    interval_seconds: 10,
+    duration_seconds: 10,
+    restore_fullscreen: true,
+  });
+  const [desktopExposureTestLoading, setDesktopExposureTestLoading] =
+    useState(false);
   // SPEC 004 — dialogs separados para regenerate vs force-repair.
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
   const [forceRepairDialogOpen, setForceRepairDialogOpen] = useState(false);
   const [forceRepairLoading, setForceRepairLoading] = useState(false);
   const [osdLocalConfig, setOsdLocalConfig] = useState({});
 
-  const { data: device, isLoading, error } = useQuery({
+  const {
+    data: device,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["device", id],
     queryFn: () => buscarDispositivo(id),
     enabled: !!id,
@@ -87,6 +106,17 @@ export default function DispositivoDetalhe() {
     if (!device?.osd_config_local) return;
     setOsdLocalConfig(device.osd_config_local);
   }, [device?.id, device?.osd_config_local]);
+
+  useEffect(() => {
+    if (!device?.desktop_exposure_config) return;
+    setDesktopExposureConfig({
+      enabled: device.desktop_exposure_config.enabled ?? false,
+      interval_seconds: device.desktop_exposure_config.interval_seconds ?? 10,
+      duration_seconds: device.desktop_exposure_config.duration_seconds ?? 10,
+      restore_fullscreen:
+        device.desktop_exposure_config.restore_fullscreen ?? true,
+    });
+  }, [device?.id, device?.desktop_exposure_config]);
 
   const { data: metrics } = useQuery({
     queryKey: ["device-metrics", id],
@@ -124,21 +154,59 @@ export default function DispositivoDetalhe() {
     },
   });
 
-  const handleCommand = async (command, label) => {
+  const desktopExposureMutation = useMutation({
+    mutationFn: (payload) =>
+      atualizarDesktopExposureConfigDispositivo(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["device", id] });
+      toast({ title: "Configuração do player atualizada" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Erro ao atualizar configuração do player",
+        description: err.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleTestDesktopExposure = async () => {
+    if (!id) return;
+    setDesktopExposureTestLoading(true);
+    try {
+      await sendDeviceCommand(id, "show_desktop", {
+        payload: {
+          duration_seconds: desktopExposureConfig.duration_seconds,
+          restore_fullscreen: desktopExposureConfig.restore_fullscreen,
+        },
+      });
+      toast({ title: "Comando de teste enviado" });
+    } catch (err) {
+      toast({
+        title: "Erro ao testar a exposição do desktop",
+        description: err?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setDesktopExposureTestLoading(false);
+    }
+  };
+
+  const handleCommand = async (command, label, opts = {}) => {
     // SPEC 003 — comandos destrutivos passam por modal de confirmação.
     if (isDestructive(command)) {
       setPendingDestructive({ command, label });
       return;
     }
-    await sendCommand(command, label);
+    await sendCommand(command, label, opts);
   };
 
-  const sendCommand = async (command, label) => {
+  const sendCommand = async (command, label, opts = {}) => {
     setCommandLoading(command);
     let result = null;
     if (isApiConfigured()) {
       try {
-        result = await sendDeviceCommand(id, command);
+        result = await sendDeviceCommand(id, command, opts);
       } catch (err) {
         toast({
           title: `Falha ao enviar "${label}"`,
@@ -181,7 +249,10 @@ export default function DispositivoDetalhe() {
     setCancellingId(commandId);
     try {
       await cancelarComando(id, commandId);
-      toast({ title: "Comando cancelado", description: "O comando foi cancelado antes da execução." });
+      toast({
+        title: "Comando cancelado",
+        description: "O comando foi cancelado antes da execução.",
+      });
       queryClient.invalidateQueries({ queryKey: ["device-commands", id] });
     } catch (err) {
       toast({
@@ -211,7 +282,9 @@ export default function DispositivoDetalhe() {
     try {
       const updated = await regenerarCodigoPareamento(id, reason);
       queryClient.invalidateQueries({ queryKey: ["device", id] });
-      queryClient.invalidateQueries({ queryKey: ["device-pairing-events", id] });
+      queryClient.invalidateQueries({
+        queryKey: ["device-pairing-events", id],
+      });
       const revoked = updated?.revoked_sessions_count ?? 0;
       toast({
         title: "Código regenerado",
@@ -223,7 +296,8 @@ export default function DispositivoDetalhe() {
     } catch (error) {
       toast({
         title: "Erro ao regenerar código",
-        description: error?.message || "Não foi possível regenerar o pareamento.",
+        description:
+          error?.message || "Não foi possível regenerar o pareamento.",
         variant: "destructive",
       });
     } finally {
@@ -238,7 +312,9 @@ export default function DispositivoDetalhe() {
     try {
       const result = await forcarReparamento(id, reason);
       queryClient.invalidateQueries({ queryKey: ["device", id] });
-      queryClient.invalidateQueries({ queryKey: ["device-pairing-events", id] });
+      queryClient.invalidateQueries({
+        queryKey: ["device-pairing-events", id],
+      });
       const revoked = result?.revoked_sessions_count ?? 0;
       toast({
         title: "Reparamento forçado",
@@ -325,6 +401,9 @@ export default function DispositivoDetalhe() {
     refresh_playlist: Download,
     clear_cache: Trash2,
     reload_player: RotateCcw,
+    minimize_player: Minimize2,
+    restore_player: Maximize2,
+    show_desktop: Monitor,
     restart_app: Monitor,
     restart_device: Power,
     shutdown_device: Power,
@@ -333,11 +412,15 @@ export default function DispositivoDetalhe() {
   const devicePlatform = device?.player_version
     ? `${device.os || "?"} (player ${device.player_version})`
     : device?.os || null;
-  const osdEffectiveConfig = normalizeOSDConfig(device?.osd_config_effective || {});
+  const osdEffectiveConfig = normalizeOSDConfig(
+    device?.osd_config_effective || {},
+  );
   const osdPreviewConfig = normalizeOSDConfig({
     ...osdEffectiveConfig,
     ...Object.fromEntries(
-      Object.entries(osdLocalConfig || {}).filter(([, value]) => value !== null && value !== undefined),
+      Object.entries(osdLocalConfig || {}).filter(
+        ([, value]) => value !== null && value !== undefined,
+      ),
     ),
   });
 
@@ -432,6 +515,14 @@ export default function DispositivoDetalhe() {
           variant="warn"
         />
         <CommandGroup
+          title="Janela do player"
+          subtitle="Minimiza/restaura o Player Electron. Browser e Smart TV retornam nao suportado."
+          commands={COMMANDS_BY_GROUP.window}
+          icons={COMMAND_ICONS}
+          commandLoading={commandLoading}
+          onCommand={handleCommand}
+        />
+        <CommandGroup
           title="Energia (físico)"
           subtitle="Operações no SO. Requer permissão adequada por plataforma."
           commands={COMMANDS_BY_GROUP.power}
@@ -449,7 +540,9 @@ export default function DispositivoDetalhe() {
             onClick={() => setRegenerateDialogOpen(true)}
             title="Gera novo código de pareamento e expulsa todos os players atuais."
           >
-            <KeyRound className={cn("w-4 h-4 mr-2", pairingLoading && "animate-spin")} />
+            <KeyRound
+              className={cn("w-4 h-4 mr-2", pairingLoading && "animate-spin")}
+            />
             {pairingLoading ? "Regenerando..." : "Regenerar Pareamento"}
           </Button>
           <Button
@@ -460,7 +553,12 @@ export default function DispositivoDetalhe() {
             title="Expulsa players atuais MANTENDO o código de pareamento."
             className="text-orange-700 border-orange-300 hover:bg-orange-50"
           >
-            <KeyRound className={cn("w-4 h-4 mr-2", forceRepairLoading && "animate-spin")} />
+            <KeyRound
+              className={cn(
+                "w-4 h-4 mr-2",
+                forceRepairLoading && "animate-spin",
+              )}
+            />
             {forceRepairLoading ? "Forçando..." : "Forçar Reparamento"}
           </Button>
           <Button
@@ -612,6 +710,157 @@ export default function DispositivoDetalhe() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Comportamento do Player</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">Exposição do Desktop</p>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                Quando ativado, o player minimizará a janela periodicamente para
+                exibir a área de trabalho.
+              </p>
+            </div>
+            <Switch
+              checked={desktopExposureConfig.enabled}
+              onCheckedChange={(value) =>
+                setDesktopExposureConfig((prev) => ({
+                  ...prev,
+                  enabled: value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="desktop-exposure-interval">
+                Intervalo entre exposições (segundos)
+              </Label>
+              <Input
+                id="desktop-exposure-interval"
+                type="number"
+                min={10}
+                max={86400}
+                value={desktopExposureConfig.interval_seconds ?? ""}
+                disabled={!desktopExposureConfig.enabled}
+                onChange={(event) =>
+                  setDesktopExposureConfig((prev) => ({
+                    ...prev,
+                    interval_seconds:
+                      event.target.value === ""
+                        ? null
+                        : Number(event.target.value),
+                  }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Deve ser entre 10 e 86400 segundos.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="desktop-exposure-duration">
+                Duração da exposição (segundos)
+              </Label>
+              <Input
+                id="desktop-exposure-duration"
+                type="number"
+                min={1}
+                max={300}
+                value={desktopExposureConfig.duration_seconds ?? ""}
+                disabled={!desktopExposureConfig.enabled}
+                onChange={(event) =>
+                  setDesktopExposureConfig((prev) => ({
+                    ...prev,
+                    duration_seconds:
+                      event.target.value === ""
+                        ? null
+                        : Number(event.target.value),
+                  }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Deve ser menor que o intervalo e no máximo 300 segundos.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded border border-border bg-slate-50 p-4 text-sm text-slate-700">
+            {desktopExposureConfig.enabled ? (
+              <p>
+                A cada {desktopExposureConfig.interval_seconds} segundos, o
+                player exibirá o desktop por{" "}
+                {desktopExposureConfig.duration_seconds} segundos
+                {desktopExposureConfig.restore_fullscreen
+                  ? ", restaurando o fullscreen depois."
+                  : "."}
+              </p>
+            ) : (
+              <p>Rotina de exposição do desktop desativada.</p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Checkbox
+              id="desktop-exposure-restore"
+              checked={desktopExposureConfig.restore_fullscreen}
+              disabled={!desktopExposureConfig.enabled}
+              onCheckedChange={(value) =>
+                setDesktopExposureConfig((prev) => ({
+                  ...prev,
+                  restore_fullscreen: value,
+                }))
+              }
+            />
+            <Label htmlFor="desktop-exposure-restore" className="text-sm">
+              Restaurar fullscreen após exposição
+            </Label>
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={desktopExposureMutation.isPending}
+              onClick={() =>
+                setDesktopExposureConfig({
+                  enabled: false,
+                  interval_seconds: 10,
+                  duration_seconds: 10,
+                  restore_fullscreen: true,
+                })
+              }
+            >
+              Redefinir
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                desktopExposureTestLoading || !desktopExposureConfig.enabled
+              }
+              onClick={handleTestDesktopExposure}
+            >
+              {desktopExposureTestLoading ? "Testando..." : "Testar agora"}
+            </Button>
+            <Button
+              type="button"
+              disabled={desktopExposureMutation.isPending}
+              onClick={() =>
+                desktopExposureMutation.mutate(desktopExposureConfig)
+              }
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {desktopExposureMutation.isPending
+                ? "Salvando..."
+                : "Salvar configuração"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* SPEC 005 — política de áudio do dispositivo */}
       <Card>
         <CardHeader>
@@ -641,46 +890,62 @@ export default function DispositivoDetalhe() {
 /**
  * Bloco de botões agrupados por categoria — Operacional / Reset / Energia.
  */
-function CommandGroup({ title, subtitle, commands, icons, commandLoading, onCommand, variant }) {
-  const groupClass = {
-    destructive: "border-red-200 bg-red-50/30",
-    warn: "border-amber-200 bg-amber-50/30",
-  }[variant] || "border-border";
+function CommandGroup({
+  title,
+  subtitle,
+  commands,
+  icons,
+  commandLoading,
+  onCommand,
+  variant,
+}) {
+  const groupClass =
+    {
+      destructive: "border-red-200 bg-red-50/30",
+      warn: "border-amber-200 bg-amber-50/30",
+    }[variant] || "border-border";
 
-  const buttonClass = {
-    destructive: "text-red-700 border-red-300 hover:bg-red-50",
-    warn: "text-amber-800 border-amber-300 hover:bg-amber-50",
-  }[variant] || "";
+  const buttonClass =
+    {
+      destructive: "text-red-700 border-red-300 hover:bg-red-50",
+      warn: "text-amber-800 border-amber-300 hover:bg-amber-50",
+    }[variant] || "";
 
   return (
     <div className={`border rounded-lg p-3 ${groupClass}`}>
       <div className="mb-2">
         <h4 className="text-sm font-semibold">{title}</h4>
-        {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+        {subtitle && (
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
+        )}
       </div>
       <div className="flex flex-wrap gap-2">
-        {commands.map(({ command, label, tooltip }) => {
-          const Icon = icons[command] || RefreshCw;
-          return (
-            <Button
-              key={command}
-              variant="outline"
-              size="sm"
-              disabled={commandLoading === command}
-              onClick={() => onCommand(command, label)}
-              title={tooltip}
-              className={buttonClass}
-            >
-              <Icon
-                className={cn(
-                  "w-4 h-4 mr-2",
-                  commandLoading === command && "animate-spin",
-                )}
-              />
-              {commandLoading === command ? "Enviando..." : label}
-            </Button>
-          );
-        })}
+        {commands.map(
+          ({ command, label, tooltip, payload, expiresInSeconds }) => {
+            const Icon = icons[command] || RefreshCw;
+            return (
+              <Button
+                key={command}
+                variant="outline"
+                size="sm"
+                disabled={commandLoading === command}
+                onClick={() =>
+                  onCommand(command, label, { payload, expiresInSeconds })
+                }
+                title={tooltip}
+                className={buttonClass}
+              >
+                <Icon
+                  className={cn(
+                    "w-4 h-4 mr-2",
+                    commandLoading === command && "animate-spin",
+                  )}
+                />
+                {commandLoading === command ? "Enviando..." : label}
+              </Button>
+            );
+          },
+        )}
       </div>
     </div>
   );

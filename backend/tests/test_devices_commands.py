@@ -233,5 +233,33 @@ class TestGetDeviceEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class TestWindowDeviceCommands(unittest.TestCase):
+    def test_window_commands_are_valid(self):
+        from api.v1.devices import VALID_COMMANDS
+
+        self.assertIn("minimize_player", VALID_COMMANDS)
+        self.assertIn("restore_player", VALID_COMMANDS)
+        self.assertIn("show_desktop", VALID_COMMANDS)
+
+    def test_show_desktop_duration_must_be_in_range(self):
+        from fastapi import HTTPException
+        from api.v1.devices import _validate_device_command_payload
+
+        _validate_device_command_payload("show_desktop", {"duration_seconds": 1})
+        _validate_device_command_payload("show_desktop", {"duration_seconds": 300})
+
+        with self.assertRaises(HTTPException) as low:
+            _validate_device_command_payload("show_desktop", {"duration_seconds": 0})
+        self.assertEqual(low.exception.status_code, 422)
+
+        with self.assertRaises(HTTPException) as high:
+            _validate_device_command_payload("show_desktop", {"duration_seconds": 301})
+        self.assertEqual(high.exception.status_code, 422)
+
+        with self.assertRaises(HTTPException) as invalid:
+            _validate_device_command_payload("show_desktop", {"duration_seconds": "10"})
+        self.assertEqual(invalid.exception.status_code, 422)
+
+
 if __name__ == "__main__":
     unittest.main()

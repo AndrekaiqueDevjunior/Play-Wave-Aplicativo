@@ -379,6 +379,26 @@ class DeviceOSDConfigUpdate(BaseSchema):
     font_size: Optional[OSDFontSizeEnum] = None
 
 
+class DeviceDesktopExposureConfigUpdate(BaseSchema):
+    enabled: Optional[bool] = None
+    interval_seconds: Optional[int] = Field(None, ge=10, le=86400)
+    duration_seconds: Optional[int] = Field(None, ge=1, le=300)
+    restore_fullscreen: Optional[bool] = None
+
+
+class DeviceDesktopExposureConfig(BaseSchema):
+    enabled: bool
+    interval_seconds: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    restore_fullscreen: bool
+    updated_at: Optional[datetime] = None
+
+
+class DeviceDesktopExposureConfigResponse(BaseSchema):
+    id: str
+    desktop_exposure_config: DeviceDesktopExposureConfig
+
+
 class TenantOSDConfigUpdate(OSDConfig):
     pass
 
@@ -391,6 +411,7 @@ class DeviceResponse(DeviceBase, TimestampedSchema):
     last_connection: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
     config_version: Optional[str] = None
+    schedule_version: int = 0
     current_campaign: Optional[str] = None
     current_campaign_id: Optional[str] = None
     pairing_version: Optional[int] = 1
@@ -399,6 +420,7 @@ class DeviceResponse(DeviceBase, TimestampedSchema):
     audio_policy_default: Optional[AudioPolicyEnum] = None  # SPEC 005
     osd_config_local: Optional[DeviceOSDConfigUpdate] = None
     osd_config_effective: Optional[OSDConfig] = None
+    desktop_exposure_config: Optional[DeviceDesktopExposureConfig] = None
     current_audio_track_id: Optional[str] = None
     current_audio_track_name: Optional[str] = None
     current_audio_track_started_at: Optional[datetime] = None
@@ -421,6 +443,7 @@ class DeviceCommandCreate(BaseSchema):
         ...,
         description=(
             "sync | refresh_playlist | clear_cache | reload_player | "
+            "minimize_player | restore_player | show_desktop | "
             "restart_app | restart_device | shutdown_device | "
             "screenshot | take_screenshot | set_volume | mute | unmute"
         ),
@@ -571,6 +594,7 @@ class CampaignUpdate(BaseSchema):
 class AudioPlaylistBase(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
+    category_id: Optional[str] = None
     volume_default: Optional[float] = Field(0.7, ge=0.0, le=1.0)
     loop_enabled: Optional[bool] = True
     shuffle_enabled: Optional[bool] = False
@@ -590,6 +614,7 @@ class AudioPlaylistCreate(AudioPlaylistBase):
 class AudioPlaylistUpdate(BaseSchema):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
+    category_id: Optional[str] = None
     status: Optional[AudioPlaylistStatusEnum] = None
     volume_default: Optional[float] = Field(None, ge=0.0, le=1.0)
     loop_enabled: Optional[bool] = None
@@ -644,6 +669,7 @@ class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[AudioPlaylistStatusEnum] = None
+    version: int = 0
     items: Optional[List[AudioPlaylistItemResponse]] = None
 
 
@@ -652,6 +678,7 @@ class CampaignResponse(CampaignBase, TimestampedSchema):
     tenant_id: Optional[str] = None
     total_views: Optional[int] = 0
     config_version: Optional[str] = None
+    campaign_version: int = 0
     audio_playlist: Optional[AudioPlaylistResponse] = None
     audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
 
@@ -718,6 +745,9 @@ class MediaBase(BaseSchema):
     is_active: Optional[bool] = True
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+    start_time: Optional[str] = Field(None, max_length=10)  # TASK 17: HH:MM format
+    end_time: Optional[str] = Field(None, max_length=10)    # TASK 17: HH:MM format
+    days_of_week: Optional[List[str]] = None  # TASK 17: ["mon", "tue", "wed", ...]
     extra_metadata: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
@@ -763,6 +793,9 @@ class MediaUpdate(BaseSchema):
     is_active: Optional[bool] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+    start_time: Optional[str] = Field(None, max_length=10)  # TASK 17
+    end_time: Optional[str] = Field(None, max_length=10)    # TASK 17
+    days_of_week: Optional[List[str]] = None  # TASK 17
     extra_metadata: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
@@ -793,6 +826,9 @@ class MediaResponse(MediaBase, TimestampedSchema):
     usage_count: Optional[int] = None
     audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
     has_audio: Optional[bool] = None               # SPEC 005
+    start_time: Optional[str] = None               # TASK 17
+    end_time: Optional[str] = None                 # TASK 17
+    days_of_week: Optional[List[str]] = None       # TASK 17
 
 
 class MediaVersionResponse(BaseSchema):
@@ -843,6 +879,7 @@ class AudioTrackBase(BaseSchema):
     file_size: Optional[int] = None
     duration_seconds: Optional[int] = None
     category: Optional[AudioTrackCategoryEnum] = AudioTrackCategoryEnum.MUSIC
+    category_id: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -859,6 +896,7 @@ class AudioTrackUpdate(BaseSchema):
     file_size: Optional[int] = None
     duration_seconds: Optional[int] = None
     category: Optional[AudioTrackCategoryEnum] = None
+    category_id: Optional[str] = None
     status: Optional[AudioTrackStatusEnum] = None
     notes: Optional[str] = None
 
@@ -869,16 +907,42 @@ class AudioTrackResponse(AudioTrackBase, TimestampedSchema):
     status: Optional[AudioTrackStatusEnum] = None
 
 
+# AudioCategory Schemas (TASK 02 — categorias personalizadas)
+class AudioCategoryBase(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class AudioCategoryCreate(AudioCategoryBase):
+    tenant_id: Optional[str] = None
+
+
+class AudioCategoryUpdate(BaseSchema):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class AudioCategoryResponse(BaseSchema):
+    id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    name: str
+    slug: str
+    is_default: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 # AudioFolder Schemas
 class AudioFolderBase(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
+    category_id: Optional[str] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     start_time: Optional[str] = Field(None, max_length=10)
     end_time: Optional[str] = Field(None, max_length=10)
     schedule_days: Optional[List[str]] = None
     is_active: Optional[bool] = True
+    loop_enabled: Optional[bool] = True
+    shuffle_enabled: Optional[bool] = False
 
     @field_validator('starts_at', 'ends_at', mode='before')
     @classmethod
@@ -902,6 +966,7 @@ class AudioFolderCreate(AudioFolderBase):
 class AudioFolderUpdate(BaseSchema):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
+    category_id: Optional[str] = None
     status: Optional[AudioFolderStatusEnum] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
@@ -909,6 +974,8 @@ class AudioFolderUpdate(BaseSchema):
     end_time: Optional[str] = Field(None, max_length=10)
     schedule_days: Optional[List[str]] = None
     is_active: Optional[bool] = None
+    loop_enabled: Optional[bool] = None
+    shuffle_enabled: Optional[bool] = None
 
     @field_validator('starts_at', 'ends_at', mode='before')
     @classmethod
@@ -967,6 +1034,15 @@ class AudioFolderResponse(AudioFolderBase, TimestampedSchema):
     tenant_id: Optional[str] = None
     status: Optional[AudioFolderStatusEnum] = None
     tracks: Optional[List[AudioFolderTrackResponse]] = None
+    loop_enabled: bool = True
+    shuffle_enabled: bool = False
+
+
+class PlaybackModeEnum(str, Enum):
+    SEQUENTIAL = "sequential"
+    SHUFFLE = "shuffle"
+    SHUFFLE_NO_REPEAT = "shuffle_no_repeat"
+    LOOP = "loop"
 
 
 class AudioPlaylistPlayModeEnum(str, Enum):

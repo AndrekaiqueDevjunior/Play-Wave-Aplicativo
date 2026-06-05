@@ -11,6 +11,9 @@ export const COMMAND_LABELS = {
   refresh_playlist: "Atualizar Playlist",
   clear_cache:      "Limpar Cache",
   reload_player:    "Recarregar Player",
+  minimize_player:  "Minimizar Player",
+  restore_player:   "Restaurar Player",
+  show_desktop:     "Mostrar Desktop",
   restart_app:      "Reiniciar App",
   restart:          "Reiniciar App",
   restart_device:   "Reiniciar Dispositivo",
@@ -36,6 +39,17 @@ export const COMMANDS_BY_GROUP = {
   ],
   reset: [
     { command: "restart_app", label: "Reiniciar App", tooltip: "Encerra e reabre o app (Electron) ou recreate da Activity (Android). Web puro: não suportado." },
+  ],
+  window: [
+    { command: "minimize_player", label: "Minimizar", tooltip: "Minimiza a janela do Player. Suportado inicialmente em Electron Windows/Linux." },
+    { command: "restore_player", label: "Restaurar", tooltip: "Restaura e foca a janela do Player Electron." },
+    {
+      command: "show_desktop",
+      label: "Mostrar desktop",
+      tooltip: "Minimiza temporariamente e restaura automaticamente em 10 segundos.",
+      payload: { duration_seconds: 10 },
+      expiresInSeconds: 300,
+    },
   ],
   power: [
     { command: "restart_device",  label: "Reiniciar Dispositivo", tooltip: "Reboot físico do OS. Requer sudo (Linux), Admin (Windows) ou Device Owner (Android)." },

@@ -99,6 +99,12 @@ export const atualizarOSDConfigDispositivo = (id, payload) =>
     body: JSON.stringify(payload),
   });
 
+export const atualizarDesktopExposureConfigDispositivo = (id, payload) =>
+  apiFetch(`/devices/${id}/desktop-exposure-config`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
 export const deletarDispositivo = (id) =>
   apiFetch(`/devices/${id}`, { method: "DELETE" });
 
@@ -130,7 +136,8 @@ export const buscarMetricasDispositivo = (deviceId) =>
 export const enviarComando = (deviceId, comando, opts = {}) => {
   const body = { command_type: comando };
   if (opts.payload) body.payload = opts.payload;
-  if (opts.expiresInSeconds != null) body.expires_in_seconds = opts.expiresInSeconds;
+  if (opts.expiresInSeconds != null)
+    body.expires_in_seconds = opts.expiresInSeconds;
   return apiFetch(`/devices/${deviceId}/command`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -187,7 +194,9 @@ export const forcarReparamento = (deviceId, reason = null) =>
  */
 export const listarEventosPareamento = (deviceId, params = {}) => {
   const qs = new URLSearchParams(
-    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== "")),
+    Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v != null && v !== ""),
+    ),
   ).toString();
   return apiFetch(`/devices/${deviceId}/pairing-events${qs ? `?${qs}` : ""}`);
 };
@@ -225,7 +234,14 @@ export const marcarComandoIniciado = (deviceId, commandId, token) =>
     redirectOnUnauthorized: false,
   });
 
-export const ackComando = (deviceId, commandId, token, success = true, errorMessage = null, result = null) =>
+export const ackComando = (
+  deviceId,
+  commandId,
+  token,
+  success = true,
+  errorMessage = null,
+  result = null,
+) =>
   apiFetch(`/devices/${deviceId}/commands/${commandId}/ack`, {
     method: "POST",
     token,

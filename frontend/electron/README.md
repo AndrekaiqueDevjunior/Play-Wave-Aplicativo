@@ -22,6 +22,108 @@ A partir da SPEC 003 o Electron implementa os IPC handlers:
 | `player:take_screenshot` | `mainWindow.webContents.capturePage()` |
 | `player:restart`         | legado, alias de `restart_app` |
 
+## SPEC 009 — Window Control Commands
+
+A partir da SPEC 009 o Electron implementa os IPC handlers para minimização programada:
+
+| Canal | Ação | Parâmetros |
+|---|---|---|
+| `player:minimize_window`  | `mainWindow.minimize()` | — |
+| `player:restore_window`   | `mainWindow.restore()` + restaura fullscreen | — |
+| `player:show_desktop`     | Minimiza + auto-restore | `duration_seconds` (1-300s, default 10s) |
+
+### Comportamento
+
+**`minimize_window`**: Minimiza a janela para a taskbar/tray.
+
+**`restore_window`**: Restaura a janela do minimize, preservando estado anterior (fullscreen, kiosk, etc).
+
+**`show_desktop`** (Principal): Minimiza a janela por N segundos, mostrando o desktop. Após o timeout, restaura automaticamente para o estado anterior (fullscreen, kiosk, etc).
+
+#### Snapshot de Estado
+
+Antes de minimizar, `show_desktop` captura um snapshot do estado atual:
+
+```javascript
+const snapshot = {
+  fullscreen: mainWindow.isFullScreen(),
+  kiosk: mainWindow.isKiosk(),
+  alwaysOnTop: mainWindow.isAlwaysOnTop(),
+}
+```
+
+Mesmo que o usuário saia de fullscreen manualmente durante a exposição do desktop, o restore usa o snapshot original — garantindo que a janela volta ao estado de kiosk.
+
+#### Validação de Input
+
+O parâmetro `duration_seconds` é validado e clamped:
+
+```javascript
+const duration = Math.max(1, Math.min(300, Math.round(Number(durationSeconds) || 10)));
+```
+
+- Mínimo: 1 segundo
+- Máximo: 300 segundos
+- Padrão: 10 segundos
+- Tipo: int (não aceita strings)
+
+### Uso (Backend → Electron)
+
+O backend envia um comando `show_desktop` via API:
+
+```bash
+POST /devices/{device_id}/commands
+Content-Type: application/json
+
+{
+  "command_type": "show_desktop",
+  "payload": {
+    "duration_seconds": 5,
+    "restore_fullscreen": true
+  }
+}
+```
+
+O player recebe via SSE e executa:
+
+```javascript
+await callNativeWindowCommand("player:show_desktop", 5, true);
+```
+
+### Scheduler Local
+
+O player também pode agendar `show_desktop` localmente (sem backend):
+
+```javascript
+// Em frontend/src/player-core/windowExposureScheduler.js
+// Agendado a cada interval_seconds, executa show_desktop com duration_seconds
+```
+
+O scheduler:
+- ✅ Respeita a fase do player (não executa em `loading`/`waiting`)
+- ✅ Cancela timers anteriores (previne acúmulo)
+- ✅ Continua após SSE reconectar
+- ✅ É 100% local (não faz chamadas de API)
+
+### Plataformas Suportadas
+
+- ✅ **Windows Electron**: Totalmente suportado
+- ✅ **Linux Electron**: Suportado (teórico, testar em produção)
+- ❌ **Android/Smart TV/iOS**: Retorna `platform_unsupported`
+
+Veja [`LIMITACOES_PLATAFORMAS.md`](./LIMITACOES_PLATAFORMAS.md) para detalhes.
+
+### Segurança
+
+- ✅ Sem shell execution (apenas Electron APIs)
+- ✅ Input validado e clamped (não vulnerable a injection)
+- ✅ Context isolation ativado (`contextIsolation: true`)
+- ✅ Preload bridge expõe apenas funções seguras
+
+Veja [`VALIDACAO_SEGURANCA.md`](./VALIDACAO_SEGURANCA.md) para análise completa.
+
+---
+
 ## Pré-requisitos para shutdown/reboot
 
 ### Windows

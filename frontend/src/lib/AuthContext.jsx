@@ -1,7 +1,10 @@
 import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+let API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+if (typeof window !== "undefined" && window.__ELECTRON__?.backendUrl) {
+  API_URL = window.__ELECTRON__.backendUrl.replace(/\/$/, "");
+}
 
 // ─── Utilitários de JWT ──────────────────────────────────────────────────────
 
@@ -142,7 +145,7 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  // Login — lança exceção com mensagem traduzida se falhar
+  // Login — chama o backend e armazena o JWT real
   const login = useCallback(async (email, password, remember = false) => {
     const res = await fetch(`${API_URL}/api/auth/login`, {
       method: "POST",
@@ -151,21 +154,22 @@ export function AuthProvider({ children }) {
     });
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const status = res.status;
-
-      if (status === 401) throw new Error("E-mail ou senha incorretos.");
-      if (status === 403) throw new Error("Conta inativa. Contate o administrador.");
-      if (status === 422) throw new Error("Dados inválidos. Verifique e-mail e senha.");
-      if (status >= 500) throw new Error("Erro no servidor. Tente novamente em instantes.");
-      throw new Error(body.detail || "Erro ao fazer login.");
+      let detail = "Erro ao fazer login";
+      try {
+        const body = await res.json();
+        detail = body.detail || detail;
+      } catch { /* ignore */ }
+      throw new Error(detail);
     }
 
     const data = await res.json();
-    storeSession(data.access_token, data.user, remember);
-    setUser(data.user);
+    const token = data.access_token;
+    const userData = data.user ?? { email };
+
+    storeSession(token, userData, remember);
+    setUser(userData);
     setIsAuthenticated(true);
-    return data.user;
+    return userData;
   }, []);
 
   // Logout — notifica o backend e limpa sessão local

@@ -180,7 +180,7 @@ export default function PairingScreen({ pairingCode, apiStatus, forceRepairReaso
 
       {/* Bottom bar */}
       <div className="absolute bottom-0 left-0 right-0 border-t border-white/[0.05] px-8 py-4 flex items-center justify-between">
-        <span className="text-xs text-white/20">PlayWave Player v3.0</span>
+        <span className="text-xs text-white/20">PlayWave Player v3.1.0</span>
         <span className="text-xs text-white/20">Digital Signage Platform</span>
       </div>
     </div>

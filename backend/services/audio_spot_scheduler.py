@@ -8,6 +8,8 @@ Regras:
 2. Filtra por horário e período (similar a folder_schedules).
 3. Calcula o próximo spot elegível baseado no intervalo_seconds.
 4. Aplica insertion_policy para decidir como inserir (interrupt, wait, mix).
+
+TASK 08: Logs estruturados para diagnosticar spots não tocando.
 """
 
 from datetime import datetime, time as time_class, timedelta
@@ -15,6 +17,7 @@ from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
 from core.models import AudioSpotSchedule, AudioSpot, AudioPlaylist
+from core.logging_config import log_spot_check, log_spot_eligible, log_spot_ineligible, log_spot_due
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
@@ -65,13 +68,38 @@ def get_eligible_spots(
 
     eligible = []
 
+    # TASK 08: Log inicial de check
+    log_spot_check(playlist_id, len(schedules), 0, now)
+
     for schedule in schedules:
         if not _schedule_matches_now(schedule, current_date, current_time):
+            # TASK 08: Log de rejeição
+            log_spot_ineligible(
+                str(schedule.id),
+                "schedule_time_mismatch",
+                {
+                    "start_time": schedule.start_time,
+                    "end_time": schedule.end_time,
+                    "current_time": current_time.isoformat(),
+                    "starts_at": schedule.starts_at.isoformat() if schedule.starts_at else None,
+                    "ends_at": schedule.ends_at.isoformat() if schedule.ends_at else None,
+                },
+            )
             continue
 
         spot = db.query(AudioSpot).filter(AudioSpot.id == schedule.spot_id).first()
         if not spot:
+            log_spot_ineligible(str(schedule.id), "spot_not_found")
             continue
+
+        # TASK 08: Log de spot elegível
+        log_spot_eligible(
+            str(spot.id),
+            spot.name,
+            str(schedule.id),
+            schedule.interval_seconds,
+            schedule.priority,
+        )
 
         eligible.append((spot, schedule))
 
@@ -121,6 +149,12 @@ def get_next_spot_time(
         if spot_time > now and (next_time is None or spot_time < next_time):
             next_time = spot_time
             next_spot = (spot_time, spot, schedule)
+
+    # TASK 08: Log quando spot está due
+    if next_spot:
+        spot_time, spot, schedule = next_spot
+        time_until = (spot_time - now).total_seconds()
+        log_spot_due(str(spot.id), spot.name, schedule.interval_seconds, time_until)
 
     return next_spot
 
