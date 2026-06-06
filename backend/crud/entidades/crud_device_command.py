@@ -15,8 +15,7 @@ STUCK_SENT_TIMEOUT_MINUTES = 2
 PENDING_STATUSES = (
     DeviceCommandStatus.PENDING,
     DeviceCommandStatus.SENT,
-    DeviceCommandStatus.RECEIVED,
-    DeviceCommandStatus.EXECUTING,
+    DeviceCommandStatus.EXECUTED,
 )
 
 
@@ -182,14 +181,14 @@ class CRUDDeviceCommand:
         return obj
 
     def mark_received(self, db: Session, *, obj: DeviceCommand) -> DeviceCommand:
-        obj.status = DeviceCommandStatus.RECEIVED
+        obj.status = DeviceCommandStatus.EXECUTED
         obj.received_at = datetime.utcnow()
         db.commit()
         db.refresh(obj)
         return obj
 
     def mark_executing(self, db: Session, *, obj: DeviceCommand) -> DeviceCommand:
-        obj.status = DeviceCommandStatus.EXECUTING
+        obj.status = DeviceCommandStatus.EXECUTED
         obj.started_at = datetime.utcnow()
         db.commit()
         db.refresh(obj)
