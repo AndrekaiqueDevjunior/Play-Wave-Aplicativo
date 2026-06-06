@@ -1148,14 +1148,25 @@ class AudioSpotResponse(AudioSpotBase, TimestampedSchema):
     tenant_id: Optional[str] = None
 
 
+_TIME_RE = __import__('re').compile(r'^\d{2}:\d{2}$')
+_VALID_DOW = set(range(7))  # 0=seg ... 6=dom
+
+
 class AudioSpotScheduleBase(BaseSchema):
     spot_id: str
+
+    # Escopos: pelo menos um deve existir (validado em Create)
+    playlist_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    device_id: Optional[str] = None
+
     interval_seconds: int = Field(..., gt=0)
     start_time: Optional[str] = Field(None, max_length=10)
     end_time: Optional[str] = Field(None, max_length=10)
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     days_of_week: Optional[List[int]] = None
+    insertion_policy: Optional[str] = None  # override; None = usar do AudioSpot
     priority: Optional[int] = Field(0, ge=0)
     is_active: Optional[bool] = True
 
@@ -1166,6 +1177,29 @@ class AudioSpotScheduleBase(BaseSchema):
             return f"{v}T00:00:00"
         return v
 
+    @field_validator('start_time', 'end_time', mode='before')
+    @classmethod
+    def validate_time_format(cls, v):
+        if v is not None and not _TIME_RE.match(str(v)):
+            raise ValueError("Horário deve estar no formato HH:MM")
+        return v
+
+    @field_validator('days_of_week', mode='before')
+    @classmethod
+    def validate_days(cls, v):
+        if v is not None:
+            invalid = [d for d in v if d not in _VALID_DOW]
+            if invalid:
+                raise ValueError(f"days_of_week aceita apenas [0-6] (0=seg, 6=dom). Inválidos: {invalid}")
+        return v
+
+    @field_validator('insertion_policy', mode='before')
+    @classmethod
+    def validate_insertion_policy(cls, v):
+        if v is not None and v not in ('interrupt', 'wait_silence', 'fade_mix'):
+            raise ValueError("insertion_policy deve ser interrupt, wait_silence ou fade_mix")
+        return v
+
     @model_validator(mode='after')
     def validate_period(self):
         if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
@@ -1174,17 +1208,28 @@ class AudioSpotScheduleBase(BaseSchema):
 
 
 class AudioSpotScheduleCreate(AudioSpotScheduleBase):
-    pass
+    @model_validator(mode='after')
+    def validate_at_least_one_scope(self):
+        if not any([self.playlist_id, self.campaign_id, self.device_id]):
+            raise ValueError(
+                "AudioSpotSchedule precisa de pelo menos um escopo: "
+                "playlist_id, campaign_id ou device_id"
+            )
+        return self
 
 
 class AudioSpotScheduleUpdate(BaseSchema):
     spot_id: Optional[str] = None
+    playlist_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    device_id: Optional[str] = None
     interval_seconds: Optional[int] = Field(None, gt=0)
     start_time: Optional[str] = Field(None, max_length=10)
     end_time: Optional[str] = Field(None, max_length=10)
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     days_of_week: Optional[List[int]] = None
+    insertion_policy: Optional[str] = None
     priority: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
 
@@ -1193,6 +1238,29 @@ class AudioSpotScheduleUpdate(BaseSchema):
     def coerce_date_str(cls, v):
         if isinstance(v, str) and v and len(v) == 10 and 'T' not in v:
             return f"{v}T00:00:00"
+        return v
+
+    @field_validator('start_time', 'end_time', mode='before')
+    @classmethod
+    def validate_time_format(cls, v):
+        if v is not None and not _TIME_RE.match(str(v)):
+            raise ValueError("Horário deve estar no formato HH:MM")
+        return v
+
+    @field_validator('days_of_week', mode='before')
+    @classmethod
+    def validate_days(cls, v):
+        if v is not None:
+            invalid = [d for d in v if d not in _VALID_DOW]
+            if invalid:
+                raise ValueError(f"days_of_week aceita apenas [0-6]. Inválidos: {invalid}")
+        return v
+
+    @field_validator('insertion_policy', mode='before')
+    @classmethod
+    def validate_insertion_policy(cls, v):
+        if v is not None and v not in ('interrupt', 'wait_silence', 'fade_mix'):
+            raise ValueError("insertion_policy deve ser interrupt, wait_silence ou fade_mix")
         return v
 
     @model_validator(mode='after')
@@ -1204,7 +1272,10 @@ class AudioSpotScheduleUpdate(BaseSchema):
 
 class AudioSpotScheduleResponse(AudioSpotScheduleBase, TimestampedSchema):
     id: str
-    playlist_id: str
+    tenant_id: Optional[str] = None
+    playlist_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    device_id: Optional[str] = None
     spot_id: str
 
 

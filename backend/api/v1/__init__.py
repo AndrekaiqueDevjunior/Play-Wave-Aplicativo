@@ -14,6 +14,7 @@ from .schedule import router as schedule_router
 from .monitoring import router as monitoring_router
 from .tenants import router as tenants_router
 from .plans import router as plans_router
+from .player_schedule import router as player_schedule_router
 
 __all__ = [
     "auth_router",
@@ -36,4 +37,5 @@ __all__ = [
     "monitoring_router",
     "tenants_router",
     "plans_router",
+    "player_schedule_router",
 ]

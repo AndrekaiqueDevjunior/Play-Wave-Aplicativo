@@ -80,6 +80,8 @@ class Tenant(Base):
     audio_tracks = relationship("AudioTrack", back_populates="tenant")
     audio_playlists = relationship("AudioPlaylist", back_populates="tenant")
     audio_folders = relationship("AudioFolder", back_populates="tenant")
+    audio_spots = relationship("AudioSpot", back_populates="tenant")
+    audio_spot_schedules = relationship("AudioSpotSchedule", back_populates="tenant")
     device_events = relationship("DeviceEvent", back_populates="tenant")
     playback_logs = relationship("PlaybackLog", back_populates="tenant")
     view_reports = relationship("ViewReport", back_populates="tenant")
@@ -221,6 +223,12 @@ class Device(Base):
     playback_logs = relationship("PlaybackLog", back_populates="device")
     view_reports = relationship("ViewReport", back_populates="device")
     audio_playback_events = relationship("AudioPlaybackEvent", back_populates="device", cascade="all, delete-orphan")
+    spot_schedules = relationship(
+        "AudioSpotSchedule",
+        back_populates="device",
+        foreign_keys="AudioSpotSchedule.device_id",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def osd_config_local(self) -> dict:
@@ -336,7 +344,7 @@ class Campaign(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="campaigns")
-    devices = relationship("Device", foreign_keys=[Device.current_campaign_id])
+    devices = relationship("Device", foreign_keys=[Device.current_campaign_id], back_populates="campaign")
     playback_logs = relationship("PlaybackLog", back_populates="campaign")
     view_reports = relationship("ViewReport", back_populates="campaign")
     audio_playlist = relationship("AudioPlaylist", foreign_keys=[audio_playlist_id])
@@ -345,6 +353,12 @@ class Campaign(Base):
         back_populates="campaign",
         cascade="all, delete-orphan",
         order_by="CampaignPlaylistItem.order_index",
+    )
+    spot_schedules = relationship(
+        "AudioSpotSchedule",
+        back_populates="campaign",
+        foreign_keys="AudioSpotSchedule.campaign_id",
+        cascade="all, delete-orphan",
     )
 
 
@@ -749,7 +763,7 @@ class AudioSpot(Base):
     __tablename__ = "audio_spots"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     track_id = Column(
         UUID(as_uuid=True),
         ForeignKey("audio_tracks.id", ondelete="RESTRICT"),
@@ -769,7 +783,7 @@ class AudioSpot(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    tenant = relationship("Tenant")
+    tenant = relationship("Tenant", back_populates="audio_spots")
     track = relationship("AudioTrack", back_populates="spots")
     schedules = relationship(
         "AudioSpotSchedule",
@@ -781,35 +795,75 @@ class AudioSpot(Base):
 class AudioSpotSchedule(Base):
     __tablename__ = "audio_spot_schedules"
     __table_args__ = (
-        UniqueConstraint("spot_id", "playlist_id", name="uq_audio_spot_schedules_spot_playlist"),
+        # Removida UniqueConstraint antiga (spot_id, playlist_id) que bloqueava
+        # múltiplos agendamentos do mesmo spot em horários diferentes.
+        # Duplicidade controlada na service layer.
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # ── Isolamento multi-tenant ──────────────────────────────────────────────
+    tenant_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,   # nullable durante migração; backfill feito via migration
+        index=True,
+    )
+
+    # ── Spot obrigatório ─────────────────────────────────────────────────────
     spot_id = Column(
         UUID(as_uuid=True),
         ForeignKey("audio_spots.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+
+    # ── Escopos opcionais: pelo menos um deve estar preenchido ───────────────
     playlist_id = Column(
         UUID(as_uuid=True),
         ForeignKey("audio_playlists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    campaign_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    device_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── Agendamento ──────────────────────────────────────────────────────────
     interval_seconds = Column(Integer, nullable=False)
     start_time = Column(String(10), nullable=True)
     end_time = Column(String(10), nullable=True)
-    starts_at = Column(DateTime, nullable=True)
-    ends_at = Column(DateTime, nullable=True)
+    starts_at = Column(DateTime, nullable=True, index=True)
+    ends_at = Column(DateTime, nullable=True, index=True)
     days_of_week = Column(JSON, nullable=True)
+
+    # ── Comportamento ────────────────────────────────────────────────────────
+    # Override de insertion_policy do spot (None = usar do AudioSpot)
+    insertion_policy = Column(
+        SQLEnum(AudioSpotInsertionPolicy, name="audio_spot_insertion_policy", values_callable=enum_values),
+        nullable=True,
+    )
     priority = Column(Integer, default=0, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # ── Relationships ────────────────────────────────────────────────────────
+    tenant = relationship("Tenant", back_populates="audio_spot_schedules")
     spot = relationship("AudioSpot", back_populates="schedules")
     playlist = relationship("AudioPlaylist", back_populates="spot_schedules")
+    campaign = relationship("Campaign", back_populates="spot_schedules")
+    device = relationship("Device", back_populates="spot_schedules")
 
 
 class AudioPlaybackEventType(str, enum.Enum):

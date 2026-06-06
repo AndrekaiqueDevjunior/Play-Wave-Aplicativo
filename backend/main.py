@@ -16,6 +16,7 @@ from api.v1 import (
     audio_events_router,
     dashboard_router, reports_router, schedule_router,
     monitoring_router, tenants_router, plans_router,
+    player_schedule_router,
 )
 from core.database import engine, Base
 from core.config import settings
@@ -202,6 +203,7 @@ app.include_router(schedule_router)
 app.include_router(monitoring_router)
 app.include_router(tenants_router)
 app.include_router(plans_router)
+app.include_router(player_schedule_router, prefix="/api/v1")
 
 
 @app.get("/")
