@@ -33,9 +33,16 @@ function inDayOfWeek(daysOfWeek, date) {
 }
 
 function scheduleActive(sched, date) {
+  // Validar período de datas (starts_at / ends_at)
+  if (sched.starts_at && date < new Date(sched.starts_at)) return false;
+  if (sched.ends_at && date > new Date(sched.ends_at)) return false;
+
+  // Validar janela de hora do dia
   const hhmm = nowHHMM(date);
   if (sched.start_time && hhmm < sched.start_time) return false;
   if (sched.end_time && hhmm > sched.end_time) return false;
+
+  // Validar dia da semana
   if (!inDayOfWeek(sched.days_of_week, date)) return false;
   return true;
 }

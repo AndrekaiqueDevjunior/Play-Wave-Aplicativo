@@ -32,6 +32,7 @@ import { PairingStorage, PlaylistCache, PlayerState } from "@/player-core/storag
 import { executeCommand } from "@/player-core/commands";
 import { createCommandPoller } from "@/player-core/commandPoller";
 import { resolveActiveRadio, hasAnyRadioContent } from "@/player-core/radioScheduleResolver";
+import { spotScheduleResolver } from "@/player-core/spotScheduleResolver";
 import { onForceRepair } from "@/player-core/repair";
 import { createWindowExposureScheduler } from "@/player-core/windowExposureScheduler";
 import { createDesktopExposureTimeScheduler } from "@/player-core/desktopExposureTimeScheduler";
@@ -1249,32 +1250,18 @@ export default function Player() {
 
     const timers = [];
 
-    spotSchedules.forEach((sched) => {
-      if (!sched.file_url || !sched.interval_seconds) return;
+    // Filtra spots elegíveis agora (valida horário, data e dias da semana)
+    const eligibleNow = spotScheduleResolver.getEligibleSpots(spotSchedules, new Date());
 
-      const now = new Date();
-      const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      const inWindow =
-        (!sched.start_time || hhmm >= sched.start_time) &&
-        (!sched.end_time || hhmm <= sched.end_time);
-
-      if (!inWindow) return;
-
+    eligibleNow.forEach((sched) => {
       const intervalMs = sched.interval_seconds * 1000;
       const url = assetUrl(sched.file_url);
       const policy = sched.insertion_policy || "interrupt";
 
       const id = setInterval(() => {
-        const nowCheck = new Date();
-        const t = `${String(nowCheck.getHours()).padStart(2, "0")}:${String(nowCheck.getMinutes()).padStart(2, "0")}`;
-        const stillInWindow =
-          (!sched.start_time || t >= sched.start_time) &&
-          (!sched.end_time || t <= sched.end_time);
-        if (!stillInWindow) return;
-        console.log(
-          "[player] spot scheduled:",
-          sched.spot_name || sched.spot_id,
-        );
+        // Re-valida horário/data a cada disparo
+        if (!spotScheduleResolver.isActive(sched, new Date())) return;
+        console.log("[player] spot disparado:", sched.spot_name || sched.spot_id);
         mgr.playSpot(url, policy).catch(() => {});
       }, intervalMs);
 
