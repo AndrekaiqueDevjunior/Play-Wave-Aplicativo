@@ -7,6 +7,7 @@ import CampaignPlaylistBuilder, {
   normalizeCampaignPlaylistItems,
 } from "@/components/campaigns/CampaignPlaylistBuilder";
 import { listarItensCampanha } from "@/api/campanhas";
+import { listarSpots, listarSpotSchedules } from "@/api/audio";
 import {
   Dialog,
   DialogContent,
@@ -28,10 +29,23 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Check, Loader2, Monitor, Radio } from "lucide-react";
+import { Check, Loader2, Monitor, Radio, Volume2, ExternalLink, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DAYS = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
+
+const INSERTION_LABELS = {
+  interrupt: "Interrompe música",
+  wait_silence: "Aguarda silêncio",
+  fade_mix: "Mix com música",
+};
+
+function formatInterval(seconds) {
+  if (!seconds) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
 
 const DEFAULT_FORM = {
   name: "",
@@ -99,6 +113,20 @@ export default function CampaignFormModal({
     queryKey: ["campaign-items", campaign?.id],
     queryFn: () => listarItensCampanha(campaign.id),
     enabled: open && !!campaign?.id,
+  });
+
+  const selectedPlaylistId = form.audio_playlist_id;
+
+  const { data: allSpots = [] } = useQuery({
+    queryKey: ["spots"],
+    queryFn: () => listarSpots(),
+    enabled: open,
+  });
+
+  const { data: playlistSpotSchedules = [] } = useQuery({
+    queryKey: ["spot-schedules", selectedPlaylistId],
+    queryFn: () => listarSpotSchedules(selectedPlaylistId),
+    enabled: open && !!selectedPlaylistId,
   });
 
   useEffect(() => {
@@ -205,6 +233,10 @@ export default function CampaignFormModal({
     { id: "media", label: `Mídias (${playlistItems.length})` },
     { id: "devices", label: `TVs (${(form.device_ids || []).length})` },
     { id: "schedule", label: "Agendamento" },
+    {
+      id: "spots",
+      label: `Spots${playlistSpotSchedules.length > 0 ? ` (${playlistSpotSchedules.length})` : ""}`,
+    },
   ];
 
   const playlistOptions = [
@@ -553,6 +585,102 @@ export default function CampaignFormModal({
                     data de término definida na aba Informações.
                   </p>
                 </div>
+              </div>
+            )}
+            {/* ── Spots tab ──────────────────────────────── */}
+            {tab === "spots" && (
+              <div className="space-y-4">
+                {!form.audio_playlist_id ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
+                    <Radio className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                    <p className="text-sm font-medium text-muted-foreground">Nenhuma playlist de rádio selecionada</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Selecione uma playlist na aba Informações para ver os spots configurados.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">
+                          Spots ativos na playlist
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Spots são inseridos automaticamente durante a reprodução da rádio indoor.
+                        </p>
+                      </div>
+                      <a
+                        href={`/radio/playlists/${form.audio_playlist_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        Gerenciar spots
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    {playlistSpotSchedules.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-10 text-center border rounded-lg bg-muted/20">
+                        <Volume2 className="h-7 w-7 text-muted-foreground/40 mb-2" />
+                        <p className="text-sm text-muted-foreground">Nenhum spot agendado nesta playlist</p>
+                        <a
+                          href={`/radio/playlists/${form.audio_playlist_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:underline mt-2 inline-flex items-center gap-1"
+                        >
+                          Adicionar spots
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {playlistSpotSchedules.map((sched) => {
+                          const spot = allSpots.find((s) => s.id === sched.spot_id);
+                          return (
+                            <div
+                              key={sched.id}
+                              className={`flex items-start gap-3 p-3 border rounded-lg ${sched.is_active ? "" : "opacity-50"}`}
+                            >
+                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                <Volume2 className="w-4 h-4 text-primary" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium truncate">
+                                    {spot?.name || "Spot desconhecido"}
+                                  </p>
+                                  {!sched.is_active && (
+                                    <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
+                                      Inativo
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    A cada {formatInterval(sched.interval_seconds)}
+                                  </span>
+                                  {(sched.start_time || sched.end_time) && (
+                                    <span>
+                                      {sched.start_time} – {sched.end_time}
+                                    </span>
+                                  )}
+                                  {spot?.insertion_policy && (
+                                    <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+                                      {INSERTION_LABELS[spot.insertion_policy] || spot.insertion_policy}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

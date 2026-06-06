@@ -802,6 +802,7 @@ class AudioSpotSchedule(Base):
     end_time = Column(String(10), nullable=True)
     starts_at = Column(DateTime, nullable=True)
     ends_at = Column(DateTime, nullable=True)
+    days_of_week = Column(JSON, nullable=True)
     priority = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

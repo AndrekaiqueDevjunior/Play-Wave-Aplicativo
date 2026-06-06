@@ -1155,6 +1155,7 @@ class AudioSpotScheduleBase(BaseSchema):
     end_time: Optional[str] = Field(None, max_length=10)
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+    days_of_week: Optional[List[int]] = None
     priority: Optional[int] = Field(0, ge=0)
     is_active: Optional[bool] = True
 
@@ -1183,6 +1184,7 @@ class AudioSpotScheduleUpdate(BaseSchema):
     end_time: Optional[str] = Field(None, max_length=10)
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+    days_of_week: Optional[List[int]] = None
     priority: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
 

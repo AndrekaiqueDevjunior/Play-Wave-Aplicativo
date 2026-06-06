@@ -600,6 +600,7 @@ def _build_spot_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
             "end_time": sched.end_time,
             "starts_at": sched.starts_at.isoformat() if sched.starts_at else None,
             "ends_at": sched.ends_at.isoformat() if sched.ends_at else None,
+            "days_of_week": sched.days_of_week,
             "priority": sched.priority,
             "insertion_policy": spot.insertion_policy.value if spot.insertion_policy else "interrupt",
             "file_url": track.file_url,

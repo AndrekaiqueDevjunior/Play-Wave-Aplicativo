@@ -55,6 +55,17 @@ const SPOT_STATUS = {
   archived: "Arquivado",
 };
 
+// Python weekday() convention: seg=0 … dom=6
+const DAYS_OF_WEEK = [
+  { value: 0, label: "Seg" },
+  { value: 1, label: "Ter" },
+  { value: 2, label: "Qua" },
+  { value: 3, label: "Qui" },
+  { value: 4, label: "Sex" },
+  { value: 5, label: "Sáb" },
+  { value: 6, label: "Dom" },
+];
+
 export default function AudioSpotScheduleManager({
   playlistId,
   spots = [],
@@ -90,6 +101,9 @@ export default function AudioSpotScheduleManager({
     interval_seconds: 1800,
     start_time: "06:00",
     end_time: "22:00",
+    starts_at: "",
+    ends_at: "",
+    days_of_week: [],
     priority: 0,
     is_active: true,
   });
@@ -149,6 +163,9 @@ export default function AudioSpotScheduleManager({
       interval_seconds: 1800,
       start_time: "06:00",
       end_time: "22:00",
+      starts_at: "",
+      ends_at: "",
+      days_of_week: [],
       priority: 0,
       is_active: true,
     });
@@ -160,12 +177,27 @@ export default function AudioSpotScheduleManager({
     setScheduleForm({
       spot_id: schedule.spot_id,
       interval_seconds: schedule.interval_seconds,
-      start_time: schedule.start_time,
-      end_time: schedule.end_time,
+      start_time: schedule.start_time || "06:00",
+      end_time: schedule.end_time || "22:00",
+      starts_at: schedule.starts_at ? schedule.starts_at.slice(0, 10) : "",
+      ends_at: schedule.ends_at ? schedule.ends_at.slice(0, 10) : "",
+      days_of_week: schedule.days_of_week || [],
       priority: schedule.priority,
       is_active: schedule.is_active,
     });
     setOpenScheduleDialog(true);
+  };
+
+  const toggleScheduleDay = (day) => {
+    setScheduleForm((prev) => {
+      const days = Array.isArray(prev.days_of_week) ? prev.days_of_week : [];
+      return {
+        ...prev,
+        days_of_week: days.includes(day)
+          ? days.filter((d) => d !== day)
+          : [...days, day].sort(),
+      };
+    });
   };
 
   const handleSaveSchedule = async () => {
@@ -178,6 +210,9 @@ export default function AudioSpotScheduleManager({
       ...scheduleForm,
       interval_seconds: parseInt(scheduleForm.interval_seconds),
       priority: parseInt(scheduleForm.priority),
+      starts_at: scheduleForm.starts_at || null,
+      ends_at: scheduleForm.ends_at || null,
+      days_of_week: scheduleForm.days_of_week.length > 0 ? scheduleForm.days_of_week : null,
     };
 
     try {
@@ -320,14 +355,21 @@ export default function AudioSpotScheduleManager({
                 <TableRow>
                   <TableHead>Spot</TableHead>
                   <TableHead>Intervalo</TableHead>
-                  <TableHead>Horário</TableHead>
-                  <TableHead className="text-center">Prioridade</TableHead>
+                  <TableHead>Horário / Dias</TableHead>
+                  <TableHead className="text-center">Prior.</TableHead>
                   <TableHead className="text-center">Ativo</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {spotSchedules.map((schedule) => (
+                {spotSchedules.map((schedule) => {
+                  const dayLabels = Array.isArray(schedule.days_of_week) && schedule.days_of_week.length > 0
+                    ? schedule.days_of_week
+                        .map((d) => DAYS_OF_WEEK.find((x) => x.value === d)?.label)
+                        .filter(Boolean)
+                        .join(", ")
+                    : "Todo dia";
+                  return (
                   <TableRow key={schedule.id}>
                     <TableCell className="font-medium">
                       {getSpotName(schedule.spot_id)}
@@ -336,7 +378,8 @@ export default function AudioSpotScheduleManager({
                       {formatInterval(schedule.interval_seconds)}
                     </TableCell>
                     <TableCell className="text-sm">
-                      {schedule.start_time} - {schedule.end_time}
+                      <div>{schedule.start_time} – {schedule.end_time}</div>
+                      <div className="text-xs text-muted-foreground">{dayLabels}</div>
                     </TableCell>
                     <TableCell className="text-center">
                       <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-sm font-medium">
@@ -367,7 +410,8 @@ export default function AudioSpotScheduleManager({
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -569,6 +613,58 @@ export default function AudioSpotScheduleManager({
                   }
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Dias da semana</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {DAYS_OF_WEEK.map((d) => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => toggleScheduleDay(d.value)}
+                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${
+                      (scheduleForm.days_of_week || []).includes(d.value)
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-primary/50"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Vazio = todos os dias
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Período de validade (opcional)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="schedule-starts-at" className="text-xs">Início</Label>
+                  <Input
+                    id="schedule-starts-at"
+                    type="date"
+                    value={scheduleForm.starts_at}
+                    onChange={(e) =>
+                      setScheduleForm({ ...scheduleForm, starts_at: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="schedule-ends-at" className="text-xs">Fim</Label>
+                  <Input
+                    id="schedule-ends-at"
+                    type="date"
+                    value={scheduleForm.ends_at}
+                    onChange={(e) =>
+                      setScheduleForm({ ...scheduleForm, ends_at: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Sem data = spot sempre válido</p>
             </div>
 
             <div className="space-y-2">
