@@ -80,7 +80,7 @@ export default function AudioFolderManager({
     ends_at: "",
     loop_enabled: true,
     shuffle_enabled: false,
-    category_id: "",
+    category_id: null,
   });
   const [selectedTracks, setSelectedTracks] = useState([]);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -99,7 +99,7 @@ export default function AudioFolderManager({
       ends_at: "",
       loop_enabled: true,
       shuffle_enabled: false,
-      category_id: "",
+      category_id: null,
     });
     setSelectedTracks([]);
   };
@@ -118,7 +118,7 @@ export default function AudioFolderManager({
       ends_at: folder.ends_at ? folder.ends_at.slice(0, 10) : "",
       loop_enabled: folder.loop_enabled ?? true,
       shuffle_enabled: folder.shuffle_enabled ?? false,
-      category_id: folder.category_id || "",
+      category_id: folder.category_id || null,
     });
     setSelectedTracks((folder.tracks || []).map((t) => t.track_id || t.id));
   };
@@ -361,7 +361,7 @@ export default function AudioFolderManager({
                   <Select
                     value={form.category_id || "none"}
                     onValueChange={(v) =>
-                      setForm({ ...form, category_id: v === "none" ? "" : v })
+                      setForm({ ...form, category_id: v === "none" ? null : v })
                     }
                   >
                     <SelectTrigger id="folder-category">
