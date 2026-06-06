@@ -184,7 +184,7 @@ export const atualizarSpot = (id, payload) =>
 export const deletarSpot = (id) =>
   apiFetch(`/audio/spots/${id}`, { method: "DELETE" });
 
-// ── Spot schedules ─────────────────────────────────────────────────────────
+// ── Spot schedules por playlist ────────────────────────────────────────────
 export const listarSpotSchedules = (playlistId) =>
   apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules`);
 
@@ -204,3 +204,16 @@ export const deletarSpotSchedule = (playlistId, scheduleId) =>
   apiFetch(`/audio/spots/playlists/${playlistId}/spot-schedules/${scheduleId}`, {
     method: "DELETE",
   });
+
+// ── Spot schedules por escopo (campaign_id, device_id, playlist_id) ───────
+export const listarSpotSchedulesPorEscopo = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/audio/spots/schedules${qs ? `?${qs}` : ""}`);
+};
+
+// Aliases convenientes
+export const listarSpotSchedulesDaCampanha = (campaignId) =>
+  listarSpotSchedulesPorEscopo({ campaign_id: campaignId });
+
+export const listarSpotSchedulesDoDevice = (deviceId) =>
+  listarSpotSchedulesPorEscopo({ device_id: deviceId });

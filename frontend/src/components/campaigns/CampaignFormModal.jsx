@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useState, useEffect, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AudioPolicySelector } from "@/components/shared/AudioPolicySelector";
 import CampaignPlaylistBuilder, {
   itemsFromApi,
@@ -7,7 +7,11 @@ import CampaignPlaylistBuilder, {
   normalizeCampaignPlaylistItems,
 } from "@/components/campaigns/CampaignPlaylistBuilder";
 import { listarItensCampanha } from "@/api/campanhas";
-import { listarSpots, listarSpotSchedules } from "@/api/audio";
+import {
+  listarSpots, criarSpot, atualizarSpot, deletarSpot,
+  listarSpotSchedules, criarSpotSchedule, atualizarSpotSchedule, deletarSpotSchedule,
+} from "@/api/audio";
+import SpotSchedulePanel from "@/components/audio/SpotSchedulePanel";
 import {
   Dialog,
   DialogContent,
@@ -104,6 +108,7 @@ export default function CampaignFormModal({
   audioPlaylists = [],
   onMediaUploaded,
 }) {
+  const qc = useQueryClient();
   const [form, setForm] = useState(DEFAULT_FORM);
   const [playlistItems, setPlaylistItems] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -118,16 +123,57 @@ export default function CampaignFormModal({
   const selectedPlaylistId = form.audio_playlist_id;
 
   const { data: allSpots = [] } = useQuery({
-    queryKey: ["spots"],
+    queryKey: ["audio-spots"],
     queryFn: () => listarSpots(),
     enabled: open,
   });
 
-  const { data: playlistSpotSchedules = [] } = useQuery({
+  const { data: playlistSpotSchedules = [], refetch: refetchCampaignSpots } = useQuery({
     queryKey: ["spot-schedules", selectedPlaylistId],
     queryFn: () => listarSpotSchedules(selectedPlaylistId),
     enabled: open && !!selectedPlaylistId,
   });
+
+  // Schedules específicos desta campanha (filtrado pelo campaign_id)
+  const campaignSpotSchedules = playlistSpotSchedules.filter(
+    (s) => !campaign?.id || s.campaign_id === campaign?.id || (!s.campaign_id && !s.device_id)
+  );
+
+  const handleCampaignCreateSpot = useCallback(async (payload) => {
+    await criarSpot(payload);
+    qc.invalidateQueries({ queryKey: ["audio-spots"] });
+  }, [qc]);
+
+  const handleCampaignUpdateSpot = useCallback(async (spotId, payload) => {
+    await atualizarSpot(spotId, payload);
+    qc.invalidateQueries({ queryKey: ["audio-spots"] });
+  }, [qc]);
+
+  const handleCampaignDeleteSpot = useCallback(async (spotId) => {
+    await deletarSpot(spotId);
+    qc.invalidateQueries({ queryKey: ["audio-spots"] });
+  }, [qc]);
+
+  const handleCampaignCreateSchedule = useCallback(async (payload) => {
+    if (!selectedPlaylistId) throw new Error("Selecione uma playlist de rádio primeiro");
+    await criarSpotSchedule(selectedPlaylistId, {
+      ...payload,
+      campaign_id: campaign?.id || null,
+    });
+    refetchCampaignSpots();
+  }, [selectedPlaylistId, campaign?.id, refetchCampaignSpots]);
+
+  const handleCampaignUpdateSchedule = useCallback(async (scheduleId, payload) => {
+    if (!selectedPlaylistId) return;
+    await atualizarSpotSchedule(selectedPlaylistId, scheduleId, payload);
+    refetchCampaignSpots();
+  }, [selectedPlaylistId, refetchCampaignSpots]);
+
+  const handleCampaignDeleteSchedule = useCallback(async (scheduleId) => {
+    if (!selectedPlaylistId) return;
+    await deletarSpotSchedule(selectedPlaylistId, scheduleId);
+    refetchCampaignSpots();
+  }, [selectedPlaylistId, refetchCampaignSpots]);
 
   useEffect(() => {
     if (campaign) {
@@ -589,99 +635,20 @@ export default function CampaignFormModal({
             )}
             {/* ── Spots tab ──────────────────────────────── */}
             {tab === "spots" && (
-              <div className="space-y-4">
-                {!form.audio_playlist_id ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
-                    <Radio className="h-8 w-8 text-muted-foreground/40 mb-2" />
-                    <p className="text-sm font-medium text-muted-foreground">Nenhuma playlist de rádio selecionada</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Selecione uma playlist na aba Informações para ver os spots configurados.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">
-                          Spots ativos na playlist
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Spots são inseridos automaticamente durante a reprodução da rádio indoor.
-                        </p>
-                      </div>
-                      <a
-                        href={`/radio/playlists/${form.audio_playlist_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                      >
-                        Gerenciar spots
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-
-                    {playlistSpotSchedules.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-10 text-center border rounded-lg bg-muted/20">
-                        <Volume2 className="h-7 w-7 text-muted-foreground/40 mb-2" />
-                        <p className="text-sm text-muted-foreground">Nenhum spot agendado nesta playlist</p>
-                        <a
-                          href={`/radio/playlists/${form.audio_playlist_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-primary hover:underline mt-2 inline-flex items-center gap-1"
-                        >
-                          Adicionar spots
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {playlistSpotSchedules.map((sched) => {
-                          const spot = allSpots.find((s) => s.id === sched.spot_id);
-                          return (
-                            <div
-                              key={sched.id}
-                              className={`flex items-start gap-3 p-3 border rounded-lg ${sched.is_active ? "" : "opacity-50"}`}
-                            >
-                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                                <Volume2 className="w-4 h-4 text-primary" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium truncate">
-                                    {spot?.name || "Spot desconhecido"}
-                                  </p>
-                                  {!sched.is_active && (
-                                    <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
-                                      Inativo
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    A cada {formatInterval(sched.interval_seconds)}
-                                  </span>
-                                  {(sched.start_time || sched.end_time) && (
-                                    <span>
-                                      {sched.start_time} – {sched.end_time}
-                                    </span>
-                                  )}
-                                  {spot?.insertion_policy && (
-                                    <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
-                                      {INSERTION_LABELS[spot.insertion_policy] || spot.insertion_policy}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
+              <SpotSchedulePanel
+                scope="campaign"
+                scopeId={campaign?.id}
+                playlistId={selectedPlaylistId || null}
+                spots={allSpots}
+                schedules={campaignSpotSchedules}
+                tracks={[]}
+                onCreateSpot={handleCampaignCreateSpot}
+                onUpdateSpot={handleCampaignUpdateSpot}
+                onDeleteSpot={handleCampaignDeleteSpot}
+                onCreateSchedule={handleCampaignCreateSchedule}
+                onUpdateSchedule={handleCampaignUpdateSchedule}
+                onDeleteSchedule={handleCampaignDeleteSchedule}
+              />
             )}
           </div>
 

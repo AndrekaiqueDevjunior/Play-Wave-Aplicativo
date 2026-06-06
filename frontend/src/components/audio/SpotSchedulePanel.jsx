@@ -1,0 +1,768 @@
+/**
+ * SpotSchedulePanel — painel reutilizável de agendamento de spots.
+ *
+ * Funciona para três escopos:
+ *   - playlist: vincula via playlist_id (fluxo original)
+ *   - campaign: vincula via campaign_id + playlist_id da campanha
+ *   - device:   vincula via device_id + playlist_id do device
+ *
+ * Props:
+ *   scope        "playlist" | "campaign" | "device"
+ *   scopeId      ID do escopo (playlist_id, campaign_id, device_id)
+ *   playlistId   ID da playlist que receberá o schedule (obrigatório para campaign/device)
+ *   spots        AudioSpot[]
+ *   schedules    AudioSpotSchedule[] já filtrados para este escopo
+ *   tracks       AudioTrack[]
+ *   loading      boolean
+ *   onCreateSchedule (payload) => Promise
+ *   onUpdateSchedule (id, payload) => Promise
+ *   onDeleteSchedule (id) => Promise
+ *   onCreateSpot     (payload) => Promise  (opcional — se não passado, aba de spots fica oculta)
+ *   onUpdateSpot     (id, payload) => Promise
+ *   onDeleteSpot     (id) => Promise
+ */
+import React, { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Plus, Trash2, Edit, Loader2, Volume2, Info } from "lucide-react";
+
+const INSERTION_POLICIES = {
+  interrupt: "Interrompe música",
+  wait_silence: "Aguarda música terminar",
+  fade_mix: "Mix com música",
+};
+
+const SPOT_STATUS = { active: "Ativo", inactive: "Inativo", archived: "Arquivado" };
+
+const DAYS_OF_WEEK = [
+  { value: 0, label: "Seg" },
+  { value: 1, label: "Ter" },
+  { value: 2, label: "Qua" },
+  { value: 3, label: "Qui" },
+  { value: 4, label: "Sex" },
+  { value: 5, label: "Sáb" },
+  { value: 6, label: "Dom" },
+];
+
+const SCOPE_LABELS = {
+  playlist: "playlist",
+  campaign: "campanha",
+  device: "dispositivo",
+};
+
+const formatInterval = (s) => {
+  if (!s) return "—";
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return `${Math.floor(s / 3600)}h`;
+};
+
+const emptyScheduleForm = () => ({
+  spot_id: "",
+  interval_seconds: 1800,
+  start_time: "",
+  end_time: "",
+  starts_at: "",
+  ends_at: "",
+  days_of_week: [],
+  priority: 0,
+  is_active: true,
+  insertion_policy: "",
+});
+
+const emptySpotForm = () => ({
+  name: "",
+  description: "",
+  track_id: "",
+  status: "active",
+  insertion_policy: "wait_silence",
+});
+
+export default function SpotSchedulePanel({
+  scope = "playlist",
+  scopeId,
+  playlistId,
+  spots = [],
+  schedules = [],
+  tracks = [],
+  loading = false,
+  onCreateSchedule,
+  onUpdateSchedule,
+  onDeleteSchedule,
+  onCreateSpot,
+  onUpdateSpot,
+  onDeleteSpot,
+}) {
+  const [tab, setTab] = useState("schedules");
+  const [scheduleDialog, setScheduleDialog] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState(emptyScheduleForm());
+  const [scheduleError, setScheduleError] = useState("");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  const [spotDialog, setSpotDialog] = useState(false);
+  const [editingSpot, setEditingSpot] = useState(null);
+  const [spotForm, setSpotForm] = useState(emptySpotForm());
+  const [spotError, setSpotError] = useState("");
+  const [spotSaving, setSpotSaving] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState(null); // { type, id, label }
+
+  const hasSpotCRUD = !!onCreateSpot;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const getSpotName = (id) => spots.find((s) => s.id === id)?.name || "—";
+  const getTrackName = (id) => tracks.find((t) => t.id === id)?.name || "—";
+  const toggleDay = (day) =>
+    setScheduleForm((p) => ({
+      ...p,
+      days_of_week: p.days_of_week.includes(day)
+        ? p.days_of_week.filter((d) => d !== day)
+        : [...p.days_of_week, day].sort(),
+    }));
+
+  // ── Schedule handlers ──────────────────────────────────────────────────────
+  const openNewSchedule = () => {
+    setEditingSchedule(null);
+    setScheduleForm(emptyScheduleForm());
+    setScheduleError("");
+    setScheduleDialog(true);
+  };
+
+  const openEditSchedule = (s) => {
+    setEditingSchedule(s);
+    setScheduleForm({
+      spot_id: s.spot_id,
+      interval_seconds: s.interval_seconds,
+      start_time: s.start_time || "",
+      end_time: s.end_time || "",
+      starts_at: s.starts_at ? s.starts_at.slice(0, 10) : "",
+      ends_at: s.ends_at ? s.ends_at.slice(0, 10) : "",
+      days_of_week: s.days_of_week || [],
+      priority: s.priority ?? 0,
+      is_active: s.is_active ?? true,
+      insertion_policy: s.insertion_policy || "",
+    });
+    setScheduleError("");
+    setScheduleDialog(true);
+  };
+
+  const saveSchedule = async () => {
+    setScheduleError("");
+    if (!scheduleForm.spot_id) return setScheduleError("Selecione um spot");
+    if (!scheduleForm.interval_seconds || scheduleForm.interval_seconds < 1)
+      return setScheduleError("Intervalo mínimo: 1 segundo");
+
+    const payload = {
+      spot_id: scheduleForm.spot_id,
+      interval_seconds: parseInt(scheduleForm.interval_seconds),
+      start_time: scheduleForm.start_time || null,
+      end_time: scheduleForm.end_time || null,
+      starts_at: scheduleForm.starts_at || null,
+      ends_at: scheduleForm.ends_at || null,
+      days_of_week: scheduleForm.days_of_week.length ? scheduleForm.days_of_week : null,
+      priority: parseInt(scheduleForm.priority) || 0,
+      is_active: scheduleForm.is_active,
+      insertion_policy: scheduleForm.insertion_policy || null,
+      // Escopos
+      playlist_id: playlistId || null,
+      ...(scope === "campaign" && { campaign_id: scopeId }),
+      ...(scope === "device" && { device_id: scopeId }),
+    };
+
+    setScheduleSaving(true);
+    try {
+      if (editingSchedule) {
+        await onUpdateSchedule?.(editingSchedule.id, payload);
+      } else {
+        await onCreateSchedule?.(payload);
+      }
+      setScheduleDialog(false);
+    } catch (err) {
+      setScheduleError(err?.message || "Erro ao salvar agendamento");
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  // ── Spot handlers ──────────────────────────────────────────────────────────
+  const openNewSpot = () => {
+    setEditingSpot(null);
+    setSpotForm(emptySpotForm());
+    setSpotError("");
+    setSpotDialog(true);
+  };
+
+  const openEditSpot = (s) => {
+    setEditingSpot(s);
+    setSpotForm({
+      name: s.name,
+      description: s.description || "",
+      track_id: s.track_id,
+      status: s.status,
+      insertion_policy: s.insertion_policy,
+    });
+    setSpotError("");
+    setSpotDialog(true);
+  };
+
+  const saveSpot = async () => {
+    setSpotError("");
+    if (!spotForm.name.trim()) return setSpotError("Nome obrigatório");
+    if (!spotForm.track_id) return setSpotError("Selecione uma faixa");
+
+    setSpotSaving(true);
+    try {
+      if (editingSpot) {
+        await onUpdateSpot?.(editingSpot.id, spotForm);
+      } else {
+        await onCreateSpot?.(spotForm);
+      }
+      setSpotDialog(false);
+    } catch (err) {
+      setSpotError(err?.message || "Erro ao salvar spot");
+    } finally {
+      setSpotSaving(false);
+    }
+  };
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      if (deleteTarget.type === "schedule") await onDeleteSchedule?.(deleteTarget.id);
+      if (deleteTarget.type === "spot") await onDeleteSpot?.(deleteTarget.id);
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const scopeLabel = SCOPE_LABELS[scope] || scope;
+
+  return (
+    <div className="space-y-4">
+      {/* Tabs internas */}
+      <div className="flex gap-2 border-b pb-2">
+        <button
+          className={`px-3 py-1 text-sm rounded-t font-medium transition-colors ${
+            tab === "schedules"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          onClick={() => setTab("schedules")}
+        >
+          Agendamentos ({schedules.length})
+        </button>
+        {hasSpotCRUD && (
+          <button
+            className={`px-3 py-1 text-sm rounded-t font-medium transition-colors ${
+              tab === "spots"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setTab("spots")}
+          >
+            Biblioteca de Spots ({spots.length})
+          </button>
+        )}
+      </div>
+
+      {/* ── Aba: Agendamentos ──────────────────────────────────────────────── */}
+      {tab === "schedules" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Spots agendados neste {scopeLabel}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={openNewSchedule}
+              disabled={loading || spots.length === 0}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Agendar spot
+            </Button>
+          </div>
+
+          {spots.length === 0 && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>Crie spots na aba "Biblioteca de Spots" antes de agendar.</span>
+            </div>
+          )}
+
+          {!playlistId && scope !== "playlist" && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>
+                Este {scopeLabel} não tem playlist de rádio vinculada.
+                Vincule uma playlist para poder agendar spots.
+              </span>
+            </div>
+          )}
+
+          {schedules.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 border rounded-lg bg-muted/30">
+              <Volume2 className="h-8 w-8 text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhum spot agendado</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                Spots agendam jingles e anúncios a cada X minutos
+              </p>
+            </div>
+          ) : (
+            <div className="border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Spot</TableHead>
+                    <TableHead>Intervalo</TableHead>
+                    <TableHead>Horário</TableHead>
+                    <TableHead>Dias</TableHead>
+                    <TableHead className="text-center">Prior.</TableHead>
+                    <TableHead className="text-center">Ativo</TableHead>
+                    <TableHead className="w-16" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {schedules.map((s) => {
+                    const dayLabels =
+                      Array.isArray(s.days_of_week) && s.days_of_week.length > 0
+                        ? s.days_of_week
+                            .map((d) => DAYS_OF_WEEK.find((x) => x.value === d)?.label)
+                            .filter(Boolean)
+                            .join(", ")
+                        : "Todo dia";
+                    return (
+                      <TableRow key={s.id}>
+                        <TableCell className="font-medium text-sm">
+                          {getSpotName(s.spot_id)}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          a cada {formatInterval(s.interval_seconds)}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {s.start_time && s.end_time
+                            ? `${s.start_time}–${s.end_time}`
+                            : "Qualquer hora"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {dayLabels}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className="text-xs">
+                            {s.priority}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Checkbox checked={!!s.is_active} disabled />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1 justify-end">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => openEditSchedule(s)}
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive"
+                              onClick={() =>
+                                setDeleteTarget({
+                                  type: "schedule",
+                                  id: s.id,
+                                  label: getSpotName(s.spot_id),
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Aba: Biblioteca de spots ───────────────────────────────────────── */}
+      {tab === "spots" && hasSpotCRUD && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Spots são jingles ou anúncios vinculados a uma faixa de áudio
+            </p>
+            <Button size="sm" onClick={openNewSpot} disabled={loading || tracks.length === 0}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              Novo spot
+            </Button>
+          </div>
+
+          {tracks.length === 0 && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>Faça upload de faixas de áudio antes de criar spots.</span>
+            </div>
+          )}
+
+          {spots.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 border rounded-lg bg-muted/30">
+              <Volume2 className="h-8 w-8 text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhum spot criado</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {spots.map((spot) => (
+                <div
+                  key={spot.id}
+                  className="flex items-start justify-between p-3 border rounded-lg hover:bg-muted/20"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm truncate">{spot.name}</p>
+                    {spot.description && (
+                      <p className="text-xs text-muted-foreground truncate">{spot.description}</p>
+                    )}
+                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                      <Badge variant="secondary" className="text-xs">
+                        {getTrackName(spot.track_id)}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {INSERTION_POLICIES[spot.insertion_policy] || spot.insertion_policy}
+                      </Badge>
+                      <Badge
+                        variant={spot.status === "active" ? "default" : "secondary"}
+                        className="text-xs"
+                      >
+                        {SPOT_STATUS[spot.status] || spot.status}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0 ml-2">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSpot(spot)}>
+                      <Edit className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={() => setDeleteTarget({ type: "spot", id: spot.id, label: spot.name })}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Dialog: Agendamento ─────────────────────────────────────────────── */}
+      <Dialog open={scheduleDialog} onOpenChange={setScheduleDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {editingSchedule ? "Editar agendamento" : "Novo agendamento de spot"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Spot */}
+            <div className="space-y-1.5">
+              <Label>Spot *</Label>
+              <Select
+                value={scheduleForm.spot_id}
+                onValueChange={(v) => setScheduleForm((p) => ({ ...p, spot_id: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o spot" />
+                </SelectTrigger>
+                <SelectContent>
+                  {spots.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Intervalo */}
+            <div className="space-y-1.5">
+              <Label>Intervalo (segundos) *</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  value={scheduleForm.interval_seconds}
+                  onChange={(e) =>
+                    setScheduleForm((p) => ({ ...p, interval_seconds: parseInt(e.target.value) || 0 }))
+                  }
+                  className="flex-1"
+                />
+                <span className="text-sm text-muted-foreground self-center whitespace-nowrap">
+                  = {formatInterval(scheduleForm.interval_seconds)}
+                </span>
+              </div>
+            </div>
+
+            {/* Horário */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Início (HH:MM)</Label>
+                <Input
+                  type="time"
+                  value={scheduleForm.start_time}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, start_time: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Fim (HH:MM)</Label>
+                <Input
+                  type="time"
+                  value={scheduleForm.end_time}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, end_time: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Dias da semana */}
+            <div className="space-y-1.5">
+              <Label>Dias da semana <span className="text-muted-foreground text-xs">(vazio = todos)</span></Label>
+              <div className="flex gap-1.5 flex-wrap">
+                {DAYS_OF_WEEK.map((d) => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => toggleDay(d.value)}
+                    className={`px-2.5 py-1 text-xs rounded border font-medium transition-colors ${
+                      scheduleForm.days_of_week.includes(d.value)
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Período de validade */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Válido de</Label>
+                <Input
+                  type="date"
+                  value={scheduleForm.starts_at}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, starts_at: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Válido até</Label>
+                <Input
+                  type="date"
+                  value={scheduleForm.ends_at}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, ends_at: e.target.value }))}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground -mt-2">
+              Sem datas = sempre válido
+            </p>
+
+            {/* Política de inserção override */}
+            <div className="space-y-1.5">
+              <Label>Política de inserção <span className="text-muted-foreground text-xs">(override)</span></Label>
+              <Select
+                value={scheduleForm.insertion_policy || "inherit"}
+                onValueChange={(v) =>
+                  setScheduleForm((p) => ({ ...p, insertion_policy: v === "inherit" ? "" : v }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="inherit">Herdar do spot</SelectItem>
+                  <SelectItem value="interrupt">Interrompe música</SelectItem>
+                  <SelectItem value="wait_silence">Aguarda música terminar</SelectItem>
+                  <SelectItem value="fade_mix">Mix com música</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Prioridade + Ativo */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Prioridade</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={scheduleForm.priority}
+                  onChange={(e) =>
+                    setScheduleForm((p) => ({ ...p, priority: parseInt(e.target.value) || 0 }))
+                  }
+                />
+              </div>
+              <div className="flex items-end pb-1 gap-2">
+                <Checkbox
+                  id="sched-active"
+                  checked={scheduleForm.is_active}
+                  onCheckedChange={(v) => setScheduleForm((p) => ({ ...p, is_active: !!v }))}
+                />
+                <Label htmlFor="sched-active">Agendamento ativo</Label>
+              </div>
+            </div>
+
+            {scheduleError && (
+              <p className="text-sm text-destructive">{scheduleError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveSchedule} disabled={scheduleSaving}>
+              {scheduleSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {editingSchedule ? "Salvar" : "Criar agendamento"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Spot ───────────────────────────────────────────────────── */}
+      {hasSpotCRUD && (
+        <Dialog open={spotDialog} onOpenChange={setSpotDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{editingSpot ? "Editar spot" : "Novo spot"}</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Nome *</Label>
+                <Input
+                  value={spotForm.name}
+                  onChange={(e) => setSpotForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Ex: Jingle Black Friday"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Descrição</Label>
+                <Textarea
+                  value={spotForm.description}
+                  onChange={(e) => setSpotForm((p) => ({ ...p, description: e.target.value }))}
+                  rows={2}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Faixa de áudio *</Label>
+                <Select
+                  value={spotForm.track_id}
+                  onValueChange={(v) => setSpotForm((p) => ({ ...p, track_id: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a faixa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tracks.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Status</Label>
+                  <Select
+                    value={spotForm.status}
+                    onValueChange={(v) => setSpotForm((p) => ({ ...p, status: v }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Ativo</SelectItem>
+                      <SelectItem value="inactive">Inativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Inserção padrão</Label>
+                  <Select
+                    value={spotForm.insertion_policy}
+                    onValueChange={(v) => setSpotForm((p) => ({ ...p, insertion_policy: v }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="interrupt">Interrompe</SelectItem>
+                      <SelectItem value="wait_silence">Aguarda</SelectItem>
+                      <SelectItem value="fade_mix">Mix</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {spotError && <p className="text-sm text-destructive">{spotError}</p>}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSpotDialog(false)}>Cancelar</Button>
+              <Button onClick={saveSpot} disabled={spotSaving}>
+                {spotSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {editingSpot ? "Salvar" : "Criar spot"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* ── AlertDialog: Confirmar exclusão ─────────────────────────────────── */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir "{deleteTarget?.label}"?
+              {deleteTarget?.type === "spot" &&
+                " Todos os agendamentos deste spot também serão removidos."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

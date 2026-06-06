@@ -52,6 +52,7 @@ const MENU_GRUPOS = [
     items: [
       { label: "Faixas de Áudio", icon: Radio, path: "/radio/faixas" },
       { label: "Playlists Sonoras", icon: ListMusic, path: "/radio/playlists" },
+      { label: "Spots de Áudio", icon: Zap, path: "/radio/spots" },
     ],
   },
 ];

@@ -5,6 +5,7 @@ import {
   OSDConfigPreview,
   normalizeOSDConfig,
 } from "@/components/shared/OSDConfigPreview";
+import SpotSchedulePanel from "@/components/audio/SpotSchedulePanel";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,16 @@ import {
 import StatusBadge from "@/components/shared/StatusBadge";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listarCampanhas } from "@/api/campanhas";
+import {
+  listarSpots,
+  criarSpot,
+  atualizarSpot,
+  deletarSpot,
+  listarSpotSchedules,
+  criarSpotSchedule,
+  atualizarSpotSchedule,
+  deletarSpotSchedule,
+} from "@/api/audio";
 import {
   Select,
   SelectContent,
@@ -172,6 +183,65 @@ export default function DispositivoDetalhe() {
     // SPEC 003 — 5s para feedback rápido durante operações destrutivas.
     refetchInterval: 5_000,
   });
+
+  // ── Dados de spots do device ───────────────────────────────────────────────
+  const activeCampaign = campaignList.find(
+    (c) => c.id === (device?.current_campaign_id)
+  );
+  const devicePlaylistId = activeCampaign?.audio_playlist_id || device?.audio_playlist_id || null;
+
+  const { data: allSpots = [] } = useQuery({
+    queryKey: ["audio-spots"],
+    queryFn: () => listarSpots({ status: "active" }),
+    enabled: isApiConfigured() && !!id,
+  });
+
+  const { data: deviceSpotSchedules = [], refetch: refetchSpotSchedules } = useQuery({
+    queryKey: ["spot-schedules-device", id, devicePlaylistId],
+    queryFn: () => devicePlaylistId
+      ? listarSpotSchedules(devicePlaylistId).then((all) =>
+          all.filter(
+            (s) => s.device_id === id || (!s.device_id && !s.campaign_id)
+          )
+        )
+      : Promise.resolve([]),
+    enabled: isApiConfigured() && !!id,
+  });
+
+  const handleCreateDeviceSpot = async (payload) => {
+    await criarSpot(payload);
+    queryClient.invalidateQueries({ queryKey: ["audio-spots"] });
+  };
+
+  const handleUpdateDeviceSpot = async (spotId, payload) => {
+    await atualizarSpot(spotId, payload);
+    queryClient.invalidateQueries({ queryKey: ["audio-spots"] });
+  };
+
+  const handleDeleteDeviceSpot = async (spotId) => {
+    await deletarSpot(spotId);
+    queryClient.invalidateQueries({ queryKey: ["audio-spots"] });
+  };
+
+  const handleCreateDeviceSchedule = async (payload) => {
+    if (!devicePlaylistId) {
+      throw new Error("Vincule uma playlist ou campanha ao device para agendar spots");
+    }
+    await criarSpotSchedule(devicePlaylistId, { ...payload, device_id: id });
+    refetchSpotSchedules();
+  };
+
+  const handleUpdateDeviceSchedule = async (scheduleId, payload) => {
+    if (!devicePlaylistId) return;
+    await atualizarSpotSchedule(devicePlaylistId, scheduleId, payload);
+    refetchSpotSchedules();
+  };
+
+  const handleDeleteDeviceSchedule = async (scheduleId) => {
+    if (!devicePlaylistId) return;
+    await deletarSpotSchedule(devicePlaylistId, scheduleId);
+    refetchSpotSchedules();
+  };
 
   const updateMutation = useMutation({
     mutationFn: (data) => atualizarDispositivo(id, data),
@@ -1005,6 +1075,37 @@ export default function DispositivoDetalhe() {
             allowNull
             inheritedLabel="Herdar da empresa (padrão automático)"
             disabled={updateMutation.isPending}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Spots específicos deste dispositivo */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Music2 className="w-4 h-4" />
+            Spots de Áudio
+          </CardTitle>
+          {!devicePlaylistId && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Vincule uma playlist ou campanha para habilitar agendamentos de spots neste dispositivo.
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          <SpotSchedulePanel
+            scope="device"
+            scopeId={id}
+            playlistId={devicePlaylistId}
+            spots={allSpots}
+            schedules={deviceSpotSchedules}
+            tracks={[]}
+            onCreateSpot={handleCreateDeviceSpot}
+            onUpdateSpot={handleUpdateDeviceSpot}
+            onDeleteSpot={handleDeleteDeviceSpot}
+            onCreateSchedule={handleCreateDeviceSchedule}
+            onUpdateSchedule={handleUpdateDeviceSchedule}
+            onDeleteSchedule={handleDeleteDeviceSchedule}
           />
         </CardContent>
       </Card>

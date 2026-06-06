@@ -153,6 +153,36 @@ def list_audio_spots(
     return query.offset(skip).limit(limit).all()
 
 
+@router.get("/schedules", response_model=List[AudioSpotScheduleResponse])
+def list_spot_schedules_by_scope(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    campaign_id: Optional[str] = Query(None),
+    device_id: Optional[str] = Query(None),
+    playlist_id: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Lista spot schedules filtrando por campaign_id, device_id ou playlist_id."""
+    from core.models import AudioSpotSchedule
+
+    tenant_id = _effective_tenant_id(current_user)
+    query = db.query(AudioSpotSchedule)
+
+    if tenant_id:
+        query = query.filter(AudioSpotSchedule.tenant_id == tenant_id)
+
+    if campaign_id:
+        query = query.filter(AudioSpotSchedule.campaign_id == campaign_id)
+    if device_id:
+        query = query.filter(AudioSpotSchedule.device_id == device_id)
+    if playlist_id:
+        query = query.filter(AudioSpotSchedule.playlist_id == playlist_id)
+
+    return query.order_by(AudioSpotSchedule.priority.desc()).offset(skip).limit(limit).all()
+
+
 @router.post("/", response_model=AudioSpotResponse, status_code=http_status.HTTP_201_CREATED)
 def create_audio_spot(
     *,
