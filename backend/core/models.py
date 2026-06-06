@@ -492,14 +492,14 @@ class AudioTrack(Base):
     mime_type = Column(String(100), nullable=True)
     file_size = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
-    category = Column(SQLEnum(AudioTrackCategory), default=AudioTrackCategory.MUSIC)
+    category = Column(SQLEnum(AudioTrackCategory, values_callable=enum_values), default=AudioTrackCategory.MUSIC)
     category_id = Column(
         UUID(as_uuid=True),
         ForeignKey("audio_categories.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    status = Column(SQLEnum(AudioTrackStatus), default=AudioTrackStatus.ACTIVE)
+    status = Column(SQLEnum(AudioTrackStatus, values_callable=enum_values), default=AudioTrackStatus.ACTIVE)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -632,7 +632,7 @@ class AudioPlaylist(Base):
         nullable=True,
         index=True,
     )
-    status = Column(SQLEnum(AudioPlaylistStatus), default=AudioPlaylistStatus.ACTIVE)
+    status = Column(SQLEnum(AudioPlaylistStatus, values_callable=enum_values), default=AudioPlaylistStatus.ACTIVE)
     volume_default = Column(Float, default=0.7)
     loop_enabled = Column(Boolean, default=True)
     shuffle_enabled = Column(Boolean, default=False)
