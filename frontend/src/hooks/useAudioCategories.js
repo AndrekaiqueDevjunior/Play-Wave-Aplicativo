@@ -17,7 +17,7 @@ export function useAudioCategories() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch("/audio/categories?include_defaults=true");
+      const response = await apiFetch("/audio/categories/?include_defaults=true");
       setCategories(response || []);
     } catch (err) {
       setError(err.message || "Erro ao carregar categorias");
