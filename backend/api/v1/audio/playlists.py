@@ -431,6 +431,7 @@ def create_audio_playlist(
         playlist_in.tenant_id = str(current_user.tenant_id)
     
     playlist = crud_audio_playlist.create(db, obj_in=playlist_in)
+    affected_device_ids: set = set()
     if playlist.track_ids:
         affected_device_ids = _device_ids_for_playlist(db, playlist_id=str(playlist.id))
         _replace_items_from_legacy_fields(
