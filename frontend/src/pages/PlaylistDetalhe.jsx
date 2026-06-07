@@ -170,8 +170,8 @@ export default function PlaylistDetalhe() {
   const handleCreateSpot    = (payload) => createSpotMut.mutateAsync(payload);
   const handleUpdateSpot    = (id, payload) => updateSpotMut.mutateAsync({ id, ...payload });
   const handleDeleteSpot    = (id) => deleteSpotMut.mutate(id);
-  const handleCreateSchedule = (payload) => addSpotScheduleMut.mutateAsync(payload);
-  const handleUpdateSchedule = (id, payload) => updateSpotScheduleMut.mutateAsync({ id, ...payload });
+  const handleCreateSchedule = (payload) => addSpotScheduleMut.mutateAsync({ ...payload, playlist_id: playlistId });
+  const handleUpdateSchedule = (id, payload) => updateSpotScheduleMut.mutateAsync({ id, ...payload, playlist_id: playlistId });
   const handleDeleteSchedule = (id) => deleteSpotScheduleMut.mutate(id);
 
   if (loadingPlaylist) {

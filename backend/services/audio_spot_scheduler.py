@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from core.models import AudioSpotSchedule, AudioSpot, AudioPlaylist
 from core.logging_config import log_spot_check, log_spot_eligible, log_spot_ineligible, log_spot_due
+from services.schedule_clock import normalize_schedule_now, schedule_now
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
@@ -51,7 +52,9 @@ def get_eligible_spots(
         Lista de tuplas (AudioSpot, AudioSpotSchedule) em ordem de prioridade decrescente.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     schedules = (
         db.query(AudioSpotSchedule)
@@ -129,7 +132,9 @@ def get_next_spot_time(
         Tupla (spot_time, AudioSpot, AudioSpotSchedule) ou None.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     if current_track_started_at is None:
         current_track_started_at = now
@@ -207,7 +212,10 @@ def _schedule_matches_now(
         if not start_t or not end_t:
             return False
 
-        if current_time < start_t or current_time >= end_t:
+        if start_t <= end_t:
+            if current_time < start_t or current_time >= end_t:
+                return False
+        elif current_time < start_t and current_time >= end_t:
             return False
 
     return True

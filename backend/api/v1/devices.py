@@ -70,6 +70,7 @@ from crud.entidades.crud_device import crud_device
 from crud.entidades.crud_device_pairing_code import crud_device_pairing_code
 from crud.entidades.crud_device_pairing_event import crud_device_pairing_event
 from crud.entidades.crud_playback_log import crud_playback_log
+from services.schedule_clock import schedule_now
 
 
 # ─── Request body models ─────────────────────────────────────────────────────
@@ -414,7 +415,7 @@ def _build_media_payload(
     media_by_id = {str(media.id): media for media in media_items}
 
     payload: List[dict] = []
-    now = datetime.utcnow()
+    now = schedule_now()
     for item, media_id in entries:
         media = media_by_id.get(media_id)
         if not media or not _media_is_valid_for_player(media, now=now):
@@ -570,7 +571,24 @@ def _build_folder_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
     return result
 
 
-def _build_spot_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
+def _build_spot_schedules_payload(
+    db: Session,
+    *,
+    playlist_id=None,
+    device: Optional[Device] = None,
+    campaign: Optional[Campaign] = None,
+) -> List[dict]:
+    if device and device.tenant_id:
+        from services.spot_resolver import resolve_for_device
+
+        return resolve_for_device(
+            db,
+            tenant_id=str(device.tenant_id),
+            device_id=str(device.id),
+            playlist_id=str(playlist_id) if playlist_id else None,
+            campaign_id=str(campaign.id) if campaign else None,
+        )
+
     schedules = (
         db.query(AudioSpotSchedule)
         .filter(
@@ -602,16 +620,31 @@ def _build_spot_schedules_payload(db: Session, *, playlist_id) -> List[dict]:
             "ends_at": sched.ends_at.isoformat() if sched.ends_at else None,
             "days_of_week": sched.days_of_week,
             "priority": sched.priority,
-            "insertion_policy": spot.insertion_policy.value if spot.insertion_policy else "interrupt",
+            "insertion_policy": (
+                sched.insertion_policy.value if sched.insertion_policy
+                else spot.insertion_policy.value if spot.insertion_policy
+                else "interrupt"
+            ),
             "file_url": track.file_url,
         })
     return result
 
 
-def _build_audio_playlist_from_model(playlist: AudioPlaylist, db: Session) -> Optional[dict]:
+def _build_audio_playlist_from_model(
+    playlist: AudioPlaylist,
+    db: Session,
+    *,
+    device: Optional[Device] = None,
+    campaign: Optional[Campaign] = None,
+) -> Optional[dict]:
     tracks = _audio_playlist_track_payload(db, playlist=playlist)
     folder_schedules = _build_folder_schedules_payload(db, playlist_id=playlist.id)
-    spot_schedules = _build_spot_schedules_payload(db, playlist_id=playlist.id)
+    spot_schedules = _build_spot_schedules_payload(
+        db,
+        playlist_id=playlist.id,
+        device=device,
+        campaign=campaign,
+    )
     return {
         "id": str(playlist.id),
         "name": playlist.name,
@@ -628,10 +661,12 @@ def _build_audio_playlist(device: Device, db: Session) -> Optional[dict]:
     if not device.audio_playlist_id:
         return None
     playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
+    if not playlist:
+        return None
     status_val = playlist.status.value if hasattr(playlist.status, "value") else str(playlist.status)
     if not playlist or status_val != "active":
         return None
-    return _build_audio_playlist_from_model(playlist, db)
+    return _build_audio_playlist_from_model(playlist, db, device=device)
 
 
 def _resolve_player_campaign(db: Session, *, device: Device) -> Optional[Campaign]:
@@ -662,11 +697,38 @@ def _build_player_playlist_response(db: Session, *, device: Device) -> dict:
     audio_playlist = None
     if campaign.audio_playlist_id:
         playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
-        _ps = playlist.status.value if hasattr(playlist.status, "value") else str(playlist.status)
+        _ps = playlist.status.value if playlist and hasattr(playlist.status, "value") else (
+            str(playlist.status) if playlist else None
+        )
         if playlist and _ps == "active":
-            audio_playlist = _build_audio_playlist_from_model(playlist, db)
+            audio_playlist = _build_audio_playlist_from_model(
+                playlist,
+                db,
+                device=device,
+                campaign=campaign,
+            )
     elif device.audio_playlist_id:
         audio_playlist = _build_audio_playlist(device, db)
+
+    campaign_spots = _build_spot_schedules_payload(
+        db,
+        playlist_id=str(audio_playlist["id"]) if audio_playlist else None,
+        device=device,
+        campaign=campaign,
+    )
+    if audio_playlist:
+        audio_playlist["spot_schedules"] = campaign_spots
+    elif campaign_spots:
+        audio_playlist = {
+            "id": None,
+            "name": "Spots da campanha",
+            "volume": device.audio_volume,
+            "loop": False,
+            "shuffle": False,
+            "tracks": [],
+            "folder_schedules": [],
+            "spot_schedules": campaign_spots,
+        }
 
     return {
         "device_name": device.name,
@@ -964,7 +1026,7 @@ def debug_playback(
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    now = datetime.utcnow()
+    now = schedule_now()
     campaign = _resolve_player_campaign(db, device=device)
     campaign_media = []
     campaign_media_ignored = []
@@ -2423,7 +2485,7 @@ def debug_device_spots(
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    now = datetime.utcnow()
+    now = schedule_now()
 
     # Obter playlist ativa do dispositivo
     playlist = device.audio_playlist if device.audio_playlist_id else None

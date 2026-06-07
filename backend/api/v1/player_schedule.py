@@ -33,6 +33,7 @@ from services.spot_resolver import (
     _is_schedule_active,
     _resolve_insertion_policy,
 )
+from services.schedule_clock import schedule_now
 
 router = APIRouter(tags=["player"])
 log = logging.getLogger("playwave.player_schedule")
@@ -72,7 +73,7 @@ def get_player_schedule(
     """
     device = _get_device_by_token(db, device_id, device_token)
     tenant_id = str(device.tenant_id) if device.tenant_id else None
-    now = datetime.utcnow()
+    now = schedule_now()
 
     if not tenant_id:
         raise HTTPException(
@@ -183,7 +184,7 @@ def debug_device_playback(
     if current_user.role != "admin" and str(device.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(http_status.HTTP_403_FORBIDDEN, detail="Sem permissão")
 
-    now = datetime.utcnow()
+    now = schedule_now()
     tenant_id = str(device.tenant_id) if device.tenant_id else None
 
     # Campanha

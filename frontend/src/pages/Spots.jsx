@@ -1,13 +1,12 @@
 import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Volume2, Search, Plus, ExternalLink } from "lucide-react";
+import { Loader2, Volume2, Search, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   listarSpots,
@@ -26,19 +25,20 @@ import SpotSchedulePanel from "@/components/audio/SpotSchedulePanel";
 const INSERTION_LABELS = {
   interrupt: "Interrompe música",
   wait_silence: "Aguarda silêncio",
-  fade_mix: "Mix com música",
 };
+
+const ALL_STATUS = "all";
+const NO_PLAYLIST = "none";
 
 export default function Spots() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
   const [selectedPlaylistId, setSelectedPlaylistId] = useState("");
-  const [panelOpen, setPanelOpen] = useState(false);
 
   const { data: spots = [], isLoading: loadingSpots } = useQuery({
     queryKey: ["audio-spots", statusFilter],
-    queryFn: () => listarSpots(statusFilter ? { status: statusFilter } : {}),
+    queryFn: () => listarSpots(statusFilter === ALL_STATUS ? {} : { status: statusFilter }),
   });
 
   const { data: playlists = [] } = useQuery({
@@ -116,14 +116,14 @@ export default function Spots() {
           <div className="flex gap-3 flex-wrap mt-2">
             <div className="flex-1 min-w-48">
               <Select
-                value={selectedPlaylistId || "none"}
-                onValueChange={(v) => setSelectedPlaylistId(v === "none" ? "" : v)}
+                value={selectedPlaylistId || NO_PLAYLIST}
+                onValueChange={(v) => setSelectedPlaylistId(v === NO_PLAYLIST ? "" : v)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione uma playlist para agendar..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">— Nenhuma playlist selecionada —</SelectItem>
+                  <SelectItem value={NO_PLAYLIST}>— Nenhuma playlist selecionada —</SelectItem>
                   {playlists.map((p) => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
@@ -181,7 +181,7 @@ export default function Spots() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value={ALL_STATUS}>Todos</SelectItem>
                   <SelectItem value="active">Ativos</SelectItem>
                   <SelectItem value="inactive">Inativos</SelectItem>
                   <SelectItem value="archived">Arquivados</SelectItem>

@@ -14,6 +14,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 
 from core.models import AudioPlaylistFolderSchedule, AudioFolder, AudioPlaylist
+from services.schedule_clock import normalize_schedule_now, schedule_now
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
@@ -31,7 +32,7 @@ def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
 
 def get_current_day_of_week() -> int:
     """Retorna dia da semana: 0=seg, 1=ter, 2=qua, 3=qui, 4=sex, 5=sab, 6=dom"""
-    return datetime.utcnow().weekday()
+    return schedule_now().weekday()
 
 
 def resolve_active_folder(
@@ -52,7 +53,9 @@ def resolve_active_folder(
         AudioFolder elegível com maior prioridade, ou None se nenhuma elegível.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     schedules = (
         db.query(AudioPlaylistFolderSchedule)
@@ -66,7 +69,7 @@ def resolve_active_folder(
 
     current_time = now.time()
     current_date = now.date()
-    current_dow = get_current_day_of_week()
+    current_dow = now.weekday()
 
     for schedule in schedules:
         if not _schedule_matches_now(
@@ -98,7 +101,9 @@ def resolve_active_folders_by_priority(
     Útil para fallbacks: tente a primeira, depois a segunda, etc.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     schedules = (
         db.query(AudioPlaylistFolderSchedule)
@@ -112,7 +117,7 @@ def resolve_active_folders_by_priority(
 
     current_time = now.time()
     current_date = now.date()
-    current_dow = get_current_day_of_week()
+    current_dow = now.weekday()
 
     folders = []
     seen_folder_ids = set()
@@ -159,7 +164,10 @@ def _schedule_matches_now(
         if not start_t or not end_t:
             return False
 
-        if current_time < start_t or current_time >= end_t:
+        if start_t <= end_t:
+            if current_time < start_t or current_time >= end_t:
+                return False
+        elif current_time < start_t and current_time >= end_t:
             return False
 
     if schedule.days_of_week:
@@ -185,7 +193,9 @@ def get_next_schedule_change(
     Útil para saber quando re-avaliar a playlist.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     schedules = (
         db.query(AudioPlaylistFolderSchedule)
@@ -199,7 +209,7 @@ def get_next_schedule_change(
     next_change = None
 
     for schedule in schedules:
-        if _schedule_matches_now(schedule, now.date(), now.time(), get_current_day_of_week()):
+        if _schedule_matches_now(schedule, now.date(), now.time(), now.weekday()):
             if schedule.end_time:
                 end_t = parse_time_str(schedule.end_time)
                 if end_t:

@@ -57,6 +57,27 @@ function clearSession() {
 }
 
 const INACTIVITY_MS = 8 * 60 * 60 * 1000; // 8 horas
+const AUTH_CHECK_TIMEOUT_MS = 5000;
+const LOGIN_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = AUTH_CHECK_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Tempo limite ao conectar com o servidor");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -84,9 +105,9 @@ export function AuthProvider({ children }) {
     }
 
     try {
-      const res = await fetch(`${API_URL}/api/auth/me`, {
+      const res = await fetchWithTimeout(`${API_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }, AUTH_CHECK_TIMEOUT_MS);
 
       if (res.ok) {
         const userData = await res.json();
@@ -155,11 +176,11 @@ export function AuthProvider({ children }) {
 
   // Login — chama o backend e armazena o JWT real
   const login = useCallback(async (email, password, remember = false) => {
-    const res = await fetch(`${API_URL}/api/auth/login`, {
+    const res = await fetchWithTimeout(`${API_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
-    });
+    }, LOGIN_TIMEOUT_MS);
 
     if (!res.ok) {
       let detail = "Erro ao fazer login";
@@ -185,10 +206,10 @@ export function AuthProvider({ children }) {
     const token = getStoredToken();
     if (token) {
       // Fire-and-forget — não bloqueia o logout local se o backend falhar
-      fetch(`${API_URL}/api/auth/logout`, {
+      fetchWithTimeout(`${API_URL}/api/auth/logout`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => {});
+      }, AUTH_CHECK_TIMEOUT_MS).catch(() => {});
     }
     clearSession();
     setUser(null);

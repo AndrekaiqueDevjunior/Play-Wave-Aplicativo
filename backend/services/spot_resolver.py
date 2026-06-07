@@ -18,6 +18,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+from services.schedule_clock import normalize_schedule_now, schedule_now
 from core.models import (
     AudioSpot,
     AudioSpotSchedule,
@@ -80,7 +81,8 @@ def _is_schedule_active(schedule: AudioSpotSchedule, now: datetime) -> bool:
 def _resolve_insertion_policy(schedule: AudioSpotSchedule, spot: AudioSpot) -> str:
     """Precedência: schedule.insertion_policy > spot.insertion_policy > wait_silence."""
     if schedule.insertion_policy:
-        return str(schedule.insertion_policy)
+        val = schedule.insertion_policy
+        return val.value if hasattr(val, "value") else str(val)
     if spot.insertion_policy:
         val = spot.insertion_policy
         return val.value if hasattr(val, "value") else str(val)
@@ -129,7 +131,9 @@ def resolve_for_device(
         campaign_id:  Campanha ativa do device (se existir).
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
+    else:
+        now = normalize_schedule_now(now)
 
     # ── Buscar schedules candidatos ─────────────────────────────────────────
     from sqlalchemy import or_

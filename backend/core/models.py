@@ -441,8 +441,8 @@ class Media(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="media")
-    playback_logs = relationship("PlaybackLog")
-    view_reports = relationship("ViewReport")
+    playback_logs = relationship("PlaybackLog", back_populates="media")
+    view_reports = relationship("ViewReport", back_populates="media")
     versions = relationship("MediaVersion", back_populates="media", cascade="all, delete-orphan")
 
 
@@ -852,6 +852,8 @@ class AudioSpotSchedule(Base):
         SQLEnum(AudioSpotInsertionPolicy, name="audio_spot_insertion_policy", values_callable=enum_values),
         nullable=True,
     )
+    # Duração de reprodução: None = música inteira; >0 = para após N segundos
+    play_duration_seconds = Column(Integer, nullable=True)
     priority = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
@@ -1036,7 +1038,7 @@ class PlaybackLog(Base):
     tenant = relationship("Tenant", back_populates="playback_logs")
     device = relationship("Device", back_populates="playback_logs")
     campaign = relationship("Campaign", back_populates="playback_logs")
-    media = relationship("Media")
+    media = relationship("Media", back_populates="playback_logs")
 
 
 class ViewReportStatus(str, enum.Enum):
@@ -1065,7 +1067,7 @@ class ViewReport(Base):
     tenant = relationship("Tenant", back_populates="view_reports")
     device = relationship("Device", back_populates="view_reports")
     campaign = relationship("Campaign", back_populates="view_reports")
-    media = relationship("Media")
+    media = relationship("Media", back_populates="view_reports")
 
 
 class DeviceCommandStatus(str, enum.Enum):

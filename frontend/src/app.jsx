@@ -44,6 +44,7 @@ import Localizacoes from "@/pages/Localizacoes";
 import FaixasAudio from "@/pages/FaixasAudio";
 import PlaylistsSonoras from "@/pages/PlaylistsSonoras";
 import PlaylistDetalhe from "@/pages/PlaylistDetalhe";
+import Spots from "@/pages/Spots";
 
 // Configurações
 import ConfiguracaoEmpresa from "@/pages/ConfigEmpresa";
@@ -127,6 +128,7 @@ function App() {
               <Route path="radio/faixas" element={<FaixasAudio />} />
               <Route path="radio/playlists" element={<PlaylistsSonoras />} />
               <Route path="radio/playlists/:id" element={<PlaylistDetalhe />} />
+              <Route path="radio/spots" element={<Spots />} />
 
               {/* Configurações — apenas admin */}
               <Route

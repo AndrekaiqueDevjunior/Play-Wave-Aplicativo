@@ -1,11 +1,15 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
-import redis
 
 
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+    DB_CONNECT_TIMEOUT_SECONDS: int = 5
+    AUTO_CREATE_TABLES: bool = False
 
     # JWT
     SECRET_KEY: str
@@ -37,6 +41,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Play Wave API"
     VERSION: str = "1.0.0"
     LOG_LEVEL: str = "INFO"
+    APP_TIMEZONE: str = "America/Sao_Paulo"
 
     # Uploads
     UPLOAD_DIR: str = "uploads"
@@ -60,7 +65,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-_redis_client: Optional[redis.Redis] = None
+_redis_client = None
 
 
 def get_redis_client():
@@ -74,6 +79,8 @@ def get_redis_client():
         return _redis_client
 
     try:
+        import redis
+
         _redis_client = redis.from_url(
             settings.REDIS_URL,
             decode_responses=True,

@@ -46,7 +46,6 @@ import { Plus, Trash2, Edit, Loader2, Volume2 } from "lucide-react";
 const INSERTION_POLICIES = {
   interrupt: "Interrompe música",
   wait_silence: "Aguarda silêncio",
-  fade_mix: "Mix com música",
 };
 
 const SPOT_STATUS = {
@@ -208,6 +207,7 @@ export default function AudioSpotScheduleManager({
 
     const payload = {
       ...scheduleForm,
+      playlist_id: playlistId || null,
       interval_seconds: parseInt(scheduleForm.interval_seconds),
       priority: parseInt(scheduleForm.priority),
       starts_at: scheduleForm.starts_at || null,

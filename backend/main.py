@@ -8,21 +8,35 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from sqlalchemy import event
-from api.v1 import (
-    auth_router, devices_router, campaigns_router, media_router,
-    users_router, locations_router, user_logs_router,
-    tracks_router, categories_router, playlists_router, audio_devices_router, audio_folders_router, spots_router,
-    audio_events_router,
-    dashboard_router, reports_router, schedule_router,
-    monitoring_router, tenants_router, plans_router,
-    player_schedule_router,
-)
+from sqlalchemy import event, text
+from sqlalchemy.orm import configure_mappers
+from api.v1.auth import router as auth_router
+from api.v1.devices import router as devices_router
+from api.v1.campaigns import router as campaigns_router
+from api.v1.media import router as media_router
+from api.v1.users import router as users_router
+from api.v1.locations import router as locations_router
+from api.v1.user_logs import router as user_logs_router
+from api.v1.audio.tracks import router as tracks_router
+from api.v1.audio.categories import router as categories_router
+from api.v1.audio.playlists import router as playlists_router
+from api.v1.audio.devices import router as audio_devices_router
+from api.v1.audio.folders import router as audio_folders_router
+from api.v1.audio.spots import router as spots_router
+from api.v1.audio.events import router as audio_events_router
+from api.v1.dashboard import router as dashboard_router
+from api.v1.reports import router as reports_router
+from api.v1.schedule import router as schedule_router
+from api.v1.monitoring import router as monitoring_router
+from api.v1.tenants import router as tenants_router
+from api.v1.plans import router as plans_router
+from api.v1.player_schedule import router as player_schedule_router
 from core.database import engine, Base
 from core.config import settings
 from core.models import Device
 
-Base.metadata.create_all(bind=engine)
+if settings.AUTO_CREATE_TABLES:
+    Base.metadata.create_all(bind=engine)
 
 UPLOADS_DIR = Path("uploads").resolve()
 RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -41,6 +55,20 @@ app = FastAPI(
     description="API para sistema de Digital Signage",
     version=settings.VERSION,
 )
+
+
+@app.on_event("startup")
+def warmup_database() -> None:
+    try:
+        configure_mappers()
+    except Exception as exc:
+        print(f"[startup] SQLAlchemy mapper warmup failed: {exc}")
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        print(f"[startup] database warmup failed: {exc}")
 
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)

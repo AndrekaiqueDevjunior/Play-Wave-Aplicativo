@@ -211,6 +211,23 @@ export const listarSpotSchedulesPorEscopo = (params = {}) => {
   return apiFetch(`/audio/spots/schedules${qs ? `?${qs}` : ""}`);
 };
 
+export const criarSpotSchedulePorEscopo = (payload) =>
+  apiFetch("/audio/spots/schedules", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const atualizarSpotSchedulePorEscopo = (scheduleId, payload) =>
+  apiFetch(`/audio/spots/schedules/${scheduleId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const deletarSpotSchedulePorEscopo = (scheduleId) =>
+  apiFetch(`/audio/spots/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+
 // Aliases convenientes
 export const listarSpotSchedulesDaCampanha = (campaignId) =>
   listarSpotSchedulesPorEscopo({ campaign_id: campaignId });

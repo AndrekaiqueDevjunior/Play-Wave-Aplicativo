@@ -1167,6 +1167,7 @@ class AudioSpotScheduleBase(BaseSchema):
     ends_at: Optional[datetime] = None
     days_of_week: Optional[List[int]] = None
     insertion_policy: Optional[str] = None  # override; None = usar do AudioSpot
+    play_duration_seconds: Optional[int] = Field(None, gt=0)  # None=música inteira; >0=corta após N s
     priority: Optional[int] = Field(0, ge=0)
     is_active: Optional[bool] = True
 
