@@ -257,6 +257,10 @@ export default function Player() {
   const audioManagerRef = useRef(null);
   const deviceIdRef = useRef(deviceId);
   const audioPlaylistIdRef = useRef(null);
+  // Timestamp (ms) do último disparo de cada spot schedule. Sobrevive a
+  // re-fetches da playlist para manter a cadência real (interval_seconds),
+  // independente de o efeito remontar.
+  const spotLastPlayedRef = useRef({});
   const prevAudioTrackRef = useRef(null);
   const campaignConfigVersionRef = useRef(campaignConfigVersion);
   const configVersionMonitorRef = useRef(null);
@@ -1240,6 +1244,10 @@ export default function Player() {
   }, [audioEnabled, phase]);
 
   // ── Audio Manager: agenda de spots ────────────────────────────────────────
+  // Um único "relógio mestre" verifica a cada poucos segundos quais spots
+  // devem tocar. Toca IMEDIATAMENTE ao entrar na janela (primeira vez que fica
+  // elegível) e respeita interval_seconds via timestamp persistido em ref —
+  // assim o re-fetch da playlist não zera a cadência nem impede o primeiro toque.
   useEffect(() => {
     if (phase !== "playing") return;
     const mgr = audioManagerRef.current;
@@ -1248,28 +1256,39 @@ export default function Player() {
     const spotSchedules = audioPlaylist?.spot_schedules;
     if (!spotSchedules?.length) return;
 
-    const timers = [];
+    const tick = () => {
+      const now = new Date();
+      const nowMs = now.getTime();
 
-    // Filtra spots elegíveis agora (valida horário, data e dias da semana)
-    const eligibleNow = spotScheduleResolver.getEligibleSpots(spotSchedules, new Date());
+      // Elegíveis agora (valida horário, data e dias da semana), por prioridade
+      const eligible = spotScheduleResolver.getEligibleSpots(spotSchedules, now);
 
-    eligibleNow.forEach((sched) => {
-      const intervalMs = sched.interval_seconds * 1000;
-      const url = assetUrl(sched.file_url);
-      const policy = sched.insertion_policy || "interrupt";
+      for (const sched of eligible) {
+        const intervalMs = (sched.interval_seconds || 0) * 1000;
+        if (intervalMs <= 0) continue;
 
-      const id = setInterval(() => {
-        // Re-valida horário/data a cada disparo
-        if (!spotScheduleResolver.isActive(sched, new Date())) return;
+        const last = spotLastPlayedRef.current[sched.id] || 0;
+        // last=0 (nunca tocou) => toca imediatamente; senão, respeita o intervalo
+        if (nowMs - last < intervalMs) continue;
+
+        const url = assetUrl(sched.file_url);
+        const policy = sched.insertion_policy || "interrupt";
+        spotLastPlayedRef.current[sched.id] = nowMs;
         console.log("[player] spot disparado:", sched.spot_name || sched.spot_id);
         mgr.playSpot(url, policy).catch(() => {});
-      }, intervalMs);
+        break; // 1 spot por tick (maior prioridade primeiro); evita empilhar
+      }
+    };
 
-      timers.push(id);
-    });
+    // Primeira verificação quase imediata + checagem periódica
+    const warmup = setTimeout(tick, 1_000);
+    const id = setInterval(tick, 5_000);
 
-    return () => timers.forEach(clearInterval);
-  }, [audioPlaylist?.id, phase]);
+    return () => {
+      clearTimeout(warmup);
+      clearInterval(id);
+    };
+  }, [audioPlaylist?.id, audioPlaylist?.spot_schedules, phase]);
 
   // `current` já declarado acima no bloco do resolver SPEC 005
   const nextMedia = playlist.length
