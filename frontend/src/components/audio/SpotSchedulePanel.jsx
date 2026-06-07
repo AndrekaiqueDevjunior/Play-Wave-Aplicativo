@@ -562,29 +562,37 @@ export default function SpotSchedulePanel({
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            {/* Spot */}
-            <div className="space-y-1.5">
-              <Label>Spot *</Label>
-              <Select
-                value={scheduleForm.spot_id}
-                onValueChange={(v) => setScheduleForm((p) => ({ ...p, spot_id: v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o spot" />
-                </SelectTrigger>
-                <SelectContent>
-                  {spots.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="space-y-5 py-2">
+
+            {/* ── Seção 1: O que tocar ─────────────────────────────────────────── */}
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Spot *</Label>
+                <Select
+                  value={scheduleForm.spot_id}
+                  onValueChange={(v) => setScheduleForm((p) => ({ ...p, spot_id: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o spot" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {spots.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
-            {/* Intervalo — seletor com unidade + presets */}
-            <div className="space-y-2">
-              <Label>Tocar a cada *</Label>
-              <div className="flex gap-2">
+            <div className="border-t" />
+
+            {/* ── Seção 2: Com que frequência ──────────────────────────────────── */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">Frequência</p>
+                <p className="text-xs text-muted-foreground">De quanto em quanto tempo o spot será inserido na programação</p>
+              </div>
+              <div className="flex gap-2 items-center">
                 <Input
                   type="number"
                   min={1}
@@ -598,7 +606,7 @@ export default function SpotSchedulePanel({
                       interval_seconds: unitToSeconds(v, p.intervalUnit),
                     }));
                   }}
-                  className="w-24"
+                  className="w-20"
                 />
                 <Select
                   value={scheduleForm.intervalUnit}
@@ -619,8 +627,10 @@ export default function SpotSchedulePanel({
                     <SelectItem value="hr">horas</SelectItem>
                   </SelectContent>
                 </Select>
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  = {formatInterval(scheduleForm.interval_seconds)}
+                </span>
               </div>
-              {/* Presets rápidos */}
               <div className="flex gap-1.5 flex-wrap">
                 {INTERVAL_PRESETS.map(([label, secs]) => (
                   <button
@@ -630,7 +640,7 @@ export default function SpotSchedulePanel({
                       const { value, unit } = intervalToUnit(secs);
                       setScheduleForm((p) => ({ ...p, interval_seconds: secs, intervalValue: value, intervalUnit: unit }));
                     }}
-                    className={`px-2 py-0.5 text-xs rounded border transition-colors ${
+                    className={`px-2.5 py-1 text-xs rounded border transition-colors ${
                       scheduleForm.interval_seconds === secs
                         ? "bg-primary text-primary-foreground border-primary"
                         : "border-border text-muted-foreground hover:border-primary/50"
@@ -642,39 +652,48 @@ export default function SpotSchedulePanel({
               </div>
             </div>
 
-            {/* Horário */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Início (HH:MM)</Label>
-                <Input
-                  type="time"
-                  value={scheduleForm.start_time}
-                  onChange={(e) => setScheduleForm((p) => ({ ...p, start_time: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Fim (HH:MM)</Label>
-                <Input
-                  type="time"
-                  value={scheduleForm.end_time}
-                  onChange={(e) => setScheduleForm((p) => ({ ...p, end_time: e.target.value }))}
-                />
-              </div>
-            </div>
-            {(crossesMidnight || outsideCurrentTime) && (
-              <p className="text-xs text-muted-foreground -mt-2">
-                {crossesMidnight
-                  ? "Janela cruza meia-noite."
-                  : `Fora da janela agora (${currentHHMM}).`}
-              </p>
-            )}
+            <div className="border-t" />
 
-            {/* Dias da semana */}
-            <div className="space-y-1.5">
-              <Label>Dias da semana <span className="text-muted-foreground text-xs">(vazio = todos)</span></Label>
-              <div className="flex gap-1.5 flex-wrap">
-                {DAYS_OF_WEEK.map((d) => (
-                  <button
+            {/* ── Seção 3: Quando pode tocar ───────────────────────────────────── */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">Restrições de horário</p>
+                <p className="text-xs text-muted-foreground">O spot só dispara dentro desta faixa. Deixe em branco para tocar em qualquer horário</p>
+              </div>
+
+              {/* Horário do dia */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Horário início</Label>
+                  <Input
+                    type="time"
+                    value={scheduleForm.start_time}
+                    onChange={(e) => setScheduleForm((p) => ({ ...p, start_time: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Horário fim</Label>
+                  <Input
+                    type="time"
+                    value={scheduleForm.end_time}
+                    onChange={(e) => setScheduleForm((p) => ({ ...p, end_time: e.target.value }))}
+                  />
+                </div>
+              </div>
+              {(crossesMidnight || outsideCurrentTime) && (
+                <p className={`text-xs -mt-1 ${crossesMidnight ? "text-muted-foreground" : "text-amber-600"}`}>
+                  {crossesMidnight
+                    ? "Janela cruza meia-noite — normal para ex. 22:00–06:00."
+                    : `Fora desta janela agora (${currentHHMM}) — spot não tocará até entrar no horário.`}
+                </p>
+              )}
+
+              {/* Dias da semana */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Dias da semana <span className="ml-1">(vazio = todos os dias)</span></Label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {DAYS_OF_WEEK.map((d) => (
+                    <button
                     type="button"
                     key={d.value}
                     onClick={() => toggleDay(d.value)}
@@ -690,53 +709,49 @@ export default function SpotSchedulePanel({
               </div>
             </div>
 
-            {/* Período de validade */}
-            <div className="grid grid-cols-2 gap-3">
+              {/* Período de validade — ainda dentro de Restrições */}
               <div className="space-y-1.5">
-                <Label>Válido de</Label>
-                <Input
-                  type="date"
-                  value={scheduleForm.starts_at}
-                  onChange={(e) => setScheduleForm((p) => ({ ...p, starts_at: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Válido até</Label>
-                <Input
-                  type="date"
-                  value={scheduleForm.ends_at}
-                  onChange={(e) => setScheduleForm((p) => ({ ...p, ends_at: e.target.value }))}
-                />
+                <Label className="text-xs text-muted-foreground">Período de vigência <span className="ml-1">(vazio = sem limite de data)</span></Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    type="date"
+                    value={scheduleForm.starts_at}
+                    onChange={(e) => setScheduleForm((p) => ({ ...p, starts_at: e.target.value }))}
+                  />
+                  <Input
+                    type="date"
+                    value={scheduleForm.ends_at}
+                    onChange={(e) => setScheduleForm((p) => ({ ...p, ends_at: e.target.value }))}
+                  />
+                </div>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground -mt-2">
-              Sem datas = sempre válido
-            </p>
 
-            {/* Política de inserção override */}
-            <div className="space-y-1.5">
-              <Label>Política de inserção <span className="text-muted-foreground text-xs">(override)</span></Label>
-              <Select
-                value={scheduleForm.insertion_policy || "inherit"}
-                onValueChange={(v) =>
-                  setScheduleForm((p) => ({ ...p, insertion_policy: v === "inherit" ? "" : v }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="inherit">Herdar do spot</SelectItem>
-                  <SelectItem value="interrupt">Interrompe música</SelectItem>
-                  <SelectItem value="wait_silence">Aguarda música terminar</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <div className="border-t" />
 
-            {/* Prioridade + Ativo */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* ── Seção 4: Configurações extras ────────────────────────────────── */}
+            <div className="grid grid-cols-2 gap-3 items-end">
               <div className="space-y-1.5">
-                <Label>Prioridade</Label>
+                <Label className="text-xs">Como inserir <span className="text-muted-foreground">(override)</span></Label>
+                <Select
+                  value={scheduleForm.insertion_policy || "inherit"}
+                  onValueChange={(v) =>
+                    setScheduleForm((p) => ({ ...p, insertion_policy: v === "inherit" ? "" : v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">Herdar do spot</SelectItem>
+                    <SelectItem value="interrupt">Interrompe a música</SelectItem>
+                    <SelectItem value="wait_silence">Aguarda música terminar</SelectItem>
+                    <SelectItem value="fade_mix">Mix (fade)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Prioridade <span className="text-muted-foreground">(0–100)</span></Label>
                 <Input
                   type="number"
                   min={0}
@@ -747,14 +762,14 @@ export default function SpotSchedulePanel({
                   }
                 />
               </div>
-              <div className="flex items-end pb-1 gap-2">
-                <Checkbox
-                  id="sched-active"
-                  checked={scheduleForm.is_active}
-                  onCheckedChange={(v) => setScheduleForm((p) => ({ ...p, is_active: !!v }))}
-                />
-                <Label htmlFor="sched-active">Agendamento ativo</Label>
-              </div>
+            </div>
+            <div className="flex items-center gap-2 -mt-1">
+              <Checkbox
+                id="sched-active"
+                checked={scheduleForm.is_active}
+                onCheckedChange={(v) => setScheduleForm((p) => ({ ...p, is_active: !!v }))}
+              />
+              <Label htmlFor="sched-active" className="text-sm">Agendamento ativo</Label>
             </div>
 
             {scheduleError && (
