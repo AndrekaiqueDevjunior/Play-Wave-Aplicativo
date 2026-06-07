@@ -213,11 +213,17 @@ export default function SpotSchedulePanel({
     if (!scheduleForm.interval_seconds || scheduleForm.interval_seconds < 1)
       return setScheduleError("Intervalo mínimo: 1 segundo");
 
+    // Se início e fim são iguais (ex: ambos "00:00"), trata como sem restrição de horário
+    const startTime = scheduleForm.start_time || null;
+    const endTime = scheduleForm.end_time || null;
+    const effectiveStart = (startTime && endTime && startTime === endTime) ? null : startTime;
+    const effectiveEnd = (startTime && endTime && startTime === endTime) ? null : endTime;
+
     const payload = {
       spot_id: scheduleForm.spot_id,
       interval_seconds: parseInt(scheduleForm.interval_seconds),
-      start_time: scheduleForm.start_time || null,
-      end_time: scheduleForm.end_time || null,
+      start_time: effectiveStart,
+      end_time: effectiveEnd,
       starts_at: scheduleForm.starts_at || null,
       ends_at: scheduleForm.ends_at || null,
       days_of_week: scheduleForm.days_of_week.length ? scheduleForm.days_of_week : null,
