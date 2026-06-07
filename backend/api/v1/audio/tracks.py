@@ -9,7 +9,7 @@ from datetime import datetime
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import AudioTrack, User
+from core.models import AudioPlaylistItem, AudioTrack, Campaign, Device, User
 from core.schemas_completos import (
     AudioTrackCreate, AudioTrackUpdate, AudioTrackResponse,
     AudioTrackCategoryEnum, AudioTrackStatusEnum,
@@ -18,6 +18,52 @@ from core.schemas_completos import (
 from crud.entidades import crud_audio_track
 
 router = APIRouter(prefix="/audio/tracks", tags=["audio-tracks"])
+
+import logging
+_log = logging.getLogger("playwave.audio_tracks")
+
+
+def _device_ids_for_track(db: Session, track_id: str) -> set[str]:
+    """Devices que reproduzem playlists contendo esta faixa."""
+    playlist_ids = {
+        str(row.playlist_id)
+        for row in db.query(AudioPlaylistItem.playlist_id)
+        .filter(AudioPlaylistItem.track_id == track_id)
+        .all()
+    }
+    device_ids: set[str] = set()
+    for pid in playlist_ids:
+        rows = db.query(Device.id).filter(Device.audio_playlist_id == pid).all()
+        device_ids.update(str(r.id) for r in rows)
+        campaigns = db.query(Campaign).filter(Campaign.audio_playlist_id == pid).all()
+        for c in campaigns:
+            device_ids.update(str(d) for d in (c.device_ids or []) if d)
+            rows2 = db.query(Device.id).filter(Device.current_campaign_id == c.id).all()
+            device_ids.update(str(r.id) for r in rows2)
+    return device_ids
+
+
+def _notify_track_changed(db: Session, track_id: str, *, reason: str) -> None:
+    """Invalida cache Redis e notifica players via SSE para todos os devices afetados."""
+    device_ids = _device_ids_for_track(db, track_id)
+    if not device_ids:
+        return
+    try:
+        from core.config import get_redis_client
+        redis = get_redis_client()
+        if redis:
+            pipe = redis.pipeline(transaction=False)
+            for did in device_ids:
+                pipe.delete(f"device_playlist:{did}")
+            pipe.execute()
+    except Exception as exc:
+        _log.warning("track cache invalidation error: %s", exc)
+    try:
+        from services.event_bus import publish_device_event
+        for did in device_ids:
+            publish_device_event(did, event_type="playlist_invalidated", data={"reason": reason})
+    except Exception as exc:
+        _log.warning("track publish event error: %s", exc)
 
 
 @router.get("/", response_model=List[AudioTrackResponse])
@@ -294,6 +340,7 @@ def update_audio_track(
         )
     
     track = crud_audio_track.update(db, db_obj=track, obj_in=track_in)
+    _notify_track_changed(db, track_id, reason="track.updated")
     return track
 
 
@@ -330,6 +377,7 @@ def delete_audio_track(
             except Exception:
                 pass  # Ignora erro ao remover arquivo
     
+    _notify_track_changed(db, track_id, reason="track.deleted")
     crud_audio_track.remove(db, id=track_id)
     return {"message": "Faixa de áudio removida com sucesso"}
 
@@ -360,6 +408,7 @@ def update_track_status(
         )
     
     track = crud_audio_track.update_status(db, db_obj=track, status=new_status.value)
+    _notify_track_changed(db, track_id, reason="track.status_changed")
     return {"message": f"Status atualizado para {new_status.value}"}
 
 

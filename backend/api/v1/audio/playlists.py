@@ -45,6 +45,22 @@ def _invalidate_device_playlist_cache(device_ids: Optional[set[str]] = None) -> 
         print(f"[audio-playlists] Redis cache invalidation error: {exc}")
 
 
+import logging
+_log = logging.getLogger("playwave.audio_playlists")
+
+
+def _publish_playlist_invalidated(device_ids: set[str], *, reason: str) -> None:
+    """Push SSE para todos os devices afetados por mudança de playlist/faixa."""
+    if not device_ids:
+        return
+    try:
+        from services.event_bus import publish_device_event
+        for did in device_ids:
+            publish_device_event(did, event_type="playlist_invalidated", data={"reason": reason})
+    except Exception as exc:
+        _log.warning("playlist publish event error: %s", exc)
+
+
 def _device_ids_for_playlist(db: Session, *, playlist_id: str) -> set[str]:
     device_ids = {
         str(row.id)
@@ -294,6 +310,7 @@ def add_audio_playlist_items(
     _sync_legacy_track_fields(db, playlist=playlist)
     db.commit()
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return crud_audio_playlist_item.list_by_playlist(
         db, playlist_id=str(playlist.id)
     )
@@ -339,6 +356,7 @@ def update_audio_playlist_item(
     db.commit()
     db.refresh(item)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return item
 
 
@@ -364,6 +382,7 @@ def remove_audio_playlist_item(
     _sync_legacy_track_fields(db, playlist=playlist)
     db.commit()
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return None
 
 
@@ -393,6 +412,7 @@ def reorder_audio_playlist_items(
     _sync_legacy_track_fields(db, playlist=playlist)
     db.commit()
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return items
 
 
@@ -423,6 +443,7 @@ def create_audio_playlist(
         db.commit()
         db.refresh(playlist)
         _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return playlist
 
 
@@ -465,6 +486,7 @@ def update_audio_playlist(
         db.commit()
         db.refresh(playlist)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return playlist
 
 
@@ -495,6 +517,7 @@ def delete_audio_playlist(
     affected_device_ids = _device_ids_for_playlist(db, playlist_id=playlist_id)
     crud_audio_playlist.remove(db, id=playlist_id)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return {"message": "Playlist de áudio removida com sucesso"}
 
 
@@ -526,6 +549,7 @@ def update_playlist_status(
     affected_device_ids = _device_ids_for_playlist(db, playlist_id=playlist_id)
     playlist = crud_audio_playlist.update_status(db, db_obj=playlist, status=status)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return {"message": f"Status atualizado para {status}"}
 
 
@@ -567,6 +591,7 @@ def add_track_to_playlist(
     db.commit()
     db.refresh(playlist)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return {"message": "Faixa adicionada à playlist com sucesso"}
 
 
@@ -607,6 +632,7 @@ def remove_track_from_playlist(
     db.commit()
     db.refresh(playlist)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return {"message": "Faixa removida da playlist com sucesso"}
 
 
@@ -647,6 +673,7 @@ def reorder_playlist_tracks(
     db.commit()
     db.refresh(playlist)
     _invalidate_device_playlist_cache(affected_device_ids)
+    _publish_playlist_invalidated(affected_device_ids, reason="playlist.changed")
     return {"message": "Faixas reordenadas com sucesso"}
 
 
@@ -779,7 +806,9 @@ def create_playlist_folder_schedule(
     schedule = crud_audio_playlist_folder_schedule.create(
         db, obj_in=obj_in, playlist_id=playlist_id
     )
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_affected)
+    _publish_playlist_invalidated(_affected, reason="playlist.changed")
 
     return schedule
 
@@ -856,7 +885,9 @@ def update_playlist_folder_schedule(
     schedule = crud_audio_playlist_folder_schedule.update(
         db, db_obj=schedule, obj_in=payload
     )
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_affected)
+    _publish_playlist_invalidated(_affected, reason="playlist.changed")
 
     return schedule
 
@@ -888,4 +919,6 @@ def delete_playlist_folder_schedule(
         )
 
     crud_audio_playlist_folder_schedule.remove(db, id=schedule_id)
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_affected)
+    _publish_playlist_invalidated(_affected, reason="playlist.changed")
