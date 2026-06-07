@@ -56,6 +56,46 @@ def _device_ids_for_playlist(db: Session, *, playlist_id: str) -> set:
     return device_ids
 
 
+def _publish_spots_invalidated(device_ids: set, *, reason: str) -> None:
+    """Notifica players em tempo real (SSE via event_bus) que a programação de
+    spots mudou. Complementa a invalidação de cache: sem isto, o player só
+    pegaria a mudança no próximo poll (~30s)."""
+    if not device_ids:
+        return
+    try:
+        from services.event_bus import publish_device_event
+
+        for device_id in device_ids:
+            publish_device_event(
+                str(device_id),
+                event_type="playlist_invalidated",
+                data={"reason": reason},
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort; cache + poll reconciliam
+        log.warning("spot broadcast playlist_invalidated failed: %s", exc)
+
+
+def _device_ids_for_schedule_scope(
+    db: Session,
+    *,
+    playlist_id: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    device_id: Optional[str] = None,
+) -> set:
+    device_ids = set()
+    if playlist_id:
+        device_ids.update(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    if campaign_id:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            device_ids.update(str(d) for d in (campaign.device_ids or []) if d)
+            rows = db.query(Device.id).filter(Device.current_campaign_id == campaign.id).all()
+            device_ids.update(str(row.id) for row in rows)
+    if device_id:
+        device_ids.add(str(device_id))
+    return device_ids
+
+
 def _authorize_spot_access(db: Session, *, spot_id: str, current_user: User) -> AudioSpot:
     spot = crud_audio_spot.get(db, id=spot_id)
     if not spot:
@@ -183,6 +223,127 @@ def list_spot_schedules_by_scope(
     return query.order_by(AudioSpotSchedule.priority.desc()).offset(skip).limit(limit).all()
 
 
+@router.post(
+    "/schedules",
+    response_model=AudioSpotScheduleResponse,
+    status_code=http_status.HTTP_201_CREATED,
+)
+def create_spot_schedule_by_scope(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    payload: AudioSpotScheduleCreate,
+):
+    """Cria agendamento de spot por escopo: playlist, campanha ou dispositivo."""
+    tenant_id = _effective_tenant_id(current_user, getattr(payload, "tenant_id", None))
+    _validate_cross_tenant(
+        db,
+        tenant_id=tenant_id,
+        playlist_id=payload.playlist_id,
+        campaign_id=payload.campaign_id,
+        device_id=payload.device_id,
+        spot_id=payload.spot_id,
+    )
+    _authorize_spot_access(db, spot_id=payload.spot_id, current_user=current_user)
+
+    schedule = crud_audio_spot_schedule.create(
+        db,
+        obj_in=payload,
+        tenant_id=tenant_id,
+    )
+    affected = _device_ids_for_schedule_scope(
+        db,
+        playlist_id=str(schedule.playlist_id) if schedule.playlist_id else None,
+        campaign_id=str(schedule.campaign_id) if schedule.campaign_id else None,
+        device_id=str(schedule.device_id) if schedule.device_id else None,
+    )
+    _invalidate_device_playlist_cache(affected)
+    _publish_spots_invalidated(affected, reason="spot_schedule.created")
+    return schedule
+
+
+@router.put("/schedules/{schedule_id}", response_model=AudioSpotScheduleResponse)
+def update_spot_schedule_by_scope(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    schedule_id: str,
+    payload: AudioSpotScheduleUpdate,
+):
+    """Atualiza agendamento de spot sem depender de uma playlist no path."""
+    schedule = crud_audio_spot_schedule.get(db, id=schedule_id)
+    if not schedule:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail="Agendamento nÃ£o encontrado")
+    if current_user.role != "admin" and str(schedule.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN, detail="Sem permissÃ£o para acessar este agendamento")
+
+    tenant_id = _effective_tenant_id(current_user)
+    next_playlist_id = payload.playlist_id if payload.playlist_id is not None else (
+        str(schedule.playlist_id) if schedule.playlist_id else None
+    )
+    next_campaign_id = payload.campaign_id if payload.campaign_id is not None else (
+        str(schedule.campaign_id) if schedule.campaign_id else None
+    )
+    next_device_id = payload.device_id if payload.device_id is not None else (
+        str(schedule.device_id) if schedule.device_id else None
+    )
+    next_spot_id = payload.spot_id if payload.spot_id is not None else str(schedule.spot_id)
+
+    _validate_cross_tenant(
+        db,
+        tenant_id=tenant_id,
+        playlist_id=next_playlist_id,
+        campaign_id=next_campaign_id,
+        device_id=next_device_id,
+        spot_id=next_spot_id,
+    )
+    if payload.spot_id:
+        _authorize_spot_access(db, spot_id=payload.spot_id, current_user=current_user)
+
+    old_scope_devices = _device_ids_for_schedule_scope(
+        db,
+        playlist_id=str(schedule.playlist_id) if schedule.playlist_id else None,
+        campaign_id=str(schedule.campaign_id) if schedule.campaign_id else None,
+        device_id=str(schedule.device_id) if schedule.device_id else None,
+    )
+    updated = crud_audio_spot_schedule.update(db, db_obj=schedule, obj_in=payload)
+    new_scope_devices = _device_ids_for_schedule_scope(
+        db,
+        playlist_id=str(updated.playlist_id) if updated.playlist_id else None,
+        campaign_id=str(updated.campaign_id) if updated.campaign_id else None,
+        device_id=str(updated.device_id) if updated.device_id else None,
+    )
+    affected = old_scope_devices | new_scope_devices
+    _invalidate_device_playlist_cache(affected)
+    _publish_spots_invalidated(affected, reason="spot_schedule.updated")
+    return updated
+
+
+@router.delete("/schedules/{schedule_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+def delete_spot_schedule_by_scope(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    schedule_id: str,
+):
+    """Remove agendamento de spot sem depender de uma playlist no path."""
+    schedule = crud_audio_spot_schedule.get(db, id=schedule_id)
+    if not schedule:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail="Agendamento nÃ£o encontrado")
+    if current_user.role != "admin" and str(schedule.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN, detail="Sem permissÃ£o para acessar este agendamento")
+
+    device_ids = _device_ids_for_schedule_scope(
+        db,
+        playlist_id=str(schedule.playlist_id) if schedule.playlist_id else None,
+        campaign_id=str(schedule.campaign_id) if schedule.campaign_id else None,
+        device_id=str(schedule.device_id) if schedule.device_id else None,
+    )
+    crud_audio_spot_schedule.remove(db, id=schedule_id)
+    _invalidate_device_playlist_cache(device_ids)
+    _publish_spots_invalidated(device_ids, reason="spot_schedule.deleted")
+
+
 @router.post("/", response_model=AudioSpotResponse, status_code=http_status.HTTP_201_CREATED)
 def create_audio_spot(
     *,
@@ -297,7 +458,9 @@ def create_playlist_spot_schedule(
         tenant_id=tenant_id,
     )
 
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _legacy_affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_legacy_affected)
+    _publish_spots_invalidated(_legacy_affected, reason="spot_schedule.playlist")
 
     log.info(
         "spot_schedule.created",
@@ -369,7 +532,9 @@ def update_playlist_spot_schedule(
         _authorize_spot_access(db, spot_id=payload.spot_id, current_user=current_user)
 
     updated = crud_audio_spot_schedule.update(db, db_obj=schedule, obj_in=payload)
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _legacy_affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_legacy_affected)
+    _publish_spots_invalidated(_legacy_affected, reason="spot_schedule.playlist")
 
     log.info("spot_schedule.updated", extra={"schedule_id": schedule_id, "tenant_id": tenant_id})
     return updated
@@ -396,6 +561,8 @@ def delete_playlist_spot_schedule(
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail="Agendamento não pertence a esta playlist")
 
     crud_audio_spot_schedule.remove(db, id=schedule_id)
-    _invalidate_device_playlist_cache(_device_ids_for_playlist(db, playlist_id=playlist_id))
+    _legacy_affected = _device_ids_for_playlist(db, playlist_id=playlist_id)
+    _invalidate_device_playlist_cache(_legacy_affected)
+    _publish_spots_invalidated(_legacy_affected, reason="spot_schedule.playlist")
 
     log.info("spot_schedule.deleted", extra={"schedule_id": schedule_id, "playlist_id": playlist_id})
