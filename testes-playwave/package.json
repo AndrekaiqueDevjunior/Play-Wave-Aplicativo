@@ -1,0 +1,22 @@
+{
+  "name": "testes-playwave",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Suíte E2E Playwright do PlayWave — foco em Scheduler/Fila, Spots, Rádio, Campanhas, Dispositivos e Player.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:api": "playwright test --grep @api",
+    "test:ui": "playwright test --grep @ui",
+    "test:fila": "playwright test tests/scheduler-fila.spec.ts",
+    "report": "playwright show-report reports/html",
+    "codegen": "playwright codegen",
+    "install:browsers": "playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^5.7.2"
+  }
+}
