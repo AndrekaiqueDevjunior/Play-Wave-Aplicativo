@@ -134,30 +134,33 @@ export class Api {
 
   // ─── Pareamento (gera device + device_token reais) ──────────────────────────
   /**
-   * Fluxo real: pair-request (cria pairing+device em waiting) → admin pair-confirm
-   * → by-code/{code}/status devolve o device_token gerado.
+   * Fluxo admin-first (validado): cria o device com `pairing_code` + status
+   * waiting_pairing (tenant é herdado do admin no banco), depois
+   * GET /devices/by-code/{code}/status emite o device_token.
+   *
+   * Notas de contrato real:
+   *   - device_type aceita só tv|tablet|totem|smartphone|panel|other (web_player é OS).
+   *   - DeviceResponse NÃO serializa tenant_id, mas o device fica com o tenant
+   *     correto no banco (necessário para o resolver casar spots).
    */
   async pairDevice(opts: { name?: string; deviceType?: string; os?: string } = {}): Promise<PairedDevice> {
-    const code = `T${Math.floor(100000 + Math.random() * 899999)}`; // código numérico de 6 díg.
+    const code = `TV-E2E${Math.floor(100000 + Math.random() * 899999)}`;
     const name = opts.name || `e2e-device-${code}`;
 
-    const reqRes = await this.request.post(this.url("/devices/pair-request"), {
-      data: { code, os: opts.os || "web_player", player_version: "e2e", screen_resolution: "1920x1080" },
+    const device = await this.createDevice({
+      name,
+      device_type: opts.deviceType || "tv",
+      pairing_code: code,
+      os: opts.os || "web_player",
     });
-    const pairReq = await this.json<{ id?: string; device_id?: string }>(reqRes, "pair-request");
-    const deviceId = (pairReq.device_id || pairReq.id)!;
+    const deviceId = device.id;
 
-    await this.request.post(this.url(`/devices/${deviceId}/pair-confirm`), {
-      headers: this.authHeaders(),
-      data: { name, device_type: opts.deviceType || "web_player", os: opts.os || "web_player" },
-    });
-
-    const statusRes = await this.request.get(this.url(`/devices/by-code/${code}/status`), {});
+    const statusRes = await this.request.get(this.url(`/devices/by-code/${code}/status`));
     const status = await this.json<{ device_id?: string; device_token?: string }>(statusRes, "by-code-status");
 
     const device_token = status.device_token!;
     if (!device_token) {
-      throw new Error(`pairDevice: backend não retornou device_token para code=${code} (status=${JSON.stringify(status)})`);
+      throw new Error(`pairDevice: backend não emitiu device_token para code=${code} (status=${JSON.stringify(status)})`);
     }
     return { device_id: deviceId, device_token, code, name };
   }
@@ -315,9 +318,12 @@ export class Api {
   }
 
   async createSpotScheduleForPlaylist(playlistId: string, payload: Record<string, any>): Promise<any> {
+    // O schema AudioSpotScheduleCreate valida "pelo menos um escopo" no CORPO,
+    // antes de o endpoint injetar o playlist_id do path. Então enviamos
+    // playlist_id também no body (contrato real do backend).
     const res = await this.request.post(this.url(`/audio/spots/playlists/${playlistId}/spot-schedules`), {
       headers: this.authHeaders(),
-      data: payload,
+      data: { playlist_id: playlistId, ...payload },
     });
     return this.json(res, "createSpotScheduleForPlaylist");
   }

@@ -20,7 +20,11 @@ setup("autentica admin e salva storageState", async ({ page, request }) => {
   const me = await api.me();
   expect(token, "login API deve retornar token").toBeTruthy();
 
+  fs.mkdirSync(path.dirname(authFile), { recursive: true });
+
   // 2) Semeia o storage e abre o painel para o Playwright capturar o estado.
+  //    Se o painel estiver fora (testes @api não precisam dele), ainda gravamos
+  //    um storageState válido para não bloquear os projetos dependentes.
   await page.addInitScript(
     ({ t, u }) => {
       localStorage.setItem("pw_access_token", t);
@@ -28,8 +32,12 @@ setup("autentica admin e salva storageState", async ({ page, request }) => {
     },
     { t: token, u: me },
   );
-  await page.goto(`${ENV.WEB_URL}/`);
 
-  fs.mkdirSync(path.dirname(authFile), { recursive: true });
-  await page.context().storageState({ path: authFile });
+  try {
+    await page.goto(`${ENV.WEB_URL}/`, { timeout: 8000 });
+    await page.context().storageState({ path: authFile });
+  } catch {
+    console.warn(`[setup] painel indisponível em ${ENV.WEB_URL} — gravando storageState vazio (ok para testes @api).`);
+    fs.writeFileSync(authFile, JSON.stringify({ cookies: [], origins: [] }));
+  }
 });
