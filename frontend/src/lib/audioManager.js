@@ -226,14 +226,31 @@ export class AudioManager {
       if (bgPlayer) bgPlayer.volume = 0.25;
     }
 
-    // Registra handler de fim de spot para retomar o fundo
+    // Handler de fim: retoma rádio quando spot termina
     this._spotEndedHandler = () => {
       this._spotEndedHandler = null;
       this._resumeAfterSpot(previous).catch(() => {});
     };
     this.players.spot.addEventListener("ended", this._spotEndedHandler, { once: true });
 
-    // Toca spot — espera o src carregar antes de dar play
+    // Handler de erro: se o áudio falhar (URL inválida, rede, etc.)
+    // retoma imediatamente sem travar o player no estado SPOT
+    const errorHandler = () => {
+      console.warn("[AudioManager] spot falhou ao carregar:", spotUrl);
+      if (this._spotEndedHandler) {
+        this.players.spot.removeEventListener("ended", this._spotEndedHandler);
+        this._spotEndedHandler = null;
+      }
+      this._resumeAfterSpot(previous).catch(() => {});
+    };
+    this.players.spot.addEventListener("error", errorHandler, { once: true });
+
+    // Limpa o handler de erro assim que o spot começar a tocar com sucesso
+    this.players.spot.addEventListener("playing", () => {
+      this.players.spot.removeEventListener("error", errorHandler);
+    }, { once: true });
+
+    // Toca spot — load() garante que o src é processado antes do play
     this.players.spot.src = spotUrl;
     this.players.spot.load();
     await this._fadeIn(this.players.spot, 100);
