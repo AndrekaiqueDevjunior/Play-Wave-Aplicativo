@@ -9,7 +9,12 @@ import CampaignPlaylistBuilder, {
 import { listarItensCampanha } from "@/api/campanhas";
 import {
   listarSpots, criarSpot, atualizarSpot, deletarSpot,
-  listarSpotSchedules, criarSpotSchedule, atualizarSpotSchedule, deletarSpotSchedule,
+  listarSpotSchedules,
+  listarSpotSchedulesDaCampanha,
+  criarSpotSchedulePorEscopo,
+  atualizarSpotSchedulePorEscopo,
+  deletarSpotSchedulePorEscopo,
+  listarFaixas,
 } from "@/api/audio";
 import SpotSchedulePanel from "@/components/audio/SpotSchedulePanel";
 import {
@@ -41,7 +46,6 @@ const DAYS = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
 const INSERTION_LABELS = {
   interrupt: "Interrompe música",
   wait_silence: "Aguarda silêncio",
-  fade_mix: "Mix com música",
 };
 
 function formatInterval(seconds) {
@@ -128,16 +132,24 @@ export default function CampaignFormModal({
     enabled: open,
   });
 
-  const { data: playlistSpotSchedules = [], refetch: refetchCampaignSpots } = useQuery({
-    queryKey: ["spot-schedules", selectedPlaylistId],
-    queryFn: () => listarSpotSchedules(selectedPlaylistId),
-    enabled: open && !!selectedPlaylistId,
+  const { data: activeAudioTracks = [] } = useQuery({
+    queryKey: ["audio-tracks-active"],
+    queryFn: () => listarFaixas({ status: "active" }),
+    enabled: open && tab === "spots",
   });
 
-  // Schedules específicos desta campanha (filtrado pelo campaign_id)
-  const campaignSpotSchedules = playlistSpotSchedules.filter(
-    (s) => !campaign?.id || s.campaign_id === campaign?.id || (!s.campaign_id && !s.device_id)
-  );
+  const { data: spotSchedules = [], refetch: refetchCampaignSpots } = useQuery({
+    queryKey: ["campaign-spot-schedules", campaign?.id, selectedPlaylistId],
+    queryFn: () =>
+      campaign?.id
+        ? listarSpotSchedulesDaCampanha(campaign.id)
+        : listarSpotSchedules(selectedPlaylistId),
+    enabled: open && (!!campaign?.id || !!selectedPlaylistId),
+  });
+
+  // Schedules desta campanha: mostra todos da playlist quando é campanha nova,
+  // ou filtra por campaign_id quando a campanha já existe
+  const campaignSpotSchedules = campaign?.id ? spotSchedules : [];
 
   const handleCampaignCreateSpot = useCallback(async (payload) => {
     await criarSpot(payload);
@@ -155,25 +167,30 @@ export default function CampaignFormModal({
   }, [qc]);
 
   const handleCampaignCreateSchedule = useCallback(async (payload) => {
-    if (!selectedPlaylistId) throw new Error("Selecione uma playlist de rádio primeiro");
-    await criarSpotSchedule(selectedPlaylistId, {
+    if (!campaign?.id) throw new Error("Salve a campanha antes de agendar spots");
+    await criarSpotSchedulePorEscopo({
       ...payload,
-      campaign_id: campaign?.id || null,
+      campaign_id: campaign.id,
+      playlist_id: selectedPlaylistId || null,
     });
     refetchCampaignSpots();
   }, [selectedPlaylistId, campaign?.id, refetchCampaignSpots]);
 
   const handleCampaignUpdateSchedule = useCallback(async (scheduleId, payload) => {
-    if (!selectedPlaylistId) return;
-    await atualizarSpotSchedule(selectedPlaylistId, scheduleId, payload);
+    if (!campaign?.id) return;
+    await atualizarSpotSchedulePorEscopo(scheduleId, {
+      ...payload,
+      campaign_id: campaign.id,
+      playlist_id: selectedPlaylistId || null,
+    });
     refetchCampaignSpots();
-  }, [selectedPlaylistId, refetchCampaignSpots]);
+  }, [selectedPlaylistId, campaign?.id, refetchCampaignSpots]);
 
   const handleCampaignDeleteSchedule = useCallback(async (scheduleId) => {
-    if (!selectedPlaylistId) return;
-    await deletarSpotSchedule(selectedPlaylistId, scheduleId);
+    if (!campaign?.id) return;
+    await deletarSpotSchedulePorEscopo(scheduleId);
     refetchCampaignSpots();
-  }, [selectedPlaylistId, refetchCampaignSpots]);
+  }, [campaign?.id, refetchCampaignSpots]);
 
   useEffect(() => {
     if (campaign) {
@@ -281,7 +298,7 @@ export default function CampaignFormModal({
     { id: "schedule", label: "Agendamento" },
     {
       id: "spots",
-      label: `Spots${playlistSpotSchedules.length > 0 ? ` (${playlistSpotSchedules.length})` : ""}`,
+      label: `Spots${campaignSpotSchedules.length > 0 ? ` (${campaignSpotSchedules.length})` : ""}`,
     },
   ];
 
@@ -297,7 +314,11 @@ export default function CampaignFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent
+        className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+        onInteractOutside={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>
             {campaign ? "Editar Campanha" : "Nova Campanha"}
@@ -634,14 +655,23 @@ export default function CampaignFormModal({
               </div>
             )}
             {/* ── Spots tab ──────────────────────────────── */}
-            {tab === "spots" && (
+            {tab === "spots" && !campaign?.id && (
+              <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
+                <Volume2 className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                <p className="text-sm font-medium text-muted-foreground">Salve a campanha primeiro</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Para agendar spots, crie a campanha e depois edite-a.
+                </p>
+              </div>
+            )}
+            {tab === "spots" && !!campaign?.id && (
               <SpotSchedulePanel
                 scope="campaign"
-                scopeId={campaign?.id}
+                scopeId={campaign.id}
                 playlistId={selectedPlaylistId || null}
                 spots={allSpots}
                 schedules={campaignSpotSchedules}
-                tracks={[]}
+                tracks={activeAudioTracks}
                 onCreateSpot={handleCampaignCreateSpot}
                 onUpdateSpot={handleCampaignUpdateSpot}
                 onDeleteSpot={handleCampaignDeleteSpot}

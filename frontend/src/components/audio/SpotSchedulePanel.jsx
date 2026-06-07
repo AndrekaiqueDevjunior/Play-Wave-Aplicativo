@@ -46,7 +46,6 @@ import { Plus, Trash2, Edit, Loader2, Volume2, Info } from "lucide-react";
 const INSERTION_POLICIES = {
   interrupt: "Interrompe música",
   wait_silence: "Aguarda música terminar",
-  fade_mix: "Mix com música",
 };
 
 const SPOT_STATUS = { active: "Ativo", inactive: "Inativo", archived: "Arquivado" };
@@ -72,6 +71,17 @@ const formatInterval = (s) => {
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)} min`;
   return `${Math.floor(s / 3600)}h`;
+};
+
+const getCurrentHHMM = () =>
+  new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+const isWithinTimeWindow = (hhmm, start, end) => {
+  if (!start && !end) return true;
+  if (start && !end) return hhmm >= start;
+  if (!start && end) return hhmm <= end;
+  if (start <= end) return hhmm >= start && hhmm <= end;
+  return hhmm >= start || hhmm <= end;
 };
 
 const emptyScheduleForm = () => ({
@@ -126,6 +136,12 @@ export default function SpotSchedulePanel({
   const [deleteTarget, setDeleteTarget] = useState(null); // { type, id, label }
 
   const hasSpotCRUD = !!onCreateSpot;
+  const currentHHMM = getCurrentHHMM();
+  const crossesMidnight = scheduleForm.start_time && scheduleForm.end_time
+    && scheduleForm.start_time > scheduleForm.end_time;
+  const outsideCurrentTime = scheduleForm.start_time || scheduleForm.end_time
+    ? !isWithinTimeWindow(currentHHMM, scheduleForm.start_time, scheduleForm.end_time)
+    : false;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   const getSpotName = (id) => spots.find((s) => s.id === id)?.name || "—";
@@ -181,10 +197,10 @@ export default function SpotSchedulePanel({
       priority: parseInt(scheduleForm.priority) || 0,
       is_active: scheduleForm.is_active,
       insertion_policy: scheduleForm.insertion_policy || null,
-      // Escopos
+      // Escopos — só adiciona se houver valor
       playlist_id: playlistId || null,
-      ...(scope === "campaign" && { campaign_id: scopeId }),
-      ...(scope === "device" && { device_id: scopeId }),
+      ...(scope === "campaign" && scopeId && { campaign_id: scopeId }),
+      ...(scope === "device" && scopeId && { device_id: scopeId }),
     };
 
     setScheduleSaving(true);
@@ -262,6 +278,7 @@ export default function SpotSchedulePanel({
       {/* Tabs internas */}
       <div className="flex gap-2 border-b pb-2">
         <button
+          type="button"
           className={`px-3 py-1 text-sm rounded-t font-medium transition-colors ${
             tab === "schedules"
               ? "bg-primary text-primary-foreground"
@@ -273,6 +290,7 @@ export default function SpotSchedulePanel({
         </button>
         {hasSpotCRUD && (
           <button
+            type="button"
             className={`px-3 py-1 text-sm rounded-t font-medium transition-colors ${
               tab === "spots"
                 ? "bg-primary text-primary-foreground"
@@ -295,6 +313,7 @@ export default function SpotSchedulePanel({
               </p>
             </div>
             <Button
+              type="button"
               size="sm"
               onClick={openNewSchedule}
               disabled={loading || spots.length === 0}
@@ -311,7 +330,7 @@ export default function SpotSchedulePanel({
             </div>
           )}
 
-          {!playlistId && scope !== "playlist" && (
+          {!playlistId && scope === "device" && (
             <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
               <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
               <span>
@@ -379,6 +398,7 @@ export default function SpotSchedulePanel({
                         <TableCell>
                           <div className="flex gap-1 justify-end">
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
@@ -387,6 +407,7 @@ export default function SpotSchedulePanel({
                               <Edit className="h-3.5 w-3.5" />
                             </Button>
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 text-destructive"
@@ -419,7 +440,7 @@ export default function SpotSchedulePanel({
             <p className="text-sm text-muted-foreground">
               Spots são jingles ou anúncios vinculados a uma faixa de áudio
             </p>
-            <Button size="sm" onClick={openNewSpot} disabled={loading || tracks.length === 0}>
+            <Button type="button" size="sm" onClick={openNewSpot} disabled={loading || tracks.length === 0}>
               <Plus className="mr-1.5 h-4 w-4" />
               Novo spot
             </Button>
@@ -465,10 +486,11 @@ export default function SpotSchedulePanel({
                     </div>
                   </div>
                   <div className="flex gap-1 flex-shrink-0 ml-2">
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSpot(spot)}>
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditSpot(spot)}>
                       <Edit className="h-3.5 w-3.5" />
                     </Button>
                     <Button
+                      type="button"
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-destructive"
@@ -486,7 +508,11 @@ export default function SpotSchedulePanel({
 
       {/* ── Dialog: Agendamento ─────────────────────────────────────────────── */}
       <Dialog open={scheduleDialog} onOpenChange={setScheduleDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent
+          className="max-w-lg"
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>
               {editingSchedule ? "Editar agendamento" : "Novo agendamento de spot"}
@@ -550,6 +576,13 @@ export default function SpotSchedulePanel({
                 />
               </div>
             </div>
+            {(crossesMidnight || outsideCurrentTime) && (
+              <p className="text-xs text-muted-foreground -mt-2">
+                {crossesMidnight
+                  ? "Janela cruza meia-noite."
+                  : `Fora da janela agora (${currentHHMM}).`}
+              </p>
+            )}
 
             {/* Dias da semana */}
             <div className="space-y-1.5">
@@ -557,8 +590,8 @@ export default function SpotSchedulePanel({
               <div className="flex gap-1.5 flex-wrap">
                 {DAYS_OF_WEEK.map((d) => (
                   <button
-                    key={d.value}
                     type="button"
+                    key={d.value}
                     onClick={() => toggleDay(d.value)}
                     className={`px-2.5 py-1 text-xs rounded border font-medium transition-colors ${
                       scheduleForm.days_of_week.includes(d.value)
@@ -611,7 +644,6 @@ export default function SpotSchedulePanel({
                   <SelectItem value="inherit">Herdar do spot</SelectItem>
                   <SelectItem value="interrupt">Interrompe música</SelectItem>
                   <SelectItem value="wait_silence">Aguarda música terminar</SelectItem>
-                  <SelectItem value="fade_mix">Mix com música</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -646,10 +678,10 @@ export default function SpotSchedulePanel({
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setScheduleDialog(false)}>
+            <Button type="button" variant="outline" onClick={() => setScheduleDialog(false)}>
               Cancelar
             </Button>
-            <Button onClick={saveSchedule} disabled={scheduleSaving}>
+            <Button type="button" onClick={saveSchedule} disabled={scheduleSaving}>
               {scheduleSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {editingSchedule ? "Salvar" : "Criar agendamento"}
             </Button>
@@ -660,7 +692,11 @@ export default function SpotSchedulePanel({
       {/* ── Dialog: Spot ───────────────────────────────────────────────────── */}
       {hasSpotCRUD && (
         <Dialog open={spotDialog} onOpenChange={setSpotDialog}>
-          <DialogContent className="max-w-md">
+          <DialogContent
+            className="max-w-md"
+            onInteractOutside={(e) => e.preventDefault()}
+            onPointerDownOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle>{editingSpot ? "Editar spot" : "Novo spot"}</DialogTitle>
             </DialogHeader>
@@ -722,7 +758,6 @@ export default function SpotSchedulePanel({
                     <SelectContent>
                       <SelectItem value="interrupt">Interrompe</SelectItem>
                       <SelectItem value="wait_silence">Aguarda</SelectItem>
-                      <SelectItem value="fade_mix">Mix</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -731,8 +766,8 @@ export default function SpotSchedulePanel({
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setSpotDialog(false)}>Cancelar</Button>
-              <Button onClick={saveSpot} disabled={spotSaving}>
+              <Button type="button" variant="outline" onClick={() => setSpotDialog(false)}>Cancelar</Button>
+              <Button type="button" onClick={saveSpot} disabled={spotSaving}>
                 {spotSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {editingSpot ? "Salvar" : "Criar spot"}
               </Button>
@@ -753,8 +788,9 @@ export default function SpotSchedulePanel({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex justify-end gap-2 mt-4">
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel type="button">Cancelar</AlertDialogCancel>
             <AlertDialogAction
+              type="button"
               onClick={confirmDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
