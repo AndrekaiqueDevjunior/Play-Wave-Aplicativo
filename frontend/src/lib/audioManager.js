@@ -183,12 +183,27 @@ export class AudioManager {
    * Reproduz spot (anúncio)
    * Pausa rádio/vídeo, toca spot, retoma
    */
+  /**
+   * Retorna true se um spot está tocando agora.
+   * Usado pelo Player para evitar disparar outro spot enquanto este não terminou.
+   */
+  isSpotPlaying() {
+    return (
+      this.state.current === AUDIO_STATE.SPOT &&
+      this.players.spot &&
+      !this.players.spot.paused &&
+      !this.players.spot.ended
+    );
+  }
+
   async playSpot(spotUrl, insertionPolicy = 'wait_silence') {
     if (!this.players.spot) return;
 
-    // BUG D3 FIX: captura o estado ANTES de entrar em SPOT.
-    // Se já estamos em SPOT (travado), usa RADIO como fallback para não tentar
-    // retomar um spot como se fosse a fonte de fundo.
+    // Não sobrepõe spot sobre spot — aguarda o atual terminar
+    if (this.isSpotPlaying()) return;
+
+    // Captura o estado ANTES de entrar em SPOT.
+    // Se já estamos em SPOT (fallback improvável), usa RADIO.
     const previous = this.state.current === AUDIO_STATE.SPOT
       ? (this.players.radio?.src ? AUDIO_STATE.RADIO : AUDIO_STATE.SILENT)
       : this.state.current;
@@ -200,28 +215,27 @@ export class AudioManager {
     }
 
     // Política de inserção
+    const bgPlayer = previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio;
     if (insertionPolicy === 'interrupt') {
-      await this._fadeOut(
-        previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio,
-        this.state.fadeMs
-      );
+      await this._fadeOut(bgPlayer, this.state.fadeMs);
     } else if (insertionPolicy === 'wait_silence') {
-      // Aguarda pausa natural (não implementado aqui)
+      // Baixa o volume do fundo para não sobrepor
+      if (bgPlayer) await this._fadeOut(bgPlayer, this.state.fadeMs);
     } else if (insertionPolicy === 'fade_mix') {
-      const player = previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio;
-      if (player) player.volume = 0.3;
+      // Mantém fundo em volume reduzido durante o spot
+      if (bgPlayer) bgPlayer.volume = 0.25;
     }
 
-    // BUG D3 FIX: registra listener `ended` para retomar o rádio automaticamente.
-    // { once: true } garante que o handler é removido após disparar uma vez.
+    // Registra handler de fim de spot para retomar o fundo
     this._spotEndedHandler = () => {
       this._spotEndedHandler = null;
       this._resumeAfterSpot(previous).catch(() => {});
     };
     this.players.spot.addEventListener("ended", this._spotEndedHandler, { once: true });
 
-    // Toca spot
+    // Toca spot — espera o src carregar antes de dar play
     this.players.spot.src = spotUrl;
+    this.players.spot.load();
     await this._fadeIn(this.players.spot, 100);
 
     this._notify({ current: AUDIO_STATE.SPOT, isPlaying: true });

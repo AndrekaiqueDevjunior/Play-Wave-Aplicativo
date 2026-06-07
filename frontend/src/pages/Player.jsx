@@ -1272,6 +1272,9 @@ export default function Player() {
         }
       }
 
+      // Não dispara novo spot se já há um tocando
+      if (mgr.isSpotPlaying()) return;
+
       for (const sched of eligible) {
         const intervalMs = (sched.interval_seconds || 0) * 1000;
         if (intervalMs <= 0) continue;
