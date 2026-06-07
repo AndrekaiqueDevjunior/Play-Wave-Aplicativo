@@ -84,9 +84,33 @@ const isWithinTimeWindow = (hhmm, start, end) => {
   return hhmm >= start || hhmm <= end;
 };
 
+// Presets de intervalo: [label, segundos]
+const INTERVAL_PRESETS = [
+  ["5 min", 300],
+  ["15 min", 900],
+  ["30 min", 1800],
+  ["1 hora", 3600],
+  ["2 horas", 7200],
+];
+
+const intervalToUnit = (s) => {
+  if (!s || s < 60) return { value: s || 30, unit: "sec" };
+  if (s % 3600 === 0) return { value: s / 3600, unit: "hr" };
+  return { value: Math.round(s / 60), unit: "min" };
+};
+
+const unitToSeconds = (value, unit) => {
+  const v = parseInt(value) || 1;
+  if (unit === "hr") return v * 3600;
+  if (unit === "min") return v * 60;
+  return v;
+};
+
 const emptyScheduleForm = () => ({
   spot_id: "",
   interval_seconds: 1800,
+  intervalValue: 30,
+  intervalUnit: "min",
   start_time: "",
   end_time: "",
   starts_at: "",
@@ -164,9 +188,12 @@ export default function SpotSchedulePanel({
 
   const openEditSchedule = (s) => {
     setEditingSchedule(s);
+    const { value: intervalValue, unit: intervalUnit } = intervalToUnit(s.interval_seconds);
     setScheduleForm({
       spot_id: s.spot_id,
       interval_seconds: s.interval_seconds,
+      intervalValue,
+      intervalUnit,
       start_time: s.start_time || "",
       end_time: s.end_time || "",
       starts_at: s.starts_at ? s.starts_at.slice(0, 10) : "",
@@ -371,18 +398,34 @@ export default function SpotSchedulePanel({
                             .filter(Boolean)
                             .join(", ")
                         : "Todo dia";
+                    // status visual: ativo agora vs fora da janela
+                    const hhmm = getCurrentHHMM();
+                    const inWindow = isWithinTimeWindow(hhmm, s.start_time, s.end_time);
+                    const activeNow = s.is_active && inWindow;
                     return (
-                      <TableRow key={s.id}>
+                      <TableRow key={s.id} className={!s.is_active ? "opacity-50" : ""}>
                         <TableCell className="font-medium text-sm">
-                          {getSpotName(s.spot_id)}
+                          <div className="flex items-center gap-1.5">
+                            {getSpotName(s.spot_id)}
+                            {activeNow && (
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Ativo agora" />
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           a cada {formatInterval(s.interval_seconds)}
                         </TableCell>
                         <TableCell className="text-sm">
-                          {s.start_time && s.end_time
-                            ? `${s.start_time}–${s.end_time}`
-                            : "Qualquer hora"}
+                          {s.start_time && s.end_time ? (
+                            <span className={!inWindow && s.is_active ? "text-muted-foreground" : ""}>
+                              {s.start_time}–{s.end_time}
+                              {!inWindow && s.is_active && (
+                                <span className="ml-1 text-xs text-muted-foreground">(fora)</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">Qualquer hora</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {dayLabels}
@@ -538,22 +581,64 @@ export default function SpotSchedulePanel({
               </Select>
             </div>
 
-            {/* Intervalo */}
-            <div className="space-y-1.5">
-              <Label>Intervalo (segundos) *</Label>
+            {/* Intervalo — seletor com unidade + presets */}
+            <div className="space-y-2">
+              <Label>Tocar a cada *</Label>
               <div className="flex gap-2">
                 <Input
                   type="number"
                   min={1}
-                  value={scheduleForm.interval_seconds}
-                  onChange={(e) =>
-                    setScheduleForm((p) => ({ ...p, interval_seconds: parseInt(e.target.value) || 0 }))
-                  }
-                  className="flex-1"
+                  max={scheduleForm.intervalUnit === "hr" ? 24 : scheduleForm.intervalUnit === "min" ? 1440 : 3600}
+                  value={scheduleForm.intervalValue}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value) || 1;
+                    setScheduleForm((p) => ({
+                      ...p,
+                      intervalValue: v,
+                      interval_seconds: unitToSeconds(v, p.intervalUnit),
+                    }));
+                  }}
+                  className="w-24"
                 />
-                <span className="text-sm text-muted-foreground self-center whitespace-nowrap">
-                  = {formatInterval(scheduleForm.interval_seconds)}
-                </span>
+                <Select
+                  value={scheduleForm.intervalUnit}
+                  onValueChange={(unit) =>
+                    setScheduleForm((p) => ({
+                      ...p,
+                      intervalUnit: unit,
+                      interval_seconds: unitToSeconds(p.intervalValue, unit),
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sec">segundos</SelectItem>
+                    <SelectItem value="min">minutos</SelectItem>
+                    <SelectItem value="hr">horas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* Presets rápidos */}
+              <div className="flex gap-1.5 flex-wrap">
+                {INTERVAL_PRESETS.map(([label, secs]) => (
+                  <button
+                    key={secs}
+                    type="button"
+                    onClick={() => {
+                      const { value, unit } = intervalToUnit(secs);
+                      setScheduleForm((p) => ({ ...p, interval_seconds: secs, intervalValue: value, intervalUnit: unit }));
+                    }}
+                    className={`px-2 py-0.5 text-xs rounded border transition-colors ${
+                      scheduleForm.interval_seconds === secs
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
 
