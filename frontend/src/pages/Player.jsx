@@ -1262,13 +1262,22 @@ export default function Player() {
 
       // Elegíveis agora (valida horário, data e dias da semana), por prioridade
       const eligible = spotScheduleResolver.getEligibleSpots(spotSchedules, now);
+      const eligibleIds = new Set(eligible.map((s) => s.id));
+
+      // Reseta timestamp de spots que saíram da janela — garante que quando a
+      // janela reabrir (ex: amanhã no mesmo horário) o spot toca imediatamente.
+      for (const id of Object.keys(spotLastPlayedRef.current)) {
+        if (!eligibleIds.has(id)) {
+          delete spotLastPlayedRef.current[id];
+        }
+      }
 
       for (const sched of eligible) {
         const intervalMs = (sched.interval_seconds || 0) * 1000;
         if (intervalMs <= 0) continue;
 
         const last = spotLastPlayedRef.current[sched.id] || 0;
-        // last=0 (nunca tocou) => toca imediatamente; senão, respeita o intervalo
+        // last=0 (nunca tocou / janela reabriu) => toca imediatamente
         if (nowMs - last < intervalMs) continue;
 
         const url = assetUrl(sched.file_url);

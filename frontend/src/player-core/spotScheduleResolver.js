@@ -23,15 +23,46 @@ function inDayOfWeek(daysOfWeek, date) {
   return daysOfWeek.some((d) => Number(d) === dow);
 }
 
-function spotScheduleActive(schedule, now = new Date()) {
-  // Validar período de datas
-  if (schedule.starts_at && now < new Date(schedule.starts_at)) return false;
-  if (schedule.ends_at && now > new Date(schedule.ends_at)) return false;
+function inTimeWindow(schedule, date) {
+  if (!schedule.start_time && !schedule.end_time) return true;
 
-  // Validar janela de hora do dia
-  const hhmm = nowHHMM(now);
-  if (schedule.start_time && hhmm < schedule.start_time) return false;
-  if (schedule.end_time && hhmm > schedule.end_time) return false;
+  const hhmm = nowHHMM(date);
+  const start = schedule.start_time;
+  const end = schedule.end_time;
+
+  if (start && !end) return hhmm >= start;
+  if (!start && end) return hhmm <= end;
+  if (start <= end) return hhmm >= start && hhmm <= end;
+
+  return hhmm >= start || hhmm <= end;
+}
+
+/**
+ * Converte string de data/hora do backend (naive, fuso Brasília) para Date local.
+ * O backend grava starts_at/ends_at como datetime naive em UTC (sem sufixo Z).
+ * new Date("2026-06-07 13:00:00") é ambíguo: Chrome trata como local, Node como UTC.
+ * Normalizamos substituindo espaço por T e garantindo sufixo Z para UTC → depois
+ * comparamos com now em UTC também para consistência.
+ */
+function parseBackendDate(str) {
+  if (!str) return null;
+  // "2026-06-07T13:00:00" ou "2026-06-07 13:00:00" → força UTC com Z
+  return new Date(str.replace(" ", "T").replace(/Z?$/, "Z"));
+}
+
+function spotScheduleActive(schedule, now = new Date()) {
+  // Validar período de datas (starts_at/ends_at do backend estão em UTC)
+  if (schedule.starts_at) {
+    const start = parseBackendDate(schedule.starts_at);
+    if (start && now < start) return false;
+  }
+  if (schedule.ends_at) {
+    const end = parseBackendDate(schedule.ends_at);
+    if (end && now > end) return false;
+  }
+
+  // Validar janela de hora do dia (start_time/end_time são HH:MM locais)
+  if (!inTimeWindow(schedule, now)) return false;
 
   // Validar dia da semana
   if (!inDayOfWeek(schedule.days_of_week, now)) return false;
