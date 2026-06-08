@@ -23,14 +23,6 @@ import {
 } from "@/components/ui/select";
 import { Upload, Music, Loader2, FileAudio } from "lucide-react";
 
-const CATEGORY_LABELS = {
-  music: "Música",
-  jingle: "Jingle",
-  announcement: "Anúncio",
-  ambient: "Ambiente",
-  other: "Outro",
-};
-
 const MAX_SIZE_MB = 100;
 
 const ACCEPTED_TYPES = [

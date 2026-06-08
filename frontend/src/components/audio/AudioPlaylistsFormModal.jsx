@@ -28,6 +28,15 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Music2, GripVertical, X, Plus, Loader2, Volume2 } from "lucide-react";
 import AudioTrackSelector from "./AudioTrackSelector";
+import useAudioCategories from "@/hooks/useAudioCategories";
+
+const CATEGORY_LABELS = {
+  music: "Música",
+  jingle: "Jingle",
+  announcement: "Anúncio",
+  ambient: "Ambiente",
+  other: "Outro",
+};
 
 export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -47,6 +56,24 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
     queryKey: ["audio-tracks"],
     queryFn: () => listarFaixas({ status: "active", limit: 1000 }),
   });
+
+  const { categories } = useAudioCategories();
+
+  // Mapa id->nome das categorias personalizadas para exibir no badge da faixa.
+  const customCategoryName = React.useMemo(() => {
+    const map = {};
+    categories.forEach((c) => {
+      if (c.id) map[c.id] = c.name;
+    });
+    return map;
+  }, [categories]);
+
+  function trackCategoryLabel(track) {
+    if (track.category_id && customCategoryName[track.category_id]) {
+      return customCategoryName[track.category_id];
+    }
+    return CATEGORY_LABELS[track.category] || track.category;
+  }
 
   useEffect(() => {
     if (playlist) {
@@ -113,14 +140,6 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
   const availableToAdd = allTracks.filter(
     (t) => !form.track_ids.includes(t.id),
   );
-
-  const categoryLabels = {
-    music: "Música",
-    jingle: "Jingle",
-    announcement: "Anúncio",
-    ambient: "Ambiente",
-    other: "Outro",
-  };
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -279,7 +298,7 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
                         variant="outline"
                         className="text-xs hidden sm:inline-flex"
                       >
-                        {categoryLabels[track.category] || track.category}
+                        {trackCategoryLabel(track)}
                       </Badge>
                       <button
                         onClick={() => removeTrack(track.id)}

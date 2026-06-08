@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { uploadMultipleFaixas } from "@/api/audio";
+import useAudioCategories from "@/hooks/useAudioCategories";
 import {
   Sheet,
   SheetContent,
@@ -30,14 +31,6 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 
-const CATEGORY_LABELS = {
-  music: "Música",
-  jingle: "Jingle",
-  announcement: "Anúncio",
-  ambient: "Ambiente",
-  other: "Outro",
-};
-
 const MAX_SIZE_MB = 100;
 
 const ACCEPTED_TYPES = [
@@ -59,8 +52,10 @@ const FORMAT_DESC = "MP3, MPEG, WAV, OGG, OPUS, M4A, AAC, FLAC · máx. 100 MB c
 
 export default function AudioMultipleUploadModal({ onClose, onSaved }) {
   const [files, setFiles] = useState([]);
-  const [category, setCategory] = useState("music");
+  // "default:<slug>" (categoria padrão) ou "custom:<id>" (categoria personalizada)
+  const [categoryValue, setCategoryValue] = useState("default:music");
   const [status, setStatus] = useState("active");
+  const { categories } = useAudioCategories();
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [results, setResults] = useState(null);
@@ -146,7 +141,11 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
         formData.append('files', file);
       });
       
-      formData.append('category', category);
+      if (categoryValue.startsWith("custom:")) {
+        formData.append('category_id', categoryValue.slice(7));
+      } else {
+        formData.append('category', categoryValue.slice(8));
+      }
       formData.append('status', status);
 
       // Simular progresso (o backend não retorna progresso real)
@@ -274,14 +273,25 @@ export default function AudioMultipleUploadModal({ onClose, onSaved }) {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Categoria Padrão</Label>
-                <Select value={category} onValueChange={setCategory} disabled={loading}>
+                <Select value={categoryValue} onValueChange={setCategoryValue} disabled={loading}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(CATEGORY_LABELS).map(([v, l]) => (
-                      <SelectItem key={v} value={v}>{l}</SelectItem>
-                    ))}
+                    {categories
+                      .filter((c) => c.is_default)
+                      .map((c) => (
+                        <SelectItem key={c.slug} value={`default:${c.slug}`}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    {categories
+                      .filter((c) => !c.is_default)
+                      .map((c) => (
+                        <SelectItem key={c.id} value={`custom:${c.id}`}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

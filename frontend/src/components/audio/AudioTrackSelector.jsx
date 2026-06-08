@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/select";
 import { Music, Search, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import useAudioCategories from "@/hooks/useAudioCategories";
 
+// Rótulos das categorias padrão (legado, enum fixo `category`).
+// Faixas com `category_id` (categoria personalizada) usam o nome real —
+// ver `customCategoryName`/`trackCategoryLabel` abaixo.
 const CATEGORY_LABELS = {
   music: "Música",
   jingle: "Jingle",
@@ -38,8 +42,27 @@ export default function AudioTrackSelector({
   showDuration = true,
 }) {
   const [search, setSearch] = useState("");
+  // "all" | `default:<slug>` | `custom:<id>`
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [checked, setChecked] = useState(new Set(selectedIds || []));
+
+  const { categories } = useAudioCategories();
+
+  // Mapa id->nome das categorias personalizadas para exibir no badge da faixa.
+  const customCategoryName = useMemo(() => {
+    const map = {};
+    categories.forEach((c) => {
+      if (c.id) map[c.id] = c.name;
+    });
+    return map;
+  }, [categories]);
+
+  function trackCategoryLabel(track) {
+    if (track.category_id && customCategoryName[track.category_id]) {
+      return customCategoryName[track.category_id];
+    }
+    return CATEGORY_LABELS[track.category] || track.category;
+  }
 
   useEffect(() => {
     setChecked(new Set(selectedIds || []));
@@ -51,8 +74,13 @@ export default function AudioTrackSelector({
       track.name.toLowerCase().includes(search.toLowerCase()) ||
       (track.description || "").toLowerCase().includes(search.toLowerCase());
 
-    const matchCategory =
-      selectedCategory === "all" || track.category === selectedCategory;
+    let matchCategory = true;
+    if (selectedCategory.startsWith("custom:")) {
+      matchCategory = track.category_id === selectedCategory.slice(7);
+    } else if (selectedCategory.startsWith("default:")) {
+      matchCategory =
+        !track.category_id && track.category === selectedCategory.slice(8);
+    }
 
     return matchSearch && matchCategory;
   });
@@ -108,11 +136,20 @@ export default function AudioTrackSelector({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas as Categorias</SelectItem>
-              {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
-              ))}
+              {categories
+                .filter((c) => c.is_default)
+                .map((c) => (
+                  <SelectItem key={c.slug} value={`default:${c.slug}`}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              {categories
+                .filter((c) => !c.is_default)
+                .map((c) => (
+                  <SelectItem key={c.id} value={`custom:${c.id}`}>
+                    {c.name}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         )}
@@ -175,7 +212,7 @@ export default function AudioTrackSelector({
               <div className="flex items-center gap-3 flex-shrink-0">
                 {showCategory && (
                   <span className="text-xs px-2 py-1 bg-gray-100 rounded whitespace-nowrap">
-                    {CATEGORY_LABELS[track.category] || track.category}
+                    {trackCategoryLabel(track)}
                   </span>
                 )}
 
