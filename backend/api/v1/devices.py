@@ -1525,6 +1525,7 @@ def delete_device(
     db.query(ViewReport).filter(ViewReport.device_id == device_id).delete(synchronize_session=False)
     db.query(DeviceEvent).filter(DeviceEvent.device_id == device_id).delete(synchronize_session=False)
     db.query(DeviceSession).filter(DeviceSession.device_id == device_id).delete(synchronize_session=False)
+    db.query(DeviceCommand).filter(DeviceCommand.device_id == device_id).delete(synchronize_session=False)
     db.query(DevicePairingCode).filter(DevicePairingCode.device_id == device_id).update(
         {"device_id": None},
         synchronize_session=False,
