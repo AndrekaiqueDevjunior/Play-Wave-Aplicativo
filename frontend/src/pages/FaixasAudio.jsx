@@ -33,6 +33,7 @@ import AudioMultipleUploadModal from "@/components/audio/AudioMultipleUploadModa
 import CategoryDrawer from "@/components/audio/CategoryDrawer";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import StatusBadge from "@/components/shared/StatusBadge";
+import { useToast } from "@/components/ui/use-toast";
 
 const categoryLabels = {
   music: "Música",
@@ -57,6 +58,7 @@ function formatDuration(seconds) {
 
 export default function FaixasAudio() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
@@ -105,6 +107,14 @@ export default function FaixasAudio() {
     onSuccess: () => {
       qc.invalidateQueries(["audio-tracks"]);
       setDeleteTarget(null);
+      toast({ title: "Faixa arquivada." });
+    },
+    onError: (err) => {
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao arquivar faixa.");
+      toast({ title: "Erro ao arquivar", description: msg, variant: "destructive" });
     },
   });
 
@@ -498,6 +508,7 @@ export default function FaixasAudio() {
       />
       {deleteTarget && (
         <ConfirmDialog
+          open={!!deleteTarget}
           title="Arquivar faixa"
           description={`Arquivar "${deleteTarget.name}"? A faixa será removida das playlists ativas.`}
           confirmLabel="Arquivar"

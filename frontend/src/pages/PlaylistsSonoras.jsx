@@ -23,10 +23,12 @@ import {
 import AudioPlaylistFormModal from "@/components/audio/AudioPlaylistsFormModal";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import StatusBadge from "@/components/shared/StatusBadge";
+import { useToast } from "@/components/ui/use-toast";
 
 export default function PlaylistsSonoras() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -47,6 +49,14 @@ export default function PlaylistsSonoras() {
     onSuccess: () => {
       qc.invalidateQueries(["audio-playlists"]);
       setDeleteTarget(null);
+      toast({ title: "Playlist arquivada." });
+    },
+    onError: (err) => {
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao arquivar playlist.");
+      toast({ title: "Erro ao arquivar", description: msg, variant: "destructive" });
     },
   });
 
@@ -211,6 +221,7 @@ export default function PlaylistsSonoras() {
       )}
       {deleteTarget && (
         <ConfirmDialog
+          open={!!deleteTarget}
           title="Arquivar playlist"
           description={`Arquivar "${deleteTarget.name}"? Dispositivos vinculados não receberão mais áudio.`}
           confirmLabel="Arquivar"
