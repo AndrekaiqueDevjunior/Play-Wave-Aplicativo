@@ -265,6 +265,11 @@ export default function Player() {
   const prevAudioTrackRef = useRef(null);
   const campaignConfigVersionRef = useRef(campaignConfigVersion);
   const configVersionMonitorRef = useRef(null);
+  const smartUpdaterRef = useRef(null);
+  // Sempre aponta para a versão mais recente de applySmartPlaylistUpdate —
+  // permite que o handler SSE (montado uma única vez) chame a lógica de
+  // recálculo local sem capturar playlist/currentIndex desatualizados.
+  const applySmartUpdateRef = useRef(null);
   const cacheManagerRef = useRef(null);
   const cacheCommandHandlerRef = useRef(null);
 
@@ -653,6 +658,117 @@ export default function Player() {
     return () => clearInterval(t);
   }, [phase, deviceId, deviceToken]);
 
+  /**
+   * Recalcula a fila local e aplica a nova programação sem reiniciar o
+   * player: refetch via SmartPlaylistUpdater, preserva a faixa em reprodução
+   * (currentTrackId) quando ela ainda existe na nova playlist, e atualiza
+   * apenas os estados derivados (campanha, audio_playlist, OSD, exposição).
+   *
+   * Retorna `true` quando conseguiu aplicar uma programação (mídias visuais
+   * ou rádio) — `false` quando a campanha não tem mais conteúdo aplicável e
+   * o chamador precisa recorrer ao fluxo de reload completo (loadPlaylist)
+   * para decidir entre playing/no_campaign.
+   */
+  const applySmartPlaylistUpdate = useCallback(
+    async (reason) => {
+      if (!deviceId) return false;
+      if (!smartUpdaterRef.current) {
+        smartUpdaterRef.current = new SmartPlaylistUpdater(apiClient, {
+          getDeviceToken: () => deviceTokenRef.current,
+          getDevicePlaylistFn: getDevicePlaylist,
+        });
+      }
+
+      const currentTrackId = playlist[currentIndex]?.id;
+      let applied = false;
+
+      await smartUpdaterRef.current.updatePlaylist({
+        deviceId,
+        currentTrackId,
+        playlistId: campaignId || audioPlaylistIdRef.current,
+        onPlaylistUpdate: ({ playlist: newPlaylist }) => {
+          console.log(`[player] Playlist atualizada localmente (motivo: ${reason})`);
+
+          const newMedias = (newPlaylist?.media || [])
+            .filter((m) => isMediaCurrentlyPlayable(m))
+            .map(normalizePlaylistMedia);
+
+          const newAudioPlaylist = newPlaylist?.audio_playlist || null;
+          setAudioPlaylist(newAudioPlaylist);
+          audioPlaylistIdRef.current = newAudioPlaylist?.id || null;
+          setCampaign(newPlaylist?.campaign || null);
+          setCampaignId(newPlaylist?.campaign?.id || null);
+          setCampaignConfigVersion(newPlaylist?.campaign?.config_version || null);
+          setVideoMuted(newPlaylist?.campaign?.video_muted !== false);
+          if (newPlaylist?.osd_config) setOsdConfig(newPlaylist.osd_config);
+          if (newPlaylist?.desktop_exposure_config) {
+            setDesktopExposureConfig(newPlaylist.desktop_exposure_config);
+          }
+
+          if (newMedias.length > 0) {
+            setPlaylist(newMedias);
+
+            // Mantém a faixa atual tocando se ela ainda existir na nova fila
+            if (currentTrackId) {
+              const newIndex = newMedias.findIndex((m) => m.id === currentTrackId);
+              setCurrentIndex(newIndex >= 0 ? newIndex : 0);
+            } else {
+              setCurrentIndex(0);
+            }
+            applied = true;
+          } else if (hasAnyRadioContent(newAudioPlaylist)) {
+            setPlaylist([]);
+            setCurrentIndex(0);
+            applied = true;
+          }
+          // Sem mídia visual e sem rádio: a campanha provavelmente foi
+          // removida — não há fila local para recalcular com segurança;
+          // o chamador decide se recorre ao reload completo.
+        },
+      });
+
+      return applied;
+    },
+    [deviceId, playlist, currentIndex, campaignId],
+  );
+
+  // Mantém a ref sempre na versão mais recente — o handler SSE (montado uma
+  // única vez) e o monitor de versão a chamam via ref para nunca operar com
+  // playlist/currentIndex desatualizados.
+  useEffect(() => {
+    applySmartUpdateRef.current = applySmartPlaylistUpdate;
+  }, [applySmartPlaylistUpdate]);
+
+  // ── Recuperação ao voltar de segundo plano ───────────────────────────────
+  // Navegadores throttlam/congelam setIntervals de abas ocultas (troca de
+  // janela, tela apagando, TV em standby) — heartbeat, polling de comandos
+  // e watchdog ficam todos parados ao mesmo tempo, sem erro algum, e o
+  // dispositivo "some" do painel até alguém reiniciar o app manualmente.
+  // Ao voltar a ficar visível, força catch-up imediato em vez de esperar
+  // o próximo tick do interval (que pode nunca vir se o timer ficou preso).
+  useEffect(() => {
+    let hiddenAt = document.visibilityState === "hidden" ? Date.now() : null;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const hiddenForMs = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = null;
+      console.log(
+        `[player] aba voltou a ficar visível (oculta por ${Math.round(hiddenForMs / 1000)}s) — catch-up`,
+      );
+      commandPoller.pollCommands();
+      if (hiddenForMs > 60_000) {
+        applySmartUpdateRef.current?.("visibility_restored");
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [commandPoller]);
+
   // ── 3.5. Initialize config version monitor and smart playlist updater (TASK 21) ──
   useEffect(() => {
     if (!deviceId || phase === "waiting" || phase === "pairing") return;
@@ -668,65 +784,18 @@ export default function Player() {
         getDeviceToken: () => deviceTokenRef.current,
       });
 
-      // Start monitoring with smart updater
-      const updater = new SmartPlaylistUpdater(apiClient, {
-        getDeviceToken: () => deviceTokenRef.current,
-        getDevicePlaylistFn: getDevicePlaylist,
-      });
       configVersionMonitorRef.current.start(async ({ changed, device }) => {
         console.log("[player] Config version changed:", changed);
 
         if (changed.schedule || changed.campaign || changed.playlist) {
-          // Refetch playlist with smart updater
-          const currentTrackId = playlist[currentIndex]?.id;
           try {
-            await updater.updatePlaylist({
-              deviceId,
-              currentTrackId,
-              playlistId: campaignId || audioPlaylistIdRef.current,
-              onPlaylistUpdate: ({ playlist: newPlaylist }) => {
-                console.log("[player] Playlist updated intelligently");
-
-                // Update playlist state
-                const newMedias = (newPlaylist?.media || [])
-                  .filter((m) => isMediaCurrentlyPlayable(m))
-                  .map(normalizePlaylistMedia);
-
-                const newAudioPlaylist = newPlaylist?.audio_playlist || null;
-                setAudioPlaylist(newAudioPlaylist);
-                audioPlaylistIdRef.current = newAudioPlaylist?.id || null;
-                setCampaign(newPlaylist?.campaign || null);
-                setCampaignId(newPlaylist?.campaign?.id || null);
-                setCampaignConfigVersion(newPlaylist?.campaign?.config_version || null);
-                setVideoMuted(newPlaylist?.campaign?.video_muted !== false);
-                if (newPlaylist?.osd_config) setOsdConfig(newPlaylist.osd_config);
-                if (newPlaylist?.desktop_exposure_config) {
-                  setDesktopExposureConfig(newPlaylist.desktop_exposure_config);
-                }
-
-                if (newMedias.length > 0) {
-                  setPlaylist(newMedias);
-
-                  // Try to keep current track playing
-                  if (currentTrackId) {
-                    const newIndex = newMedias.findIndex(
-                      (m) => m.id === currentTrackId
-                    );
-                    if (newIndex >= 0) {
-                      setCurrentIndex(newIndex);
-                    } else {
-                      setCurrentIndex(0);
-                    }
-                  } else {
-                    setCurrentIndex(0);
-                  }
-
-                } else if (hasAnyRadioContent(newAudioPlaylist)) {
-                  setPlaylist([]);
-                  setCurrentIndex(0);
-                }
-              },
-            });
+            const applied = await applySmartUpdateRef.current?.("config_version_changed");
+            if (!applied) {
+              console.log(
+                "[player] recálculo local não encontrou programação aplicável — recarregando playlist",
+              );
+              setPhase("loading");
+            }
           } catch (err) {
             console.error("[player] Error updating playlist:", err);
           }
@@ -1060,8 +1129,8 @@ export default function Player() {
     };
 
     const onPlaylistInvalidated = (evt) => {
-      // BUG E1 FIX: só reinicia se o config_version do evento é diferente do atual.
-      // Evita reinício desnecessário quando o gerenciador muda campos que não
+      // BUG E1 FIX: só reage se o config_version do evento é diferente do atual.
+      // Evita trabalho desnecessário quando o gerenciador muda campos que não
       // afetam o conteúdo do player (ex: nome da campanha, descrição).
       try {
         const data = JSON.parse(evt.data);
@@ -1076,9 +1145,31 @@ export default function Player() {
           return;
         }
       } catch {
-        // payload inválido → recarrega por precaução
+        // payload inválido → segue para o recálculo por precaução
       }
-      triggerReload("playlist_invalidated");
+
+      // Atualiza campanha sem reiniciar o player inteiro: recalcula a fila
+      // local (preservando a faixa em reprodução quando possível) e aplica a
+      // nova programação. Só recorre ao reload completo (triggerReload) se o
+      // recálculo local não encontrar nenhuma programação aplicável — ex.:
+      // campanha removida, onde não há fila local para recalcular.
+      console.log("[player] SSE playlist_invalidated — recalculando fila local");
+      Promise.resolve(applySmartUpdateRef.current?.("playlist_invalidated"))
+        .then((applied) => {
+          if (!applied) {
+            console.log(
+              "[player] recálculo local não encontrou programação aplicável — recarregando playlist",
+            );
+            triggerReload("playlist_invalidated_no_local_match");
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            "[player] recálculo local falhou — recorrendo a reload completo:",
+            err,
+          );
+          triggerReload("playlist_invalidated_error");
+        });
     };
 
     // SPEC 003 — comando recém-criado: executa polling imediato sem esperar tick de 10s.
@@ -1338,7 +1429,12 @@ export default function Player() {
         const policy = sched.insertion_policy || "interrupt";
         spotLastPlayedRef.current[sched.id] = nowMs;
         console.log("[player] spot disparado:", sched.spot_name || sched.spot_id);
-        mgr.playSpot(url, policy).catch(() => {});
+        mgr.playSpot(url, policy, {
+          id: sched.id || sched.spot_id,
+          spot_id: sched.spot_id,
+          name: sched.spot_name,
+          file_url: url,
+        }).catch(() => {});
         break; // 1 spot por tick (maior prioridade primeiro); evita empilhar
       }
     };

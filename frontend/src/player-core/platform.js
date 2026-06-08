@@ -132,11 +132,18 @@ export function requestFullscreen() {
  * Evita sleep em Android TV e Smart TVs.
  */
 let wakeLockRef = null;
+let _wakeLockWanted = false;
+
 export async function acquireWakeLock() {
+  _wakeLockWanted = true;
   if ("wakeLock" in navigator) {
     try {
       wakeLockRef = await navigator.wakeLock.request("screen");
       console.log("[platform] WakeLock acquired");
+      wakeLockRef.addEventListener("release", () => {
+        console.log("[platform] WakeLock released by browser");
+        wakeLockRef = null;
+      });
     } catch (e) {
       console.warn("[platform] WakeLock failed:", e.message);
     }
@@ -144,8 +151,32 @@ export async function acquireWakeLock() {
 }
 
 export function releaseWakeLock() {
+  _wakeLockWanted = false;
   wakeLockRef?.release?.();
   wakeLockRef = null;
+}
+
+// O navegador libera o WakeLock automaticamente quando a aba fica oculta
+// (troca de janela, tela apaga, etc.) e NÃO o readquire sozinho — em TVs
+// kiosk isso deixa o player com a tela apagada/parada até reiniciar
+// manualmente. Reaquire ao voltar a ficar visível (padrão recomendado MDN).
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", async () => {
+    if (!_wakeLockWanted) return;
+    if (document.visibilityState !== "visible") return;
+    if (wakeLockRef) return;
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLockRef = await navigator.wakeLock.request("screen");
+      console.log("[platform] WakeLock re-acquired after visibilitychange");
+      wakeLockRef.addEventListener("release", () => {
+        console.log("[platform] WakeLock released by browser");
+        wakeLockRef = null;
+      });
+    } catch (e) {
+      console.warn("[platform] WakeLock re-acquire failed:", e.message);
+    }
+  });
 }
 
 export default Platform;

@@ -16,6 +16,7 @@ import {
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -330,12 +331,12 @@ export default function AudioCategoryDrawer({ open, onOpenChange }) {
               perderão a categoria, mas não serão deletadas.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogContent>
+          <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteCategory} className="bg-destructive hover:bg-destructive/90">
               Remover
             </AlertDialogAction>
-          </AlertDialogContent>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

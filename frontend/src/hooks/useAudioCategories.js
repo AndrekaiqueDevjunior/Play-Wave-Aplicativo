@@ -43,7 +43,7 @@ export function useAudioCategories() {
       setCategories(prev => [...prev, response]);
       return response;
     } catch (err) {
-      const message = err.response?.data?.detail || err.message || "Erro ao criar categoria";
+      const message = err.message || "Erro ao criar categoria";
       throw new Error(message);
     }
   }, []);
@@ -66,7 +66,7 @@ export function useAudioCategories() {
       );
       return response;
     } catch (err) {
-      const message = err.response?.data?.detail || err.message || "Erro ao atualizar categoria";
+      const message = err.message || "Erro ao atualizar categoria";
       throw new Error(message);
     }
   }, []);
@@ -79,7 +79,7 @@ export function useAudioCategories() {
       });
       setCategories(prev => prev.filter(cat => cat.id !== categoryId));
     } catch (err) {
-      const message = err.response?.data?.detail || err.message || "Erro ao deletar categoria";
+      const message = err.message || "Erro ao deletar categoria";
       throw new Error(message);
     }
   }, []);

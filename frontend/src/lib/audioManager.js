@@ -23,6 +23,17 @@ export const AUDIO_MODE = {
   LOOP: "loop",
 };
 
+// Watchdog de reprodução: play() pode ficar pendurado (nunca resolve nem
+// rejeita) em alguns navegadores/cenários de rede — sem um limite, o spot ou
+// a faixa de rádio ficam "presos mudos" para sempre. 10s é generoso o
+// suficiente para não cortar uma faixa que só demora a iniciar.
+const PLAY_WATCHDOG_TIMEOUT_MS = 10_000;
+
+// Quarentena: um áudio que falhou não é tentado de novo por um tempo, mas
+// expira sozinho — assim um arquivo corrigido no servidor volta a tocar sem
+// precisar reiniciar o player.
+const FAILED_AUDIO_TTL_MS = 5 * 60 * 1000;
+
 /**
  * Gerencia o estado de reprodução de áudio.
  * Usa um listener para notificar mudanças.
@@ -56,6 +67,12 @@ export class AudioManager {
 
     this.listeners = [];
     this.fadeTimer = null;
+
+    // audioId -> timestamp da falha (quarentena com TTL, ver _isAudioMarkedFailed)
+    this.failedAudioIds = new Map();
+    // Conta pulos consecutivos de faixas de rádio sem sucesso — limita a
+    // tentativas <= tamanho da fila para nunca girar em loop infinito.
+    this._radioSkipStreak = 0;
   }
 
   /**
@@ -147,13 +164,24 @@ export class AudioManager {
       if (this.queue.radio.length === 0) return;
       track = this.queue.radio[this.queue.radioIndex];
       trackUrl = track.file_url;
+
+      if (track?.id && this._isAudioMarkedFailed(track.id)) {
+        this._handleRadioTrackFailure(track, "quarantine_ttl", { markFailed: false });
+        return;
+      }
     }
 
     // Fade out + load novo
     await this._fadeOut(this.players.radio, this.state.fadeMs);
     this.players.radio.src = trackUrl;
-    await this._fadeIn(this.players.radio, this.state.fadeMs);
+    const result = await this._fadeIn(this.players.radio, this.state.fadeMs, true, track, "radio");
 
+    if (track && !result.ok && result.reason !== "autoplay_blocked") {
+      this._handleRadioTrackFailure(track, result.reason);
+      return;
+    }
+
+    this._radioSkipStreak = 0;
     this._notify({ current: AUDIO_STATE.RADIO, isPlaying: true, currentTrack: track });
   }
 
@@ -175,7 +203,7 @@ export class AudioManager {
 
     // Fade in vídeo
     this.players.mediaAudio.srcObject = mediaElement.srcObject || mediaElement;
-    await this._fadeIn(this.players.mediaAudio, this.state.fadeMs);
+    await this._fadeIn(this.players.mediaAudio, this.state.fadeMs, true, null, "media_audio");
 
     this._notify({ current: AUDIO_STATE.MEDIA_AUDIO, isPlaying: true });
   }
@@ -197,11 +225,22 @@ export class AudioManager {
     );
   }
 
-  async playSpot(spotUrl, insertionPolicy = 'wait_silence') {
+  async playSpot(spotUrl, insertionPolicy = 'wait_silence', spotItem = null) {
     if (!this.players.spot) return;
 
     // Não sobrepõe spot sobre spot — aguarda o atual terminar
     if (this.isSpotPlaying()) return;
+
+    const spotId = spotItem?.id || spotItem?.spot_id || null;
+    if (spotId && this._isAudioMarkedFailed(spotId)) {
+      this._logAudio("SKIP_FAILED_AUDIO", {
+        label: "spot",
+        audioId: spotId,
+        url: spotUrl,
+        reason: "quarantine_ttl",
+      });
+      return;
+    }
 
     // Captura o estado ANTES de entrar em SPOT.
     // Se já estamos em SPOT (fallback improvável), usa RADIO.
@@ -238,6 +277,13 @@ export class AudioManager {
     // retoma imediatamente sem travar o player no estado SPOT
     const errorHandler = () => {
       console.warn("[AudioManager] spot falhou ao carregar:", spotUrl);
+      if (spotId) this._markAudioFailed(spotId);
+      this._logAudio("SKIP_FAILED_AUDIO", {
+        label: "spot",
+        audioId: spotId,
+        url: spotUrl,
+        reason: "media_error_event",
+      });
       if (this._spotEndedHandler) {
         this.players.spot.removeEventListener("ended", this._spotEndedHandler);
         this._spotEndedHandler = null;
@@ -257,7 +303,26 @@ export class AudioManager {
     // useMutedTrick=false: o rádio já está tocando audível neste ponto,
     // então o navegador já liberou áudio na página — tocar o spot mudo
     // arriscaria perder o clipe inteiro (spots costumam ser curtos).
-    await this._fadeIn(this.players.spot, 100, false);
+    const result = await this._fadeIn(this.players.spot, 100, false, spotItem, "spot");
+
+    if (!result.ok && result.reason !== "autoplay_blocked") {
+      // play() travou (watchdog) ou foi rejeitado por motivo diferente de
+      // bloqueio de autoplay — não fica preso em SPOT: limpa os handlers
+      // pendentes e retoma a fonte anterior normalmente.
+      this.players.spot.removeEventListener("error", errorHandler);
+      if (this._spotEndedHandler) {
+        this.players.spot.removeEventListener("ended", this._spotEndedHandler);
+        this._spotEndedHandler = null;
+      }
+      this._logAudio("SKIP_FAILED_AUDIO", {
+        label: "spot",
+        audioId: spotId,
+        url: spotUrl,
+        reason: result.reason,
+      });
+      await this._resumeAfterSpot(previous);
+      return;
+    }
 
     this._notify({ current: AUDIO_STATE.SPOT, isPlaying: true });
   }
@@ -277,8 +342,16 @@ export class AudioManager {
     if (player) {
       if (previous === AUDIO_STATE.RADIO) {
         player.volume = 1.0; // Retoma volume
+        const track = this.queue.radio[this.queue.radioIndex] || this.state.currentTrack;
+        const result = await this._fadeIn(player, this.state.fadeMs, true, track, "radio");
+        if (track && !result.ok && result.reason !== "autoplay_blocked") {
+          this._handleRadioTrackFailure(track, result.reason);
+          return;
+        }
+        this._radioSkipStreak = 0;
+      } else {
+        await this._fadeIn(player, this.state.fadeMs, true, null, "media_audio");
       }
-      await this._fadeIn(player, this.state.fadeMs);
     }
 
     this._notify({ current: previous, isPlaying: true });
@@ -381,9 +454,22 @@ export class AudioManager {
     if (!this.players.radio || this.queue.radio.length === 0) return;
     const track = this.queue.radio[this.queue.radioIndex];
     if (!track?.file_url) return;
+
+    if (track?.id && this._isAudioMarkedFailed(track.id)) {
+      this._handleRadioTrackFailure(track, "quarantine_ttl", { markFailed: false });
+      return;
+    }
+
     await this._fadeOut(this.players.radio, this.state.fadeMs);
     this.players.radio.src = track.file_url;
-    await this._fadeIn(this.players.radio, this.state.fadeMs);
+    const result = await this._fadeIn(this.players.radio, this.state.fadeMs, true, track, "radio");
+
+    if (!result.ok && result.reason !== "autoplay_blocked") {
+      this._handleRadioTrackFailure(track, result.reason);
+      return;
+    }
+
+    this._radioSkipStreak = 0;
     this._notify({ current: AUDIO_STATE.RADIO, isPlaying: true, currentTrack: track });
   }
 
@@ -399,43 +485,186 @@ export class AudioManager {
   }
 
   /**
-   * Fade in suave
+   * Log estruturado dos eventos do watchdog de áudio.
+   * Mantém um formato único { event, ...payload, ts } para facilitar
+   * filtragem/parsing posterior (ex.: ferramentas de observabilidade).
    */
-  _fadeIn(element, duration = 200, useMutedTrick = true) {
-    return new Promise(resolve => {
-      if (!element) {
-        resolve();
-        return;
+  _logAudio(event, payload = {}) {
+    const entry = { event, ...payload, ts: new Date().toISOString() };
+    const isWarning = [
+      "PLAY_TIMEOUT",
+      "PLAY_REJECTED",
+      "SKIP_FAILED_AUDIO",
+      "NO_VALID_AUDIO",
+    ].includes(event);
+    if (isWarning) {
+      console.warn(`[AudioManager] ${event}`, entry);
+    } else {
+      console.log(`[AudioManager] ${event}`, entry);
+    }
+  }
+
+  /**
+   * Verifica se um audioId está em quarentena (falhou recentemente).
+   * TTL é checado de forma preguiçosa — sem timer de fundo: se já expirou,
+   * remove a entrada e libera o áudio para nova tentativa.
+   */
+  _isAudioMarkedFailed(audioId) {
+    if (!audioId) return false;
+    const failedAt = this.failedAudioIds.get(audioId);
+    if (failedAt === undefined) return false;
+    if (Date.now() - failedAt > FAILED_AUDIO_TTL_MS) {
+      this.failedAudioIds.delete(audioId);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Marca um audioId como falho — entra em quarentena por FAILED_AUDIO_TTL_MS.
+   */
+  _markAudioFailed(audioId) {
+    if (!audioId) return;
+    this.failedAudioIds.set(audioId, Date.now());
+  }
+
+  /**
+   * Watchdog de play(): corre element.play() contra um timeout.
+   *
+   * Problema que resolve: em alguns navegadores/cenários de rede, a Promise
+   * de audio.play() nunca resolve nem rejeita — o áudio fica "preso mudo"
+   * para sempre, sem nenhum sinal de erro. Promise.race garante que o
+   * AudioManager sempre recebe uma resposta dentro de PLAY_WATCHDOG_TIMEOUT_MS.
+   *
+   * Retorna { ok: true } em sucesso, ou
+   * { ok: false, reason: 'timeout' | 'rejected' | 'autoplay_blocked' | 'no_element', error? }
+   */
+  async playWithWatchdog(element, item = null, options = {}) {
+    const label = options.label || "audio";
+    const audioId = item?.id ?? item?.spot_id ?? item?.track_id ?? null;
+    const url = element?.src || item?.file_url || item?.url || null;
+    const startedAt = Date.now();
+
+    if (!element) {
+      return { ok: false, reason: "no_element" };
+    }
+
+    this._logAudio("PLAY_REQUEST", { label, audioId, url });
+
+    let timeoutId = null;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve({ outcome: "timeout" }), PLAY_WATCHDOG_TIMEOUT_MS);
+    });
+
+    // Envolve play() para capturar tanto rejeição assíncrona quanto exceção síncrona
+    const playPromise = (async () => {
+      try {
+        await element.play();
+        return { outcome: "success" };
+      } catch (error) {
+        return { outcome: "rejected", error };
       }
+    })();
 
-      element.volume = 0;
+    const result = await Promise.race([playPromise, timeoutPromise]);
+    const elapsedMs = Date.now() - startedAt;
 
-      if (useMutedTrick) {
-        // Truque de autoplay-mudo: necessário só na 1ª reprodução da página
-        // (rádio). Depois disso o navegador já liberou áudio na aba — usar o
-        // truque em clipes curtos (spots) arrisca tocar o clipe inteiro mudo,
-        // pois o unmute só ocorre quando a promise de play() resolve.
-        element.muted = true;
-        element.play().then(() => {
-          element.muted = false;
-        }).catch((err) => {
-          element.muted = false;
-          if (err?.name === 'NotAllowedError') {
-            this._notify({ autoplayBlocked: true });
-          }
-        });
-      } else {
-        // Garante que o elemento não fique preso em muted=true herdado da
-        // criação (ex.: spot.muted = true definido no Player para contornar
-        // autoplay caso seja o primeiro áudio da página).
-        element.muted = false;
-        element.play().catch((err) => {
-          if (err?.name === 'NotAllowedError') {
-            this._notify({ autoplayBlocked: true });
-          }
-        });
-      }
+    if (result.outcome === "success") {
+      clearTimeout(timeoutId);
+      this._logAudio("PLAY_SUCCESS", { label, audioId, url, elapsedMs });
+      return { ok: true };
+    }
 
+    if (result.outcome === "timeout") {
+      this._logAudio("PLAY_TIMEOUT", {
+        label,
+        audioId,
+        url,
+        reason: "watchdog_timeout_exceeded",
+        elapsedMs,
+      });
+      if (audioId) this._markAudioFailed(audioId);
+      return { ok: false, reason: "timeout" };
+    }
+
+    // outcome === 'rejected'
+    clearTimeout(timeoutId);
+    const error = result.error;
+    const errorName = error?.name || "UnknownError";
+
+    this._logAudio("PLAY_REJECTED", {
+      label,
+      audioId,
+      url,
+      reason: errorName,
+      message: error?.message,
+      elapsedMs,
+    });
+
+    if (errorName === "NotAllowedError") {
+      // Bloqueio de autoplay não é um arquivo quebrado — não entra em
+      // quarentena, apenas sinaliza para a UI pedir interação do usuário.
+      this._notify({ autoplayBlocked: true });
+      return { ok: false, reason: "autoplay_blocked", error };
+    }
+
+    if (audioId) this._markAudioFailed(audioId);
+    return { ok: false, reason: "rejected", error };
+  }
+
+  /**
+   * Centraliza a resposta a uma falha de faixa de rádio: marca quarentena,
+   * loga SKIP_FAILED_AUDIO e avança para a próxima faixa válida.
+   *
+   * Guarda contra loop infinito: se o número de pulos consecutivos atingir
+   * o tamanho da fila (todas as faixas falharam), entra em estado de erro
+   * controlado (SILENT) em vez de continuar girando a fila para sempre.
+   */
+  _handleRadioTrackFailure(track, reason, { markFailed = true } = {}) {
+    const audioId = track?.id ?? null;
+    const url = track?.file_url ?? null;
+
+    if (markFailed && audioId) {
+      this._markAudioFailed(audioId);
+    }
+
+    this._logAudio("SKIP_FAILED_AUDIO", { label: "radio", audioId, url, reason });
+
+    this._radioSkipStreak++;
+    const queueLength = this.queue.radio.length;
+
+    if (queueLength > 0 && this._radioSkipStreak >= queueLength) {
+      this._logAudio("NO_VALID_AUDIO", {
+        label: "radio",
+        queueLength,
+        reason: "all_tracks_failed_or_quarantined",
+      });
+      this._radioSkipStreak = 0;
+      this._notify({ current: AUDIO_STATE.SILENT, isPlaying: false, currentTrack: null });
+      return;
+    }
+
+    this.nextTrack();
+  }
+
+  /**
+   * Fade in suave. Toca o elemento via watchdog (playWithWatchdog) em
+   * paralelo com a rampa de volume — preserva o comportamento original, que
+   * já iniciava a rampa imediatamente, sem aguardar play() resolver.
+   *
+   * `item` e `label` são repassados ao watchdog para rastreio/log
+   * (audioId, tipo) e para decidir quarentena em caso de falha.
+   *
+   * Retorna { ok, reason?, error? } — o resultado do watchdog.
+   */
+  _fadeIn(element, duration = 200, useMutedTrick = true, item = null, label = "audio") {
+    if (!element) {
+      return Promise.resolve({ ok: true });
+    }
+
+    element.volume = 0;
+
+    const fadeAnimation = new Promise((resolve) => {
       const startTime = Date.now();
       const step = () => {
         const elapsed = Date.now() - startTime;
@@ -449,9 +678,29 @@ export class AudioManager {
           resolve();
         }
       };
-
       requestAnimationFrame(step);
     });
+
+    let playPromise;
+    if (useMutedTrick) {
+      // Truque de autoplay-mudo: necessário só na 1ª reprodução da página
+      // (rádio). Depois disso o navegador já liberou áudio na aba — usar o
+      // truque em clipes curtos (spots) arrisca tocar o clipe inteiro mudo,
+      // pois o unmute só ocorre quando o watchdog resolve.
+      element.muted = true;
+      playPromise = this.playWithWatchdog(element, item, { label }).then((result) => {
+        element.muted = false;
+        return result;
+      });
+    } else {
+      // Garante que o elemento não fique preso em muted=true herdado da
+      // criação (ex.: spot.muted = true definido no Player para contornar
+      // autoplay caso seja o primeiro áudio da página).
+      element.muted = false;
+      playPromise = this.playWithWatchdog(element, item, { label });
+    }
+
+    return Promise.all([playPromise, fadeAnimation]).then(([result]) => result);
   }
 
   /**
@@ -504,8 +753,11 @@ export class AudioManager {
 
   _onTrackError(source) {
     if (source === 'radio') {
-      console.warn('[AudioManager] track error, skipping to next');
-      this.nextTrack();
+      const track = this.queue.radio[this.queue.radioIndex] || this.state.currentTrack;
+      // Roteia pelo guard central (_handleRadioTrackFailure) em vez de chamar
+      // nextTrack() diretamente — evita o risco de loop infinito que existia
+      // aqui (todo evento "error" nativo avançava sem nenhum limite).
+      this._handleRadioTrackFailure(track, "media_error_event");
     }
   }
 
