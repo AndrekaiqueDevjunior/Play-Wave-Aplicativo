@@ -148,6 +148,7 @@ class PlaybackLogStatusEnum(str, Enum):
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
     ERROR = "error"
+    FAILED = "failed"
 
 
 class ViewReportStatusEnum(str, Enum):

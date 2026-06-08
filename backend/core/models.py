@@ -1016,6 +1016,7 @@ class PlaybackLogStatus(str, enum.Enum):
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
     ERROR = "error"
+    FAILED = "failed"
 
 
 class PlaybackLog(Base):
