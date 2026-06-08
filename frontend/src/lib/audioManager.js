@@ -254,7 +254,10 @@ export class AudioManager {
     // Toca spot — load() garante que o src é processado antes do play
     this.players.spot.src = spotUrl;
     this.players.spot.load();
-    await this._fadeIn(this.players.spot, 100);
+    // useMutedTrick=false: o rádio já está tocando audível neste ponto,
+    // então o navegador já liberou áudio na página — tocar o spot mudo
+    // arriscaria perder o clipe inteiro (spots costumam ser curtos).
+    await this._fadeIn(this.players.spot, 100, false);
 
     this._notify({ current: AUDIO_STATE.SPOT, isPlaying: true });
   }
@@ -398,7 +401,7 @@ export class AudioManager {
   /**
    * Fade in suave
    */
-  _fadeIn(element, duration = 200) {
+  _fadeIn(element, duration = 200, useMutedTrick = true) {
     return new Promise(resolve => {
       if (!element) {
         resolve();
@@ -406,15 +409,28 @@ export class AudioManager {
       }
 
       element.volume = 0;
-      element.muted = true; // Chrome permite autoplay muted
-      element.play().then(() => {
-        element.muted = false;
-      }).catch((err) => {
-        element.muted = false;
-        if (err?.name === 'NotAllowedError') {
-          this._notify({ autoplayBlocked: true });
-        }
-      });
+
+      if (useMutedTrick) {
+        // Truque de autoplay-mudo: necessário só na 1ª reprodução da página
+        // (rádio). Depois disso o navegador já liberou áudio na aba — usar o
+        // truque em clipes curtos (spots) arrisca tocar o clipe inteiro mudo,
+        // pois o unmute só ocorre quando a promise de play() resolve.
+        element.muted = true;
+        element.play().then(() => {
+          element.muted = false;
+        }).catch((err) => {
+          element.muted = false;
+          if (err?.name === 'NotAllowedError') {
+            this._notify({ autoplayBlocked: true });
+          }
+        });
+      } else {
+        element.play().catch((err) => {
+          if (err?.name === 'NotAllowedError') {
+            this._notify({ autoplayBlocked: true });
+          }
+        });
+      }
 
       const startTime = Date.now();
       const step = () => {
