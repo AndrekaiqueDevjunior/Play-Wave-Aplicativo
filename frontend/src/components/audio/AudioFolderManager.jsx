@@ -129,7 +129,13 @@ export default function AudioFolderManager({
       return;
     }
 
-    const folderPayload = { ...form };
+    // Campos de data são opcionais ("sem data = pasta sempre válida"), mas o
+    // backend rejeita string vazia como datetime inválido — precisa ser null.
+    const folderPayload = {
+      ...form,
+      starts_at: form.starts_at || null,
+      ends_at: form.ends_at || null,
+    };
 
     try {
       if (editingFolder) {

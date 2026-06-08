@@ -21,7 +21,8 @@ test.describe("@api 28 Windows/Electron — comando de exposição de desktop (b
 
     // Configura exposição de desktop (intervalo/duração/restore_fullscreen).
     const cfgRes = await api.raw("patch", `/devices/${dev.device_id}/desktop-exposure-config`, {
-      data: { enabled: true, interval_seconds: 10, duration_seconds: 10, restore_fullscreen: true },
+      // backend exige duration_seconds < interval_seconds (ver _validate_desktop_exposure_config)
+      data: { enabled: true, interval_seconds: 30, duration_seconds: 10, restore_fullscreen: true },
     });
     expect([200], "config de exposição aceita").toContain(cfgRes.status());
 

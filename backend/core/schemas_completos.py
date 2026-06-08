@@ -716,6 +716,18 @@ class CampaignPlaylistItemReorderEntry(BaseSchema):
     item_id: str
     order_index: int = Field(..., ge=0)
 
+    @model_validator(mode='before')
+    @classmethod
+    def accept_position_aliases(cls, data):
+        if isinstance(data, dict):
+            normalized = dict(data)
+            if "item_id" not in normalized and "id" in normalized:
+                normalized["item_id"] = normalized["id"]
+            if "order_index" not in normalized and "position" in normalized:
+                normalized["order_index"] = normalized["position"]
+            return normalized
+        return data
+
 
 class CampaignPlaylistItemReorderPayload(BaseSchema):
     items: List[CampaignPlaylistItemReorderEntry] = Field(..., min_length=1)
@@ -1217,6 +1229,10 @@ class AudioSpotScheduleCreate(AudioSpotScheduleBase):
                 "playlist_id, campaign_id ou device_id"
             )
         return self
+
+
+class AudioSpotSchedulePlaylistCreate(AudioSpotScheduleBase):
+    pass
 
 
 class AudioSpotScheduleUpdate(BaseSchema):

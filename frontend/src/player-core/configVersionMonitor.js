@@ -17,14 +17,16 @@ import { logEvent, EventType, logCacheInvalidated } from './eventLogger';
 const MONITOR_INTERVAL_MS = 5000; // Check a cada 5 segundos
 
 export class ConfigVersionMonitor {
-  constructor(deviceId, apiClient) {
+  constructor(deviceId, apiClient, options = {}) {
     this.deviceId = deviceId;
     this.apiClient = apiClient;
+    this.getDeviceToken = options.getDeviceToken || (() => null);
     this.localVersions = {
       scheduleVersion: 0,
       campaignVersion: 0,
       playlistVersion: 0,
     };
+    this.hasInitialVersions = false;
     this.monitorInterval = null;
     this.onConfigChanged = null;
   }
@@ -66,7 +68,11 @@ export class ConfigVersionMonitor {
    */
   async checkVersion() {
     try {
-      const response = await this.apiClient.get(`/devices/${this.deviceId}`);
+      const response = await this.apiClient.get(`/devices/${this.deviceId}/versions`, {
+        deviceToken: this.getDeviceToken(),
+        noAuth: true,
+        redirectOnUnauthorized: false,
+      });
 
       const remoteVersions = {
         scheduleVersion: response.schedule_version || 0,
@@ -74,9 +80,10 @@ export class ConfigVersionMonitor {
         playlistVersion: response.audio_playlist_version || 0,
       };
 
-      if (!this.localVersions.scheduleVersion) {
+      if (!this.hasInitialVersions) {
         // Primeira vez: apenas cachear versões
         this.localVersions = remoteVersions;
+        this.hasInitialVersions = true;
         console.log('[ConfigVersionMonitor] Initial versions:', this.localVersions);
         return;
       }

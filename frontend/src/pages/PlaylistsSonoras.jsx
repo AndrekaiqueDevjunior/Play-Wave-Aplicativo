@@ -39,7 +39,7 @@ export default function PlaylistsSonoras() {
 
   const { data: tracks = [] } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => listarFaixas(),
+    queryFn: () => listarFaixas({ limit: 1000 }),
   });
 
   const deleteMutation = useMutation({

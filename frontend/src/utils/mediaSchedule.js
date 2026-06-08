@@ -3,16 +3,20 @@
  * Extraído de Player.jsx (SPEC 001)
  */
 
+import { parseBackendDateTime } from "@/player-core/scheduleTime.js";
+
 export function isMediaCurrentlyPlayable(media, now = Date.now()) {
   if (!media) return false;
   if (media.status && media.status !== "available") return false;
   if (media.is_active === false) return false;
 
-  const startsAt = media.starts_at ? Date.parse(media.starts_at) : null;
-  if (Number.isFinite(startsAt) && startsAt > now) return false;
+  const nowMs = now instanceof Date ? now.getTime() : now;
 
-  const endsAt = media.ends_at ? Date.parse(media.ends_at) : null;
-  if (Number.isFinite(endsAt) && endsAt < now) return false;
+  const startsAt = parseBackendDateTime(media.starts_at);
+  if (startsAt && startsAt.getTime() > nowMs) return false;
+
+  const endsAt = parseBackendDateTime(media.ends_at);
+  if (endsAt && endsAt.getTime() < nowMs) return false;
 
   return true;
 }

@@ -6,19 +6,12 @@ TASK 17: Períodos em mídias (data, hora, dias da semana)
 from datetime import datetime, time as time_class
 from typing import Optional
 from core.models import Media
+from services.schedule_clock import is_day_allowed, is_time_in_window, parse_hhmm, schedule_now
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
     """Converte string "HH:MM" para time object."""
-    if not time_str:
-        return None
-    try:
-        parts = time_str.split(":")
-        if len(parts) != 2:
-            return None
-        return time_class(int(parts[0]), int(parts[1]))
-    except (ValueError, AttributeError, IndexError):
-        return None
+    return parse_hhmm(time_str)
 
 
 def is_media_in_period(
@@ -42,11 +35,11 @@ def is_media_in_period(
         True se mídia deve ser exibida, False se deve ser ignorada
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
 
     current_date = now.date()
     current_time = now.time()
-    current_day = now.strftime("%a").lower()  # "mon", "tue", etc
+    current_dow = now.weekday()
 
     # Validar período de data
     if media.starts_at and current_date < media.starts_at.date():
@@ -56,36 +49,12 @@ def is_media_in_period(
         return False  # Já terminou
 
     # Validar período de horário
-    if media.start_time or media.end_time:
-        start_t = parse_time_str(media.start_time)
-        end_t = parse_time_str(media.end_time)
-
-        if start_t and end_t:
-            # Ambos definidos
-            if current_time < start_t or current_time >= end_t:
-                return False
-        elif start_t:
-            # Só início
-            if current_time < start_t:
-                return False
-        elif end_t:
-            # Só fim
-            if current_time >= end_t:
-                return False
+    if not is_time_in_window(current_time, media.start_time, media.end_time):
+        return False
 
     # Validar dias da semana
-    if media.days_of_week and len(media.days_of_week) > 0:
-        # Converter formato: "Monday" → "mon"
-        day_abbrev = current_day[:3].lower()
-
-        # Aceita tanto formato curto quanto longo
-        allowed_days = [
-            d.lower()[:3] if len(d) > 3 else d.lower()
-            for d in media.days_of_week
-        ]
-
-        if day_abbrev not in allowed_days:
-            return False
+    if not is_day_allowed(media.days_of_week, current_dow):
+        return False
 
     return True
 
@@ -104,7 +73,7 @@ def get_media_availability_status(
         "fora_horario": Mídia não está em horário ativo
     """
     if now is None:
-        now = datetime.utcnow()
+        now = schedule_now()
 
     current_date = now.date()
     current_time = now.time()
@@ -117,27 +86,11 @@ def get_media_availability_status(
         return "expirada"
 
     # Verificar horário
-    if media.start_time or media.end_time:
-        start_t = parse_time_str(media.start_time)
-        end_t = parse_time_str(media.end_time)
-
-        if start_t and current_time < start_t:
-            return "futura"
-        if end_t and current_time >= end_t:
-            return "expirada"
-        if start_t and end_t and (current_time < start_t or current_time >= end_t):
-            return "fora_horario"
+    if not is_time_in_window(current_time, media.start_time, media.end_time):
+        return "fora_horario"
 
     # Verificar dias da semana
-    if media.days_of_week and len(media.days_of_week) > 0:
-        current_day = now.strftime("%a").lower()
-        day_abbrev = current_day[:3].lower()
-        allowed_days = [
-            d.lower()[:3] if len(d) > 3 else d.lower()
-            for d in media.days_of_week
-        ]
-
-        if day_abbrev not in allowed_days:
-            return "fora_horario"
+    if not is_day_allowed(media.days_of_week, now.weekday()):
+        return "fora_horario"
 
     return "vigente"

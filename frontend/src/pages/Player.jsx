@@ -225,6 +225,7 @@ export default function Player() {
   const [audioManagerCurrent, setAudioManagerCurrent] = useState(
     AUDIO_STATE.SILENT,
   );
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const [viewsCount, setViewsCount] = useState(0);
@@ -277,6 +278,34 @@ export default function Player() {
   useEffect(() => {
     campaignConfigVersionRef.current = campaignConfigVersion;
   }, [campaignConfigVersion]);
+
+  // Solicita permissão de notificação no mount (necessário para mostrar aviso de autoplay)
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  // Quando autoplay é bloqueado, mostra notificação nativa persistente
+  useEffect(() => {
+    if (!autoplayBlocked) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+    const n = new Notification("Play Wave — Iniciar reprodução", {
+      body: "Clique aqui para iniciar o áudio do player",
+      icon: "/favicon.ico",
+      requireInteraction: true,
+      tag: "playwave-autoplay",
+    });
+
+    n.onclick = () => {
+      window.focus();
+      audioManagerRef.current?.unlockAutoplay();
+      n.close();
+    };
+
+    return () => n.close();
+  }, [autoplayBlocked]);
 
   const commandPoller = useMemo(
     () =>
@@ -363,9 +392,11 @@ export default function Player() {
   useEffect(() => {
     const radio = document.createElement("audio");
     radio.preload = "auto";
+    radio.muted = true; // contorna política de autoplay — desmutado em _fadeIn após play()
 
     const spot = document.createElement("audio");
     spot.preload = "none";
+    spot.muted = true;
 
     const mgr = createAudioManager({ fadeMs: 200 });
     mgr.initPlayers(radio, null, spot);
@@ -407,6 +438,9 @@ export default function Player() {
       }
       if ("current" in newState) {
         setAudioManagerCurrent(newState.current);
+      }
+      if ("autoplayBlocked" in newState) {
+        setAutoplayBlocked(newState.autoplayBlocked);
       }
     });
 
@@ -630,10 +664,15 @@ export default function Player() {
 
     // Initialize config version monitor
     if (!configVersionMonitorRef.current) {
-      configVersionMonitorRef.current = new ConfigVersionMonitor(deviceId, apiClient);
+      configVersionMonitorRef.current = new ConfigVersionMonitor(deviceId, apiClient, {
+        getDeviceToken: () => deviceTokenRef.current,
+      });
 
       // Start monitoring with smart updater
-      const updater = new SmartPlaylistUpdater(apiClient);
+      const updater = new SmartPlaylistUpdater(apiClient, {
+        getDeviceToken: () => deviceTokenRef.current,
+        getDevicePlaylistFn: getDevicePlaylist,
+      });
       configVersionMonitorRef.current.start(async ({ changed, device }) => {
         console.log("[player] Config version changed:", changed);
 
@@ -653,6 +692,18 @@ export default function Player() {
                   .filter((m) => isMediaCurrentlyPlayable(m))
                   .map(normalizePlaylistMedia);
 
+                const newAudioPlaylist = newPlaylist?.audio_playlist || null;
+                setAudioPlaylist(newAudioPlaylist);
+                audioPlaylistIdRef.current = newAudioPlaylist?.id || null;
+                setCampaign(newPlaylist?.campaign || null);
+                setCampaignId(newPlaylist?.campaign?.id || null);
+                setCampaignConfigVersion(newPlaylist?.campaign?.config_version || null);
+                setVideoMuted(newPlaylist?.campaign?.video_muted !== false);
+                if (newPlaylist?.osd_config) setOsdConfig(newPlaylist.osd_config);
+                if (newPlaylist?.desktop_exposure_config) {
+                  setDesktopExposureConfig(newPlaylist.desktop_exposure_config);
+                }
+
                 if (newMedias.length > 0) {
                   setPlaylist(newMedias);
 
@@ -670,10 +721,9 @@ export default function Player() {
                     setCurrentIndex(0);
                   }
 
-                  // Update campaign/playlist info
-                  if (newPlaylist?.id) {
-                    setCampaignId(newPlaylist.id);
-                  }
+                } else if (hasAnyRadioContent(newAudioPlaylist)) {
+                  setPlaylist([]);
+                  setCurrentIndex(0);
                 }
               },
             });
@@ -695,6 +745,7 @@ export default function Player() {
       // Cleanup on unmount or device change
       if (configVersionMonitorRef.current) {
         configVersionMonitorRef.current.stop();
+        configVersionMonitorRef.current = null;
       }
     };
   }, [deviceId, phase, currentIndex, playlist]);
@@ -1435,7 +1486,24 @@ export default function Player() {
   // Campanha só com rádio — sem mídias visuais
   if (phase === "playing" && playlist.length === 0) {
     return (
-      <div className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-4">
+      <div
+        className="fixed inset-0 bg-[#07090f] flex flex-col items-center justify-center text-white gap-4"
+        onClick={() => {
+          if (autoplayBlocked) {
+            audioManagerRef.current?.unlockAutoplay();
+          }
+        }}
+      >
+        {autoplayBlocked && (
+          <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-3 cursor-pointer z-10">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-16 h-16 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-white text-lg font-semibold">Toque para iniciar o áudio</p>
+            <p className="text-white/50 text-xs">O navegador bloqueou a reprodução automática</p>
+          </div>
+        )}
         <div className="w-20 h-20 rounded-2xl bg-primary/20 flex items-center justify-center">
           <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
@@ -1480,6 +1548,19 @@ export default function Player() {
         audioEnabled={audioEnabled && phase === "playing"}
         osdConfig={osdConfig}
       />
+      {autoplayBlocked && (
+        <div
+          className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-3 cursor-pointer z-50"
+          onClick={() => audioManagerRef.current?.unlockAutoplay()}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-16 h-16 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-white text-lg font-semibold">Toque para iniciar o áudio</p>
+          <p className="text-white/50 text-xs">O navegador bloqueou a reprodução automática</p>
+        </div>
+      )}
       <PlayerDebugOverlay data={debugData} />
     </div>
   );

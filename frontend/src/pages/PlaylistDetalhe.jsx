@@ -48,7 +48,10 @@ export default function PlaylistDetalhe() {
 
   const { data: allTracks = [] } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => listarFaixas({ status: "active" }),
+    // limit no teto do backend (1000): o seletor de faixas da pasta filtra
+    // no client (AudioTrackSelector) e "Nenhuma faixa encontrada" aparecia
+    // para faixas reais que só não tinham sido carregadas (página de 100).
+    queryFn: () => listarFaixas({ status: "active", limit: 1000 }),
   });
 
   const { data: folders = [], isLoading: loadingFolders } = useQuery({

@@ -48,7 +48,9 @@ export default function Spots() {
 
   const { data: tracks = [] } = useQuery({
     queryKey: ["audio-tracks-active"],
-    queryFn: () => listarFaixas({ status: "active" }),
+    // limit no teto do backend: o seletor de áudio do spot filtra no client
+    // e não pode perder faixas que ficam fora da página padrão de 100 itens.
+    queryFn: () => listarFaixas({ status: "active", limit: 1000 }),
   });
 
   const { data: schedules = [], refetch: refetchSchedules } = useQuery({

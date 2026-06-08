@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi import status as http_status
@@ -993,7 +994,7 @@ def get_device_playlist(
         except Exception as e:
             print(f"[playlist] Redis error: {e}")
 
-    response = _build_player_playlist_response(db, device=device)
+    response = jsonable_encoder(_build_player_playlist_response(db, device=device))
 
     _sync_device_config_version(db, device, response)
 
@@ -1004,6 +1005,35 @@ def get_device_playlist(
             print(f"[playlist] Redis set error: {e}")
 
     return response
+
+
+@router.get("/{device_id}/versions")
+def get_device_player_versions(
+    device_id: str,
+    device: Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    if str(device.id) != device_id:
+        raise HTTPException(status_code=403, detail="Token não corresponde ao dispositivo")
+
+    campaign = _resolve_player_campaign(db, device=device)
+    playlist = None
+    if campaign and campaign.audio_playlist_id:
+        playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == campaign.audio_playlist_id).first()
+    elif device.audio_playlist_id:
+        playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == device.audio_playlist_id).first()
+
+    return jsonable_encoder({
+        "device_id": str(device.id),
+        "schedule_version": device.schedule_version or 0,
+        "campaign_id": str(campaign.id) if campaign else None,
+        "campaign_version": (campaign.campaign_version or 0) if campaign else 0,
+        "config_version": campaign.config_version if campaign else None,
+        "audio_playlist_id": str(playlist.id) if playlist else None,
+        "audio_playlist_version": (playlist.version or 0) if playlist else 0,
+        "updated_at": device.updated_at,
+        "server_time": schedule_now(),
+    })
 
 
 @router.get("/{device_id}/debug-playback")
@@ -2552,7 +2582,6 @@ def debug_device_spots(
 
             # Verificar tempo
             current_time = now.time()
-            current_date = now.date()
 
             if schedule.start_time or schedule.end_time:
                 from services.audio_spot_scheduler import parse_time_str
@@ -2564,11 +2593,11 @@ def debug_device_spots(
                 elif end_t and current_time >= end_t:
                     reasons.append(f"Depois do horário ({schedule.end_time})")
 
-            # Verificar período
-            if schedule.starts_at and current_date < schedule.starts_at.date():
-                reasons.append(f"Ainda não começou (inicia em {schedule.starts_at.date()})")
-            elif schedule.ends_at and current_date > schedule.ends_at.date():
-                reasons.append(f"Já terminou (terminou em {schedule.ends_at.date()})")
+            # Verificar período (datetime-preciso, igual ao spot_resolver real)
+            if schedule.starts_at and now < schedule.starts_at:
+                reasons.append(f"Ainda não começou (inicia em {schedule.starts_at.isoformat()})")
+            elif schedule.ends_at and now > schedule.ends_at:
+                reasons.append(f"Já terminou (terminou em {schedule.ends_at.isoformat()})")
 
             diagnosis["why_not_eligible"] = reasons if reasons else ["Razão desconhecida"]
 

@@ -12,6 +12,7 @@ from core.schemas_completos import (
     AudioSpotStatusEnum,
     AudioSpotUpdate,
     AudioSpotScheduleCreate,
+    AudioSpotSchedulePlaylistCreate,
     AudioSpotScheduleResponse,
     AudioSpotScheduleUpdate,
 )
@@ -190,7 +191,7 @@ def list_audio_spots(
             AudioSpot.name.ilike(f"%{search}%") | AudioSpot.description.ilike(f"%{search}%")
         )
 
-    return query.offset(skip).limit(limit).all()
+    return query.order_by(AudioSpot.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/schedules", response_model=List[AudioSpotScheduleResponse])
@@ -430,7 +431,7 @@ def create_playlist_spot_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     playlist_id: str,
-    payload: AudioSpotScheduleCreate,
+    payload: AudioSpotSchedulePlaylistCreate,
 ):
     playlist = crud_audio_playlist.get(db, id=playlist_id)
     if not playlist:

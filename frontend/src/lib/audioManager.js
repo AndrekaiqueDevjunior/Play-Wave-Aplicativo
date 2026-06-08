@@ -37,6 +37,7 @@ export class AudioManager {
       volume: 1.0,
       fadeMs: options.fadeMs || 200,
       currentTrack: null,
+      autoplayBlocked: false,
     };
 
     this.players = {
@@ -310,6 +311,23 @@ export class AudioManager {
   }
 
   /**
+   * Chamado quando o usuário clica para desbloquear autoplay.
+   * Retenta o play() em todos os elementos suspensos.
+   */
+  async unlockAutoplay() {
+    this._notify({ autoplayBlocked: false });
+    const current = this._getCurrentPlayer();
+    if (current && current.paused && current.src) {
+      current.muted = false;
+      await current.play().catch(() => {});
+    }
+    if (this.players.radio?.paused && this.players.radio?.src) {
+      this.players.radio.muted = false;
+      await this.players.radio.play().catch(() => {});
+    }
+  }
+
+  /**
    * Obtém volume (0-1)
    */
   getVolume() {
@@ -388,7 +406,15 @@ export class AudioManager {
       }
 
       element.volume = 0;
-      element.play().catch(() => {}); // Toca mesmo se falhar
+      element.muted = true; // Chrome permite autoplay muted
+      element.play().then(() => {
+        element.muted = false;
+      }).catch((err) => {
+        element.muted = false;
+        if (err?.name === 'NotAllowedError') {
+          this._notify({ autoplayBlocked: true });
+        }
+      });
 
       const startTime = Date.now();
       const step = () => {

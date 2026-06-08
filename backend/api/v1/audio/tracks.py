@@ -107,7 +107,7 @@ def get_audio_tracks(
             )
         )
 
-    return query.offset(skip).limit(limit).all()
+    return query.order_by(AudioTrack.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/statistics/overview")

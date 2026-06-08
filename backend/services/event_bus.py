@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, cast
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -53,7 +54,7 @@ def _publish(channel: str, envelope: dict) -> bool:
     if client is None:
         return False
     try:
-        client.publish(channel, json.dumps(envelope))
+        client.publish(channel, json.dumps(jsonable_encoder(envelope)))
         return True
     except Exception as exc:  # noqa: BLE001 — pub/sub é best-effort
         print(f"[event_bus] publish failed on {channel}: {exc}")

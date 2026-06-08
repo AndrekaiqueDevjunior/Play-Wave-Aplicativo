@@ -7,6 +7,12 @@
  * - Resolução de conflitos por prioridade
  */
 
+import {
+  isDateTimeInRange,
+  isDayAllowed,
+  isTimeInWindow as isScheduleTimeInWindow,
+} from "@/player-core/scheduleTime.js";
+
 /**
  * Verifica se um horário está dentro de um intervalo
  * @param {string} time - Horário atual "HH:MM"
@@ -15,23 +21,7 @@
  * @returns {boolean}
  */
 function isTimeInRange(time, startTime, endTime) {
-  if (!startTime || !endTime) return true;
-
-  const [h, m] = time.split(":").map(Number);
-  const [sh, sm] = startTime.split(":").map(Number);
-  const [eh, em] = endTime.split(":").map(Number);
-
-  const current = h * 60 + m;
-  const start = sh * 60 + sm;
-  const end = eh * 60 + em;
-
-  // Caso normal: start < end (ex: 08:00 - 18:00)
-  if (start < end) {
-    return current >= start && current < end;
-  }
-
-  // Caso overnight: start > end (ex: 22:00 - 06:00)
-  return current >= start || current < end;
+  return isScheduleTimeInWindow(time, startTime, endTime);
 }
 
 /**
@@ -42,34 +32,17 @@ function isTimeInRange(time, startTime, endTime) {
  * @returns {boolean}
  */
 function isDateInRange(now, startsAt, endsAt) {
-  const nowMs = now.getTime();
-
-  if (startsAt) {
-    const startMs = Date.parse(startsAt);
-    if (Number.isFinite(startMs) && nowMs < startMs) return false;
-  }
-
-  if (endsAt) {
-    const endMs = Date.parse(endsAt);
-    if (Number.isFinite(endMs) && nowMs > endMs) return false;
-  }
-
-  return true;
+  return isDateTimeInRange(now, startsAt, endsAt);
 }
 
 /**
  * Verifica se um dia da semana está ativo
  * @param {Date} now - Data atual
- * @param {Array<number>|null} daysOfWeek - Array de dias (0=domingo, 6=sábado)
+ * @param {Array<number>|null} daysOfWeek - Array de dias (0=segunda, 6=domingo)
  * @returns {boolean}
  */
 function isDayActive(now, daysOfWeek) {
-  if (!daysOfWeek || !Array.isArray(daysOfWeek) || daysOfWeek.length === 0) {
-    return true;
-  }
-
-  const currentDay = now.getDay(); // 0 = domingo, 6 = sábado
-  return daysOfWeek.includes(currentDay);
+  return isDayAllowed(daysOfWeek, now);
 }
 
 /**
@@ -137,6 +110,9 @@ export function resolveActiveSpotsForNow(spotSchedules, now = new Date()) {
     if (!isTimeInRange(currentTime, schedule.start_time, schedule.end_time)) {
       return false;
     }
+
+    // Verificar dia da semana
+    if (!isDayActive(now, schedule.days_of_week)) return false;
 
     return true;
   });

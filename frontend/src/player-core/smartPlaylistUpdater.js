@@ -12,8 +12,10 @@
 import { logEvent, EventType } from './eventLogger';
 
 export class SmartPlaylistUpdater {
-  constructor(apiClient) {
+  constructor(apiClient, options = {}) {
     this.apiClient = apiClient;
+    this.getDeviceToken = options.getDeviceToken || (() => null);
+    this.getDevicePlaylistFn = options.getDevicePlaylistFn || null;
   }
 
   /**
@@ -37,24 +39,25 @@ export class SmartPlaylistUpdater {
         deviceId
       );
 
-      // Obter novo estado do dispositivo (inclui campanha, playlist, folder ativo)
-      const deviceResponse = await this.apiClient.get(`/devices/${deviceId}`);
-
-      // Obter nova campanha/playlist
       let newPlaylist = null;
 
-      if (deviceResponse.campaign_id) {
-        // Dispositivo tem campanha
-        const campaignResponse = await this.apiClient.get(
-          `/campaigns/${deviceResponse.campaign_id}`
+      if (this.getDevicePlaylistFn) {
+        newPlaylist = await this.getDevicePlaylistFn(
+          deviceId,
+          this.getDeviceToken()
         );
-        newPlaylist = campaignResponse;
-      } else if (deviceResponse.audio_playlist_id) {
-        // Dispositivo tem playlist sonora (rádio)
-        const playlistResponse = await this.apiClient.get(
-          `/audio/playlists/${deviceResponse.audio_playlist_id}`
-        );
-        newPlaylist = playlistResponse;
+      } else {
+        // Fallback legado para telas admin com JWT.
+        const deviceResponse = await this.apiClient.get(`/devices/${deviceId}`);
+        if (deviceResponse.current_campaign_id) {
+          newPlaylist = await this.apiClient.get(
+            `/campaigns/${deviceResponse.current_campaign_id}`
+          );
+        } else if (deviceResponse.audio_playlist_id) {
+          newPlaylist = await this.apiClient.get(
+            `/audio/playlists/${deviceResponse.audio_playlist_id}`
+          );
+        }
       }
 
       if (!newPlaylist) {

@@ -74,7 +74,9 @@ export default function FaixasAudio() {
 
   const { data: tracks = [], isLoading } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => listarFaixas(),
+    // limit no teto do backend: a página filtra/busca no client e não pode
+    // perder faixas que ficam fora da página padrão de 100 itens.
+    queryFn: () => listarFaixas({ limit: 1000 }),
   });
 
   const { data: categories = [] } = useQuery({

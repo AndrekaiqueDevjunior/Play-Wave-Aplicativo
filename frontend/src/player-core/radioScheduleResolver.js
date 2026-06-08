@@ -13,37 +13,23 @@
  */
 
 import { AUDIO_MODE } from "../lib/audioManager.js";
-
-function nowHHMM(date) {
-  return `${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes(),
-  ).padStart(2, "0")}`;
-}
-
-/** Converte JS getDay() (dom=0) para weekday() Python (seg=0). */
-function pythonWeekday(date) {
-  return (date.getDay() + 6) % 7;
-}
-
-function inDayOfWeek(daysOfWeek, date) {
-  if (!Array.isArray(daysOfWeek) || daysOfWeek.length === 0) return true;
-  const dow = pythonWeekday(date);
-  // Aceita tanto número (0-6) quanto string numérica.
-  return daysOfWeek.some((d) => Number(d) === dow);
-}
+import {
+  isDateTimeInRange,
+  isDayAllowed,
+  isTimeInWindow,
+  nowHHMM,
+} from "./scheduleTime.js";
 
 function scheduleActive(sched, date) {
   // Validar período de datas (starts_at / ends_at)
-  if (sched.starts_at && date < new Date(sched.starts_at)) return false;
-  if (sched.ends_at && date > new Date(sched.ends_at)) return false;
+  if (!isDateTimeInRange(date, sched.starts_at, sched.ends_at)) return false;
 
   // Validar janela de hora do dia
   const hhmm = nowHHMM(date);
-  if (sched.start_time && hhmm < sched.start_time) return false;
-  if (sched.end_time && hhmm > sched.end_time) return false;
+  if (!isTimeInWindow(hhmm, sched.start_time, sched.end_time)) return false;
 
   // Validar dia da semana
-  if (!inDayOfWeek(sched.days_of_week, date)) return false;
+  if (!isDayAllowed(sched.days_of_week, date)) return false;
   return true;
 }
 

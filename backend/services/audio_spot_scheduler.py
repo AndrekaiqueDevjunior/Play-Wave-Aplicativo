@@ -18,20 +18,18 @@ from sqlalchemy.orm import Session
 
 from core.models import AudioSpotSchedule, AudioSpot, AudioPlaylist
 from core.logging_config import log_spot_check, log_spot_eligible, log_spot_ineligible, log_spot_due
-from services.schedule_clock import normalize_schedule_now, schedule_now
+from services.schedule_clock import (
+    is_day_allowed,
+    is_time_in_window,
+    normalize_schedule_now,
+    parse_hhmm,
+    schedule_now,
+)
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
     """Converte string "HH:MM" para time object."""
-    if not time_str:
-        return None
-    try:
-        parts = time_str.split(":")
-        if len(parts) != 2:
-            return None
-        return time_class(int(parts[0]), int(parts[1]))
-    except (ValueError, AttributeError, IndexError):
-        return None
+    return parse_hhmm(time_str)
 
 
 def get_eligible_spots(
@@ -67,7 +65,7 @@ def get_eligible_spots(
     )
 
     current_time = now.time()
-    current_date = now.date()
+    current_dow = now.weekday()
 
     eligible = []
 
@@ -75,7 +73,7 @@ def get_eligible_spots(
     log_spot_check(playlist_id, len(schedules), 0, now)
 
     for schedule in schedules:
-        if not _schedule_matches_now(schedule, current_date, current_time):
+        if not _schedule_matches_now(schedule, now, current_time, current_dow):
             # TASK 08: Log de rejeição
             log_spot_ineligible(
                 str(schedule.id),
@@ -195,27 +193,27 @@ def should_retry_spot_with_fallback(
 
 def _schedule_matches_now(
     schedule: AudioSpotSchedule,
-    current_date,
+    now: datetime,
     current_time: time_class,
+    current_dow: int,
 ) -> bool:
-    """Verifica se um agendamento de spot se aplica agora."""
+    """Verifica se um agendamento de spot se aplica agora.
 
-    if schedule.starts_at and current_date < schedule.starts_at.date():
+    Comparação de starts_at/ends_at é datetime-precisa (não trunca pra date),
+    para bater com a regra real usada em spot_resolver._is_within_date_range —
+    senão o /debug-spots reporta "elegível" pra um spot que ainda não começou
+    (ou já terminou) hoje, divergindo do que o player de fato decide.
+    """
+
+    if schedule.starts_at and now < schedule.starts_at:
         return False
-    if schedule.ends_at and current_date > schedule.ends_at.date():
+    if schedule.ends_at and now > schedule.ends_at:
         return False
 
-    if schedule.start_time and schedule.end_time:
-        start_t = parse_time_str(schedule.start_time)
-        end_t = parse_time_str(schedule.end_time)
+    if not is_time_in_window(current_time, schedule.start_time, schedule.end_time):
+        return False
 
-        if not start_t or not end_t:
-            return False
-
-        if start_t <= end_t:
-            if current_time < start_t or current_time >= end_t:
-                return False
-        elif current_time < start_t and current_time >= end_t:
-            return False
+    if not is_day_allowed(schedule.days_of_week, current_dow):
+        return False
 
     return True

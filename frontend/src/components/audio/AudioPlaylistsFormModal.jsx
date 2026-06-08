@@ -45,7 +45,7 @@ export default function AudioPlaylistFormModal({ playlist, onClose, onSaved }) {
 
   const { data: allTracks = [], isLoading: tracksLoading } = useQuery({
     queryKey: ["audio-tracks"],
-    queryFn: () => listarFaixas({ status: "active" }),
+    queryFn: () => listarFaixas({ status: "active", limit: 1000 }),
   });
 
   useEffect(() => {

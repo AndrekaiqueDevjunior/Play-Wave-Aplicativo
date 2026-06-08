@@ -134,7 +134,7 @@ export default function CampaignFormModal({
 
   const { data: activeAudioTracks = [] } = useQuery({
     queryKey: ["audio-tracks-active"],
-    queryFn: () => listarFaixas({ status: "active" }),
+    queryFn: () => listarFaixas({ status: "active", limit: 1000 }),
     enabled: open && tab === "spots",
   });
 

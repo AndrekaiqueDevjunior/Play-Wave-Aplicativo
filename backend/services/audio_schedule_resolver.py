@@ -9,25 +9,23 @@ Regras:
 5. Retorna pasta com maior prioridade se houver conflito.
 """
 
-from datetime import datetime, time as time_class, date as date_class
+from datetime import datetime, time as time_class, date as date_class, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
 
 from core.models import AudioPlaylistFolderSchedule, AudioFolder, AudioPlaylist
-from services.schedule_clock import normalize_schedule_now, schedule_now
+from services.schedule_clock import (
+    is_day_allowed,
+    is_time_in_window,
+    normalize_schedule_now,
+    parse_hhmm,
+    schedule_now,
+)
 
 
 def parse_time_str(time_str: Optional[str]) -> Optional[time_class]:
     """Converte string "HH:MM" para time object. Retorna None se inválido."""
-    if not time_str:
-        return None
-    try:
-        parts = time_str.split(":")
-        if len(parts) != 2:
-            return None
-        return time_class(int(parts[0]), int(parts[1]))
-    except (ValueError, AttributeError, IndexError):
-        return None
+    return parse_hhmm(time_str)
 
 
 def get_current_day_of_week() -> int:
@@ -157,26 +155,11 @@ def _schedule_matches_now(
     if schedule.ends_at and current_date > schedule.ends_at.date():
         return False
 
-    if schedule.start_time and schedule.end_time:
-        start_t = parse_time_str(schedule.start_time)
-        end_t = parse_time_str(schedule.end_time)
+    if not is_time_in_window(current_time, schedule.start_time, schedule.end_time):
+        return False
 
-        if not start_t or not end_t:
-            return False
-
-        if start_t <= end_t:
-            if current_time < start_t or current_time >= end_t:
-                return False
-        elif current_time < start_t and current_time >= end_t:
-            return False
-
-    if schedule.days_of_week:
-        try:
-            days = [int(d) for d in schedule.days_of_week]
-            if current_dow not in days:
-                return False
-        except (ValueError, TypeError):
-            return False
+    if not is_day_allowed(schedule.days_of_week, current_dow):
+        return False
 
     return True
 
@@ -211,7 +194,7 @@ def get_next_schedule_change(
     for schedule in schedules:
         if _schedule_matches_now(schedule, now.date(), now.time(), now.weekday()):
             if schedule.end_time:
-                end_t = parse_time_str(schedule.end_time)
+                end_t = parse_hhmm(schedule.end_time)
                 if end_t:
                     candidate = now.replace(
                         hour=end_t.hour,
@@ -227,15 +210,17 @@ def get_next_schedule_change(
                 next_midnight = schedule.ends_at.replace(
                     hour=0, minute=0, second=0, microsecond=0
                 )
-                next_midnight = next_midnight.replace(
-                    day=next_midnight.day + 1
-                ) if next_midnight <= now else next_midnight
+                next_midnight = (
+                    next_midnight + timedelta(days=1)
+                    if next_midnight <= now
+                    else next_midnight
+                )
                 if next_change is None or next_midnight < next_change:
                     next_change = next_midnight
 
         else:
             if schedule.start_time:
-                start_t = parse_time_str(schedule.start_time)
+                start_t = parse_hhmm(schedule.start_time)
                 if start_t:
                     candidate = now.replace(
                         hour=start_t.hour,

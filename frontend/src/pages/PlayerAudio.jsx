@@ -190,12 +190,17 @@ export default function PlayerAudio() {
           });
           
           try {
-            // Buscar track do spot
-            const spotTrack = spotSchedule.spot?.track || spotSchedule.track;
-            
-            if (spotTrack?.file_url) {
-              const policy = spotSchedule.spot?.insertion_policy || 'INTERRUPT';
-              await playSpot(spotTrack.file_url, policy);
+            const spotUrl =
+              spotSchedule.file_url ||
+              spotSchedule.spot?.track?.file_url ||
+              spotSchedule.track?.file_url;
+
+            if (spotUrl) {
+              const policy =
+                spotSchedule.insertion_policy ||
+                spotSchedule.spot?.insertion_policy ||
+                "interrupt";
+              await playSpot(spotUrl, policy);
               
               // Registrar log de reprodução
               await logSpotStarted(

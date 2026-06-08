@@ -13,12 +13,17 @@ Filtros aplicados em ordem:
 """
 
 import logging
-from datetime import datetime, time
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from services.schedule_clock import normalize_schedule_now, schedule_now
+from services.schedule_clock import (
+    is_day_allowed,
+    is_time_in_window,
+    normalize_schedule_now,
+    schedule_now,
+)
 from core.models import (
     AudioSpot,
     AudioSpotSchedule,
@@ -42,31 +47,13 @@ def _is_within_date_range(schedule: AudioSpotSchedule, now: datetime) -> bool:
 
 
 def _is_within_day_of_week(schedule: AudioSpotSchedule, now: datetime) -> bool:
-    if not schedule.days_of_week:
-        return True  # sem restrição de dia
-    # Python: Monday=0, Sunday=6
-    return now.weekday() in schedule.days_of_week
-
-
-def _parse_time(t_str: str) -> time:
-    h, m = t_str.split(":")
-    return time(int(h), int(m))
+    return is_day_allowed(schedule.days_of_week, now.weekday())
 
 
 def _is_within_time_window(schedule: AudioSpotSchedule, now: datetime) -> bool:
     """Suporta janela cruzando meia-noite (ex: 22:00–06:00)."""
-    if not schedule.start_time or not schedule.end_time:
-        return True  # sem restrição de horário
-
     t = now.time().replace(second=0, microsecond=0)
-    start = _parse_time(schedule.start_time)
-    end = _parse_time(schedule.end_time)
-
-    if start <= end:
-        return start <= t <= end
-    else:
-        # Janela cruza meia-noite: start > end
-        return t >= start or t <= end
+    return is_time_in_window(t, schedule.start_time, schedule.end_time)
 
 
 def _is_schedule_active(schedule: AudioSpotSchedule, now: datetime) -> bool:
