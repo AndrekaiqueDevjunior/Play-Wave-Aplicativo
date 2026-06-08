@@ -425,6 +425,10 @@ export class AudioManager {
           }
         });
       } else {
+        // Garante que o elemento não fique preso em muted=true herdado da
+        // criação (ex.: spot.muted = true definido no Player para contornar
+        // autoplay caso seja o primeiro áudio da página).
+        element.muted = false;
         element.play().catch((err) => {
           if (err?.name === 'NotAllowedError') {
             this._notify({ autoplayBlocked: true });
