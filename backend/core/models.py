@@ -122,14 +122,29 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
+    # SPEC 019 — nullable: usuario criado via convite por e-mail nao tem
+    # senha ainda; so recebe password_hash ao aceitar o convite. Login deve
+    # ser bloqueado explicitamente quando password_hash for None (ver
+    # backend/api/v1/auth.py), nao depender so da verificacao de hash falhar.
+    password_hash = Column(String(255), nullable=True)
     role = Column(SQLEnum(UserRole), default=UserRole.OPERATOR, nullable=False)
     is_active = Column(Boolean, default=True)
     job_title = Column(String(255), nullable=True)
+    # SPEC 019 — valores aceitos: "active", "inactive", "blocked",
+    # "pending_invite". Mantido como string livre (nao enum formal) para nao
+    # quebrar comparacoes existentes no frontend/backend que ja tratam este
+    # campo como string solta.
     account_status = Column(String(20), default="active", nullable=False)
     blocked_reason = Column(Text, nullable=True)
     last_changed_by = Column(String(255), nullable=True)
     last_changed_at = Column(DateTime, nullable=True)
+    # SPEC 019 — convite por e-mail (criacao sem senha).
+    invite_token = Column(String(255), nullable=True, unique=True, index=True)
+    invite_expires_at = Column(DateTime, nullable=True)
+    invite_sent_at = Column(DateTime, nullable=True)
+    # SPEC 019 — reset de senha (usuario ja ativo que esqueceu a senha).
+    password_reset_token = Column(String(255), nullable=True, unique=True, index=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -202,6 +217,14 @@ class Device(Base):
     desktop_exposure_duration_seconds = Column(Integer, nullable=True)
     desktop_exposure_restore_fullscreen = Column(Boolean, nullable=False, default=True, server_default="true")
     desktop_exposure_updated_at = Column(DateTime, nullable=True)
+    # SPEC 015 — aviso visual configurável exibido N segundos antes de
+    # minimizar (política WAIT_CONTENT_END). warning_media_id fica como
+    # texto livre por simplicidade (sem FK) — referência a media é opcional
+    # e resolvida pelo frontend/manager, não pelo backend.
+    desktop_exposure_show_warning = Column(Boolean, nullable=False, default=False, server_default="false")
+    desktop_exposure_warning_seconds_before = Column(Integer, nullable=True)
+    desktop_exposure_warning_text = Column(String(255), nullable=True)
+    desktop_exposure_warning_media_id = Column(UUID(as_uuid=True), nullable=True)
     current_audio_track_id = Column(UUID(as_uuid=True), nullable=True)
     current_audio_track_name = Column(String(500), nullable=True)
     current_audio_track_started_at = Column(DateTime(timezone=True), nullable=True)
@@ -287,6 +310,14 @@ class Device(Base):
                 self.desktop_exposure_restore_fullscreen
                 if self.desktop_exposure_restore_fullscreen is not None
                 else True
+            ),
+            "show_warning": bool(self.desktop_exposure_show_warning),
+            "warning_seconds_before": self.desktop_exposure_warning_seconds_before,
+            "warning_text": self.desktop_exposure_warning_text,
+            "warning_media_id": (
+                str(self.desktop_exposure_warning_media_id)
+                if self.desktop_exposure_warning_media_id
+                else None
             ),
             "updated_at": self.desktop_exposure_updated_at,
         }
@@ -402,6 +433,10 @@ class MediaStatus(str, enum.Enum):
     AVAILABLE = "available"
     PROCESSING = "processing"
     ERROR = "error"
+    # SPEC 018 — mesmo padrao de AudioTrackStatus/AudioPlaylistStatus
+    # (SPECs 016/017): estado explicito para "fora da operacao, mas
+    # recuperavel", distinto de ERROR (que significa "processamento falhou").
+    ARCHIVED = "archived"
 
 
 class Media(Base):
@@ -426,6 +461,10 @@ class Media(Base):
     resolution = Column(String(50), nullable=True)
     status = Column(SQLEnum(MediaStatus), default=MediaStatus.AVAILABLE)
     is_active = Column(Boolean, default=True)
+    # SPEC 018 — timestamp de quando a midia foi arquivada, sincronizado com
+    # o enum `status` em qualquer caminho de update (mesmo padrao das
+    # SPECs 016/017 para AudioTrack/AudioPlaylist).
+    archived_at = Column(DateTime, nullable=True)
     starts_at = Column(DateTime, nullable=True)
     ends_at = Column(DateTime, nullable=True)
     start_time = Column(String(10), nullable=True)  # HH:MM format (TASK 17)
@@ -514,6 +553,12 @@ class AudioTrack(Base):
         index=True,
     )
     status = Column(SQLEnum(AudioTrackStatus, values_callable=enum_values), default=AudioTrackStatus.ACTIVE)
+    # SPEC 016 — timestamp de quando a faixa foi arquivada (None enquanto
+    # ACTIVE/INACTIVE). Usado para exibir "arquivada em X" na UI e para
+    # padronizar o filtro de listagens (archived_at IS NULL = elegivel para
+    # operacao). Nao substitui o enum `status`; convivem porque o enum ainda
+    # guarda INACTIVE, que e um estado distinto de ARCHIVED.
+    archived_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -647,6 +692,10 @@ class AudioPlaylist(Base):
         index=True,
     )
     status = Column(SQLEnum(AudioPlaylistStatus, values_callable=enum_values), default=AudioPlaylistStatus.ACTIVE)
+    # SPEC 017 — mesmo padrao da SPEC 016 (AudioTrack.archived_at):
+    # timestamp de quando a playlist foi arquivada, sincronizado com o enum
+    # `status` em qualquer caminho de update.
+    archived_at = Column(DateTime, nullable=True)
     volume_default = Column(Float, default=0.7)
     loop_enabled = Column(Boolean, default=True)
     shuffle_enabled = Column(Boolean, default=False)
@@ -1167,6 +1216,9 @@ class UserLogAction(str, enum.Enum):
     BLOCK = "block"
     UNBLOCK = "unblock"
     RESET_PASSWORD = "reset_password"
+    # SPEC 019
+    RESEND_INVITE = "resend_invite"
+    ACCEPT_INVITE = "accept_invite"
 
 
 class UserLog(Base):
