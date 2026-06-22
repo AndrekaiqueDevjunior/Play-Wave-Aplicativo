@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -47,12 +48,40 @@ class CRUDAudioPlaylist(CRUDBase[AudioPlaylist, AudioPlaylistCreate, AudioPlayli
             .all()
         )
     
+    def update(self, db: Session, *, db_obj: AudioPlaylist, obj_in) -> AudioPlaylist:
+        # SPEC 017 — mesmo padrão da SPEC 016 (CRUDAudioTrack.update):
+        # archived_at acompanha o enum `status` em qualquer caminho de
+        # update, seja via PUT genérico (fluxo real usado pela UI,
+        # `atualizarPlaylistAudio`) ou via update_status() abaixo.
+        update_data = obj_in if isinstance(obj_in, dict) else obj_in.dict(exclude_unset=True)
+        if "status" in update_data and update_data["status"] is not None:
+            new_status = update_data["status"]
+            new_status = new_status.value if hasattr(new_status, "value") else new_status
+            db_obj.archived_at = datetime.utcnow() if new_status == "archived" else None
+        return super().update(db, db_obj=db_obj, obj_in=obj_in)
+
     def update_status(self, db: Session, *, db_obj: AudioPlaylist, status: str) -> AudioPlaylist:
-        db_obj.status = status
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+        return self.update(db, db_obj=db_obj, obj_in={"status": status})
+
+    def get_in_use_references(self, db: Session, *, playlist_id: str) -> dict:
+        """Retorna onde a playlist esta em uso (devices, campanhas), para
+        bloquear exclusao definitiva com mensagem clara em vez de deixar a
+        constraint implicita (RESTRICT) do banco estourar um IntegrityError
+        generico. Diferente de AudioTrack, Device.audio_playlist_id e
+        Campaign.audio_playlist_id apontam direto para a playlist (sem
+        tabela de juncao), entao a checagem e feita diretamente nessas FKs.
+        """
+        device_count = db.query(Device).filter(Device.audio_playlist_id == playlist_id).count()
+        from core.models import Campaign
+
+        campaign_count = (
+            db.query(Campaign).filter(Campaign.audio_playlist_id == playlist_id).count()
+        )
+        return {
+            "devices": device_count,
+            "campaigns": campaign_count,
+            "in_use": (device_count + campaign_count) > 0,
+        }
     
     def add_track(self, db: Session, *, playlist_id: str, track_id: str, volume: float = None) -> AudioPlaylist:
         playlist = db.query(AudioPlaylist).filter(AudioPlaylist.id == playlist_id).first()

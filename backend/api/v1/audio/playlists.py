@@ -167,7 +167,12 @@ def get_audio_playlists(
     search: Optional[str] = Query(None),
     status: Optional[AudioPlaylistStatusEnum] = Query(None),
     category_id: Optional[str] = Query(None),
-    tenant_id: Optional[str] = Query(None)
+    tenant_id: Optional[str] = Query(None),
+    # SPEC 017 — mesmo padrão da SPEC 016 (GET /audio/tracks): por padrão,
+    # playlists arquivadas não aparecem em nenhum seletor (device, campanha,
+    # tela de gerenciamento). include_archived=true mostra também as
+    # arquivadas; status explícito (ex.: status=archived) tem precedência.
+    include_archived: bool = Query(False),
 ):
     """
     Lista playlists de áudio com filtros opcionais
@@ -192,6 +197,9 @@ def get_audio_playlists(
 
     if category_id:
         playlists = [p for p in playlists if str(p.category_id) == str(category_id)]
+
+    if not status and not include_archived:
+        playlists = [p for p in playlists if p.status != "archived"]
 
     return playlists
 
@@ -499,7 +507,11 @@ def delete_audio_playlist(
     playlist_id: str
 ):
     """
-    Remove playlist de áudio
+    Remove playlist de áudio definitivamente.
+
+    SPEC 017 — bloqueia a exclusão com 409 e mensagem clara quando a
+    playlist está vinculada a um device ou campanha, em vez de deixar a
+    constraint implícita do banco estourar um IntegrityError genérico (500).
     """
     playlist = crud_audio_playlist.get(db, id=playlist_id)
     if not playlist:
@@ -507,14 +519,25 @@ def delete_audio_playlist(
             status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Playlist de áudio não encontrada"
         )
-    
+
     # Verificar permissão
     if current_user.role != "admin" and str(playlist.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para remover esta playlist"
         )
-    
+
+    refs = crud_audio_playlist.get_in_use_references(db, playlist_id=playlist_id)
+    if refs["in_use"]:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail=(
+                "Playlist em uso e não pode ser excluída definitivamente "
+                f"(dispositivos: {refs['devices']}, campanhas: {refs['campaigns']}). "
+                "Desvincule a playlist desses locais ou arquive-a antes de excluir."
+            ),
+        )
+
     affected_device_ids = _device_ids_for_playlist(db, playlist_id=playlist_id)
     crud_audio_playlist.remove(db, id=playlist_id)
     _invalidate_device_playlist_cache(affected_device_ids)

@@ -29,6 +29,12 @@ def get_device_audio_playlist(
     ).first()
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist de áudio não encontrada")
+    # SPEC 017 — mesmo padrão de _build_audio_playlist em api/v1/devices.py:
+    # playlist arquivada nunca é servida ao player, mesmo que o device ainda
+    # aponte para ela.
+    playlist_status = playlist.status.value if hasattr(playlist.status, "value") else str(playlist.status)
+    if playlist_status != "active":
+        raise HTTPException(status_code=404, detail="Playlist de áudio arquivada/inativa")
 
     items = (
         db.query(AudioPlaylistItem)

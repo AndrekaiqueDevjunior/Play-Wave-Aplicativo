@@ -4,11 +4,19 @@ import { useNavigate } from "react-router-dom";
 import {
   listarPlaylistsAudio,
   atualizarPlaylistAudio,
+  deletarPlaylistAudio,
   listarFaixas,
 } from "@/api/audio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Plus,
   ListMusic,
@@ -22,6 +30,8 @@ import {
   CheckSquare,
   Square,
   X,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import AudioPlaylistFormModal from "@/components/audio/AudioPlaylistsFormModal";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
@@ -33,9 +43,11 @@ export default function PlaylistsSonoras() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
 
   // Seleção múltipla
   const [selectionMode, setSelectionMode] = useState(false);
@@ -44,7 +56,11 @@ export default function PlaylistsSonoras() {
 
   const { data: playlists = [], isLoading } = useQuery({
     queryKey: ["audio-playlists"],
-    queryFn: () => listarPlaylistsAudio(),
+    // include_archived=true — SPEC 017: por padrão o backend esconde
+    // arquivadas (para não aparecerem em seletores de device/campanha), mas
+    // esta é a tela de gerenciamento, onde o admin precisa ver/restaurar
+    // arquivadas via o filtro de status abaixo.
+    queryFn: () => listarPlaylistsAudio({ include_archived: true }),
   });
 
   const { data: tracks = [] } = useQuery({
@@ -52,11 +68,11 @@ export default function PlaylistsSonoras() {
     queryFn: () => listarFaixas({ limit: 1000 }),
   });
 
-  const deleteMutation = useMutation({
+  const archiveMutation = useMutation({
     mutationFn: (id) => atualizarPlaylistAudio(id, { status: "archived" }),
     onSuccess: () => {
       qc.invalidateQueries(["audio-playlists"]);
-      setDeleteTarget(null);
+      setArchiveTarget(null);
       toast({ title: "Playlist arquivada." });
     },
     onError: (err) => {
@@ -65,6 +81,39 @@ export default function PlaylistsSonoras() {
         err?.message ||
         (typeof err === "string" ? err : "Erro ao arquivar playlist.");
       toast({ title: "Erro ao arquivar", description: msg, variant: "destructive" });
+    },
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id) => atualizarPlaylistAudio(id, { status: "active" }),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-playlists"]);
+      toast({ title: "Playlist restaurada." });
+    },
+    onError: (err) => {
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao restaurar playlist.");
+      toast({ title: "Erro ao restaurar", description: msg, variant: "destructive" });
+    },
+  });
+
+  const hardDeleteMutation = useMutation({
+    mutationFn: (id) => deletarPlaylistAudio(id),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-playlists"]);
+      setHardDeleteTarget(null);
+      toast({ title: "Playlist excluída definitivamente." });
+    },
+    onError: (err) => {
+      // Backend retorna 409 com mensagem clara quando a playlist está
+      // vinculada a um device/campanha — ver crud_audio_playlist.get_in_use_references.
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao excluir playlist.");
+      toast({ title: "Não foi possível excluir", description: msg, variant: "destructive" });
     },
   });
 
@@ -92,9 +141,11 @@ export default function PlaylistsSonoras() {
     },
   });
 
-  const filtered = playlists.filter(
-    (p) => !search || p.name.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = playlists.filter((p) => {
+    if (filterStatus !== "all" && p.status !== filterStatus) return false;
+    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
   function handleEdit(pl) {
     setEditing(pl);
@@ -202,14 +253,27 @@ export default function PlaylistsSonoras() {
         </Card>
       )}
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar playlist..."
-          className="pl-9"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <div className="flex flex-wrap gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar playlist..."
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="active">Ativo</SelectItem>
+            <SelectItem value="inactive">Inativo</SelectItem>
+            <SelectItem value="archived">Arquivado</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {isLoading ? (
@@ -309,14 +373,38 @@ export default function PlaylistsSonoras() {
                     >
                       <Settings2 className="w-3.5 h-3.5" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => setDeleteTarget(pl)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {pl.status === "archived" ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Restaurar"
+                          onClick={() => restoreMutation.mutate(pl.id)}
+                          disabled={restoreMutation.isPending}
+                        >
+                          <ArchiveRestore className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Excluir definitivamente"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setHardDeleteTarget(pl)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Arquivar"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setArchiveTarget(pl)}
+                      >
+                        <Archive className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -335,15 +423,26 @@ export default function PlaylistsSonoras() {
           }}
         />
       )}
-      {deleteTarget && (
+      {archiveTarget && (
         <ConfirmDialog
-          open={!!deleteTarget}
+          open={!!archiveTarget}
           title="Arquivar playlist"
-          description={`Arquivar "${deleteTarget.name}"? Dispositivos vinculados não receberão mais áudio.`}
+          description={`Arquivar "${archiveTarget.name}"? Dispositivos/campanhas vinculados não receberão mais áudio dela, mas a playlist pode ser restaurada depois.`}
           confirmLabel="Arquivar"
           variant="destructive"
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={() => archiveMutation.mutate(archiveTarget.id)}
+        />
+      )}
+      {hardDeleteTarget && (
+        <ConfirmDialog
+          open={!!hardDeleteTarget}
+          title="Excluir playlist definitivamente"
+          description={`Excluir "${hardDeleteTarget.name}" de forma definitiva? Esta ação não pode ser desfeita. Se a playlist estiver vinculada a algum dispositivo ou campanha, a exclusão será bloqueada.`}
+          confirmLabel="Excluir definitivamente"
+          variant="destructive"
+          onClose={() => setHardDeleteTarget(null)}
+          onConfirm={() => hardDeleteMutation.mutate(hardDeleteTarget.id)}
         />
       )}
       {bulkDeleteOpen && (
