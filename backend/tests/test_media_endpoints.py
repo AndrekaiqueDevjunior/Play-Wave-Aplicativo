@@ -386,6 +386,7 @@ class TestMediaDelete(unittest.TestCase):
         with patch("api.v1.media.crud_media") as m, \
              patch("api.v1.media._campaigns_using_media", return_value=[fake_campaign]):
             m.get.return_value = media
+            m.get_in_use_references.return_value = {"campaign_playlist_items": 0, "campaigns_legacy": 0}
             resp = client.delete(f"/media/{media.id}")
         self.assertEqual(resp.status_code, 409)
 
@@ -401,6 +402,7 @@ class TestMediaDelete(unittest.TestCase):
              patch("api.v1.media._broadcast_media_changed"), \
              patch("api.v1.media._device_ids_for_campaigns", return_value=set()):
             m.get.return_value = media
+            m.get_in_use_references.return_value = {"campaign_playlist_items": 0, "campaigns_legacy": 0}
             m.remove.return_value = media
             db_mock = MagicMock()
             db_mock.query.return_value.filter.return_value.delete.return_value = 0

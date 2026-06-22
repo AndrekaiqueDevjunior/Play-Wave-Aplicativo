@@ -16,6 +16,7 @@ from core.models import Campaign, Device, Media, MediaStatus, MediaVersion, Play
 from core.schemas_completos import (
     MediaCreate, MediaUpdate, MediaResponse, MediaTypeEnum, MediaStatusEnum, MediaVersionResponse,
     RecomputeAudioDetectionResponse,
+    MediaBulkActionRequest, MediaBulkActionResponse, MediaBulkActionItemResult,
 )
 from crud.entidades import crud_media
 from core.config import settings
@@ -423,7 +424,12 @@ def get_media(
     status: Optional[MediaStatusEnum] = Query(None),
     category: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
-    tenant_id: Optional[str] = Query(None)
+    tenant_id: Optional[str] = Query(None),
+    # SPEC 018 — mesmo padrão das SPECs 016/017: por padrão, mídias
+    # arquivadas não aparecem em nenhuma listagem/seletor de campanha.
+    # include_archived=true mostra também as arquivadas; status explícito
+    # (ex.: status=archived) tem precedência.
+    include_archived: bool = Query(False),
 ):
     """
     Lista mídias com filtros opcionais
@@ -431,7 +437,7 @@ def get_media(
     # Se não for admin, filtra apenas do tenant do usuário
     if current_user.role != "admin" and not tenant_id:
         tenant_id = str(current_user.tenant_id)
-    
+
     # Aplicar filtros específicos
     if media_type:
         media_list = crud_media.get_by_type(db, media_type=media_type)
@@ -448,11 +454,14 @@ def get_media(
         media_list = crud_media.search(db, query=search, skip=skip, limit=limit)
     else:
         media_list = crud_media.get_multi(db, skip=skip, limit=limit)
-    
+
     # Filtrar por tenant se não for admin
     if current_user.role != "admin":
         media_list = [m for m in media_list if str(m.tenant_id) == str(current_user.tenant_id)]
-    
+
+    if not status and not include_archived:
+        media_list = [m for m in media_list if m.status != "archived"]
+
     return media_list
 
 
@@ -791,7 +800,16 @@ def delete_media(
     force: bool = Query(False),
 ):
     """
-    Remove mídia
+    Remove mídia definitivamente.
+
+    SPEC 018 — a checagem de uso agora também conta `CampaignPlaylistItem`
+    (tabela relacional com FK RESTRICT, é o caminho real que o player usa
+    para resolver a campanha), além dos campos legados `Campaign.media_ids`/
+    `media_order` já verificados. `force=True` continua desvinculando os
+    campos legados automaticamente, mas NUNCA remove itens de
+    `CampaignPlaylistItem` — isso exige remoção explícita via
+    `DELETE /campaigns/{id}/items/{item_id}`, pois é uma mudança de conteúdo
+    real da campanha, não um campo de conveniência legado.
     """
     media = crud_media.get(db, id=media_id)
     if not media:
@@ -799,14 +817,25 @@ def delete_media(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mídia não encontrada"
         )
-    
+
     # Verificar permissão
     if current_user.role != "admin" and str(media.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para remover esta mídia"
         )
-    
+
+    refs = crud_media.get_in_use_references(db, media_id=media_id)
+    if refs["campaign_playlist_items"] > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Mídia em uso em playlists de campanha "
+                f"({refs['campaign_playlist_items']} item(s)) e não pode ser excluída "
+                "definitivamente. Remova-a da playlist da campanha antes de excluir."
+            ),
+        )
+
     used_campaigns = _campaigns_using_media(db, media_id=media_id)
     if used_campaigns and not force:
         raise HTTPException(
@@ -831,7 +860,7 @@ def delete_media(
                 os.remove(file_path)
             except Exception:
                 pass  # Ignora erro ao remover arquivo
-    
+
     crud_media.remove(db, id=media_id)
     if changed_campaigns:
         _invalidate_device_playlist_cache(_device_ids_for_campaigns(db, changed_campaigns))
@@ -866,6 +895,122 @@ def update_media_status(
     
     media = crud_media.update_status(db, db_obj=media, status=media_status)
     return {"message": f"Status atualizado para {media_status}"}
+
+
+def _bulk_authorize_media(db: Session, *, media_id: str, current_user: User) -> tuple[Optional[Media], Optional[str]]:
+    """Busca e autoriza uma mídia para uma ação em massa.
+
+    Retorna (media, None) em sucesso, ou (None, motivo) quando a mídia não
+    existe ou o usuário não tem permissão — usado pelos endpoints bulk para
+    reportar falha por item sem interromper o lote inteiro.
+    """
+    media = crud_media.get(db, id=media_id)
+    if not media:
+        return None, "Mídia não encontrada"
+    if current_user.role != "admin" and str(media.tenant_id) != str(current_user.tenant_id):
+        return None, "Sem permissão para esta mídia"
+    return media, None
+
+
+@router.post("/bulk-archive", response_model=MediaBulkActionResponse)
+def bulk_archive_media(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    payload: MediaBulkActionRequest,
+):
+    """
+    Arquiva múltiplas mídias de uma vez.
+
+    SPEC 018 — ação em massa segura: cada item é processado
+    independentemente, então uma falha (404/403) em um item não impede os
+    demais de serem arquivados. Arquivar nunca falha por "em uso" — ao
+    contrário da exclusão definitiva, arquivar é reversível e não remove
+    a mídia de campanhas que ainda a referenciam (ela só some das seleções
+    futuras, ver GET /media com include_archived=false).
+    """
+    results: List[MediaBulkActionItemResult] = []
+    for media_id in payload.media_ids:
+        media, error = _bulk_authorize_media(db, media_id=media_id, current_user=current_user)
+        if error:
+            results.append(MediaBulkActionItemResult(media_id=media_id, success=False, reason=error))
+            continue
+        crud_media.update_status(db, db_obj=media, status="archived")
+        results.append(MediaBulkActionItemResult(media_id=media_id, success=True))
+
+    succeeded = sum(1 for r in results if r.success)
+    return MediaBulkActionResponse(
+        requested=len(payload.media_ids),
+        succeeded=succeeded,
+        failed=len(results) - succeeded,
+        results=results,
+    )
+
+
+@router.post("/bulk-delete", response_model=MediaBulkActionResponse)
+def bulk_delete_media(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    payload: MediaBulkActionRequest,
+):
+    """
+    Exclui definitivamente múltiplas mídias de uma vez.
+
+    SPEC 018 — cada item é processado independentemente: uma mídia em uso
+    (referenciada por CampaignPlaylistItem ou pelos campos legados
+    Campaign.media_ids/media_order) é reportada como falha com o motivo,
+    sem impedir que as demais mídias do lote sejam excluídas. Não há
+    parâmetro `force` no bulk — diferente do DELETE individual, uma ação em
+    massa não deve desvincular campanhas silenciosamente; o usuário precisa
+    arquivar ou desvincular explicitamente antes de tentar excluir em massa.
+    """
+    results: List[MediaBulkActionItemResult] = []
+    for media_id in payload.media_ids:
+        media, error = _bulk_authorize_media(db, media_id=media_id, current_user=current_user)
+        if error:
+            results.append(MediaBulkActionItemResult(media_id=media_id, success=False, reason=error))
+            continue
+
+        refs = crud_media.get_in_use_references(db, media_id=media_id)
+        if refs["campaign_playlist_items"] > 0:
+            results.append(MediaBulkActionItemResult(
+                media_id=media_id,
+                success=False,
+                reason=f"Em uso em {refs['campaign_playlist_items']} item(s) de playlist de campanha",
+            ))
+            continue
+
+        used_campaigns = _campaigns_using_media(db, media_id=media_id)
+        if used_campaigns:
+            results.append(MediaBulkActionItemResult(
+                media_id=media_id,
+                success=False,
+                reason=f"Em uso em {len(used_campaigns)} campanha(s) (vínculo legado)",
+            ))
+            continue
+
+        db.query(PlaybackLog).filter(PlaybackLog.media_id == media_id).delete(synchronize_session=False)
+        db.query(ViewReport).filter(ViewReport.media_id == media_id).delete(synchronize_session=False)
+
+        if media.file_url and media.file_url.startswith("/uploads/"):
+            file_path = media.file_url[1:]
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+
+        crud_media.remove(db, id=media_id)
+        results.append(MediaBulkActionItemResult(media_id=media_id, success=True))
+
+    succeeded = sum(1 for r in results if r.success)
+    return MediaBulkActionResponse(
+        requested=len(payload.media_ids),
+        succeeded=succeeded,
+        failed=len(results) - succeeded,
+        results=results,
+    )
 
 
 @router.get("/statistics/overview")

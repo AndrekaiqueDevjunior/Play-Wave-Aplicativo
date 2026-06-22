@@ -15,6 +15,10 @@ import {
   X,
   RefreshCw,
   Loader2,
+  CheckSquare,
+  Square,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +59,8 @@ import {
   atualizarMidia,
   deletarMidia,
   substituirArquivoMidia,
+  arquivarMidiasEmMassa,
+  excluirMidiasEmMassa,
 } from "@/api/midias";
 import { useToast } from "@/components/ui/use-toast";
 import { assetUrl } from "@/utils/mediaUtils";
@@ -106,6 +112,7 @@ export default function BibliotecaMidias() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [view, setView] = useState("grid");
   const [modalOpen, setModalOpen] = useState(false);
   const [editMedia, setEditMedia] = useState(null);
@@ -116,9 +123,20 @@ export default function BibliotecaMidias() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
+  // SPEC 018 — seleção em massa
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkArchiveOpen, setBulkArchiveOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState(false);
+
   const { data: mediaList = [], isLoading } = useQuery({
     queryKey: ["media"],
-    queryFn: () => listarMidias(),
+    // include_archived=true — SPEC 018: por padrão o backend esconde
+    // arquivadas (para não aparecerem em seletores de campanha), mas esta é
+    // a tela de gerenciamento, onde o admin precisa ver/restaurar
+    // arquivadas via o filtro de status abaixo.
+    queryFn: () => listarMidias({ include_archived: true }),
   });
 
   const categories = [
@@ -132,8 +150,86 @@ export default function BibliotecaMidias() {
       (m.tags || []).some((t) => t.toLowerCase().includes(q));
     const matchType = typeFilter === "all" || m.type === typeFilter;
     const matchCat = categoryFilter === "all" || m.category === categoryFilter;
-    return matchSearch && matchType && matchCat;
+    const matchStatus = statusFilter === "all" || m.status === statusFilter;
+    return matchSearch && matchType && matchCat && matchStatus;
   });
+
+  function toggleSelection(id) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(filtered.map((m) => m.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }
+
+  function describeBulkResult(action, result) {
+    const { requested, succeeded, failed, results } = result;
+    if (failed === 0) {
+      toast({ title: `${succeeded} mídia(s) ${action === "archive" ? "arquivada(s)" : "excluída(s)"}.` });
+      return;
+    }
+    const reasons = results
+      .filter((r) => !r.success)
+      .map((r) => {
+        const media = mediaList.find((m) => m.id === r.media_id);
+        return `${media?.name || r.media_id}: ${r.reason}`;
+      })
+      .join(" · ");
+    toast({
+      title: `${succeeded}/${requested} ${action === "archive" ? "arquivada(s)" : "excluída(s)"}, ${failed} falharam`,
+      description: reasons,
+      variant: failed === requested ? "destructive" : "default",
+    });
+  }
+
+  async function handleBulkArchive() {
+    setBulkLoading(true);
+    try {
+      const result = await arquivarMidiasEmMassa(Array.from(selectedIds));
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      describeBulkResult("archive", result);
+      clearSelection();
+    } catch (error) {
+      toast({
+        title: "Erro ao arquivar em massa",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkLoading(false);
+      setBulkArchiveOpen(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    setBulkLoading(true);
+    try {
+      const result = await excluirMidiasEmMassa(Array.from(selectedIds));
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      describeBulkResult("delete", result);
+      clearSelection();
+    } catch (error) {
+      toast({
+        title: "Erro ao excluir em massa",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkLoading(false);
+      setBulkDeleteOpen(false);
+    }
+  }
 
   const handleSave = async (form) => {
     if (editMedia) {
@@ -161,6 +257,34 @@ export default function BibliotecaMidias() {
       toast({
         title: "Mídia em uso",
         description: error?.message || "Esta mídia está vinculada a campanhas. Remova os vínculos antes de excluir.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRestore = async (media) => {
+    try {
+      await atualizarMidia(media.id, { status: "available" });
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast({ title: "Mídia restaurada." });
+    } catch (error) {
+      toast({
+        title: "Erro ao restaurar",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleArchive = async (media) => {
+    try {
+      await atualizarMidia(media.id, { status: "archived" });
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast({ title: "Mídia arquivada." });
+    } catch (error) {
+      toast({
+        title: "Erro ao arquivar",
+        description: error?.message || "Tente novamente.",
         variant: "destructive",
       });
     }
@@ -204,11 +328,76 @@ export default function BibliotecaMidias() {
             {mediaList.length} arquivo(s) cadastrado(s)
           </p>
         </div>
-        <Button onClick={openNew}>
-          <Plus className="w-4 h-4 mr-2" />
-          Adicionar Mídia
-        </Button>
+        <div className="flex gap-2">
+          {!selectionMode && (
+            <Button variant="outline" onClick={() => setSelectionMode(true)}>
+              <CheckSquare className="w-4 h-4 mr-2" />
+              Selecionar
+            </Button>
+          )}
+          <Button onClick={openNew}>
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar Mídia
+          </Button>
+        </div>
       </div>
+
+      {selectionMode && (
+        <Card className="bg-primary/5 border-primary/20">
+          <div className="p-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-4">
+              <span className="font-medium text-foreground">
+                {selectedIds.size === 0
+                  ? "Nenhuma mídia selecionada"
+                  : `${selectedIds.size} ${selectedIds.size === 1 ? "mídia selecionada" : "mídias selecionadas"}`}
+              </span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={selectAll}>
+                  Selecionar Todas ({filtered.length})
+                </Button>
+                <Button size="sm" variant="outline" onClick={clearSelection}>
+                  Limpar Seleção
+                </Button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setBulkArchiveOpen(true)}
+                    disabled={bulkLoading}
+                  >
+                    {bulkLoading ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Archive className="w-4 h-4 mr-2" />
+                    )}
+                    Arquivar ({selectedIds.size})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setBulkDeleteOpen(true)}
+                    disabled={bulkLoading}
+                  >
+                    {bulkLoading ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4 mr-2" />
+                    )}
+                    Excluir ({selectedIds.size})
+                  </Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
@@ -230,6 +419,18 @@ export default function BibliotecaMidias() {
             <SelectItem value="video">Vídeos</SelectItem>
             <SelectItem value="audio">Áudios</SelectItem>
             <SelectItem value="external_url">URL externa</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-36">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos status</SelectItem>
+            <SelectItem value="available">Disponível</SelectItem>
+            <SelectItem value="processing">Processando</SelectItem>
+            <SelectItem value="error">Com erro</SelectItem>
+            <SelectItem value="archived">Arquivada</SelectItem>
           </SelectContent>
         </Select>
         {categories.length > 0 && (
@@ -284,14 +485,28 @@ export default function BibliotecaMidias() {
             return (
               <Card
                 key={media.id}
-                className="overflow-hidden group hover:shadow-md transition-shadow"
+                className={`overflow-hidden group hover:shadow-md transition-shadow ${
+                  selectedIds.has(media.id) ? "ring-2 ring-primary bg-primary/5" : ""
+                }`}
               >
                 <div className="relative aspect-video bg-muted overflow-hidden">
                   <MediaThumb
                     media={media}
                     className="group-hover:scale-105 transition-transform duration-300"
                   />
-                  <div className="absolute top-2 left-2">
+                  {selectionMode && (
+                    <button
+                      onClick={() => toggleSelection(media.id)}
+                      className="absolute top-2 left-2 w-7 h-7 rounded-md border-2 bg-white/90 flex items-center justify-center z-10"
+                    >
+                      {selectedIds.has(media.id) ? (
+                        <CheckSquare className="w-4 h-4 text-primary" />
+                      ) : (
+                        <Square className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </button>
+                  )}
+                  <div className={`absolute top-2 ${selectionMode ? "left-11" : "left-2"}`}>
                     <Badge
                       variant="secondary"
                       className="text-xs bg-black/60 text-white border-0"
@@ -376,12 +591,23 @@ export default function BibliotecaMidias() {
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuSeparator />
+                        {media.status === "archived" ? (
+                          <DropdownMenuItem onClick={() => handleRestore(media)}>
+                            <ArchiveRestore className="w-4 h-4 mr-2" />
+                            Restaurar
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem onClick={() => handleArchive(media)}>
+                            <Archive className="w-4 h-4 mr-2" />
+                            Arquivar
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           className="text-destructive"
                           onClick={() => setDeleteTarget(media)}
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
-                          Excluir
+                          Excluir definitivamente
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -414,6 +640,7 @@ export default function BibliotecaMidias() {
           <Table>
             <TableHeader>
               <TableRow>
+                {selectionMode && <TableHead className="w-10"></TableHead>}
                 <TableHead>Mídia</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead className="hidden md:table-cell">Duração</TableHead>
@@ -430,7 +657,21 @@ export default function BibliotecaMidias() {
               {filtered.map((media) => {
                 const TypeIcon = TYPE_ICON[media.type] || Image;
                 return (
-                  <TableRow key={media.id}>
+                  <TableRow
+                    key={media.id}
+                    className={selectedIds.has(media.id) ? "bg-primary/5" : ""}
+                  >
+                    {selectionMode && (
+                      <TableCell>
+                        <button onClick={() => toggleSelection(media.id)}>
+                          {selectedIds.has(media.id) ? (
+                            <CheckSquare className="w-4 h-4 text-primary" />
+                          ) : (
+                            <Square className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </button>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-8 rounded bg-muted overflow-hidden shrink-0">
@@ -498,12 +739,23 @@ export default function BibliotecaMidias() {
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
+                          {media.status === "archived" ? (
+                            <DropdownMenuItem onClick={() => handleRestore(media)}>
+                              <ArchiveRestore className="w-4 h-4 mr-2" />
+                              Restaurar
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem onClick={() => handleArchive(media)}>
+                              <Archive className="w-4 h-4 mr-2" />
+                              Arquivar
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => setDeleteTarget(media)}
                           >
                             <Trash2 className="w-4 h-4 mr-2" />
-                            Excluir
+                            Excluir definitivamente
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -540,6 +792,24 @@ export default function BibliotecaMidias() {
         onConfirm={handleDelete}
         title="Excluir mídia?"
         description={`"${deleteTarget?.name}" será removida permanentemente.`}
+      />
+      <ConfirmDialog
+        open={bulkArchiveOpen}
+        onClose={() => setBulkArchiveOpen(false)}
+        onConfirm={handleBulkArchive}
+        title="Arquivar mídias selecionadas?"
+        description={`Arquivar ${selectedIds.size} mídia${selectedIds.size === 1 ? "" : "s"} selecionada${selectedIds.size === 1 ? "" : "s"}? Elas deixam de aparecer nas seleções de campanha e podem ser restauradas depois.`}
+        confirmLabel="Arquivar"
+        variant="destructive"
+      />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirm={handleBulkDelete}
+        title="Excluir mídias selecionadas definitivamente?"
+        description={`Excluir ${selectedIds.size} mídia${selectedIds.size === 1 ? "" : "s"} selecionada${selectedIds.size === 1 ? "" : "s"} de forma definitiva? Esta ação não pode ser desfeita. Mídias em uso por campanhas serão reportadas como falha e não excluídas.`}
+        confirmLabel="Excluir definitivamente"
+        variant="destructive"
       />
 
       {/* Input oculto para substituição de arquivo */}

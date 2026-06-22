@@ -82,3 +82,19 @@ export const deletarMidia = (id, { force = false } = {}) =>
 // SPEC 005 — re-detecta has_audio via ffprobe
 export const recomputarDeteccaoAudio = (id) =>
   apiFetch(`/media/${id}/recompute-audio-detection`, { method: "POST" });
+
+// SPEC 018 — ações em massa: cada item é processado independentemente no
+// backend, então a resposta sempre tem { requested, succeeded, failed,
+// results: [{ media_id, success, reason? }] }, mesmo quando alguns itens
+// falham (em uso, sem permissão, não encontrado).
+export const arquivarMidiasEmMassa = (mediaIds) =>
+  apiFetch("/media/bulk-archive", {
+    method: "POST",
+    body: JSON.stringify({ media_ids: mediaIds }),
+  });
+
+export const excluirMidiasEmMassa = (mediaIds) =>
+  apiFetch("/media/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({ media_ids: mediaIds }),
+  });
