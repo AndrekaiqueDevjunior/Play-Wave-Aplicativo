@@ -222,6 +222,116 @@ describe("AudioManager — playSpot", () => {
     const last = states[states.length - 1];
     expect(last.current).toBe(AUDIO_STATE.SPOT);
   });
+
+  it("'interrupt' toca o spot imediatamente mesmo com a música ainda audível (fundo é interrompido)", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    radio.src = "musica.mp3";
+    radio.paused = false; // música tocando ativamente
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "interrupt");
+
+    expect(am.state.current).toBe(AUDIO_STATE.SPOT);
+    expect(am._pendingSpot).toBeNull();
+  });
+
+  it("'wait_silence' NÃO toca o spot por cima da música ativa — represa como _pendingSpot", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    radio.src = "musica.mp3";
+    radio.paused = false; // música tocando ativamente
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "wait_silence");
+
+    // Spot NÃO deve estar tocando — continua em RADIO, sem chamar play() no spot
+    expect(am.state.current).toBe(AUDIO_STATE.RADIO);
+    expect(spot.play).not.toHaveBeenCalled();
+    expect(am._pendingSpot).toMatchObject({ spotUrl: "jingle.mp3", insertionPolicy: "wait_silence" });
+  });
+
+  it("'wait_silence' toca o spot represado quando a música atual emite 'ended'", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    am.loadRadioPlaylist([{ file_url: "musica1.mp3" }, { file_url: "musica2.mp3" }]);
+    radio.src = "musica1.mp3";
+    radio.paused = false;
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "wait_silence");
+    expect(am._pendingSpot).not.toBeNull();
+
+    // Música termina naturalmente
+    radio.ended = true;
+    radio._trigger("ended");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Spot deve ter sido disparado (current=SPOT) e a fila avançada
+    expect(am.state.current).toBe(AUDIO_STATE.SPOT);
+    expect(am._pendingSpot).toBeNull();
+    expect(am.queue.radioIndex).toBe(1);
+  });
+
+  it("'wait_silence' toca o spot imediatamente quando o fundo já está em silêncio (pausado)", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    radio.src = "musica.mp3";
+    radio.paused = true; // fundo já parado
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "wait_silence");
+
+    expect(am.state.current).toBe(AUDIO_STATE.SPOT);
+    expect(am._pendingSpot).toBeNull();
+  });
+
+  it("'fade_mix' toca o spot imediatamente e reduz volume do fundo (ducking)", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    radio.src = "musica.mp3";
+    radio.paused = false;
+    radio.volume = 1.0;
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "fade_mix");
+
+    expect(am.state.current).toBe(AUDIO_STATE.SPOT);
+    expect(radio.volume).toBe(0.25);
+  });
+
+  it("nunca toca spot e música simultaneamente: 'wait_silence' com fundo já pausado toca o spot direto", async () => {
+    const am = new AudioManager({ fadeMs: 0 });
+    const radio = makeMockAudio();
+    const spot = makeMockAudio();
+    am.initPlayers(radio, null, spot);
+    radio.src = "musica.mp3";
+    radio.paused = true; // já em silêncio (após fade externo, por ex.)
+
+    am.state.current = AUDIO_STATE.RADIO;
+
+    await am.playSpot("jingle.mp3", "wait_silence");
+
+    expect(am.state.current).toBe(AUDIO_STATE.SPOT);
+    expect(am._pendingSpot).toBeNull();
+  });
 });
 
 // ── subscribe / unsubscribe ───────────────────────────────────────────────────

@@ -98,12 +98,19 @@ export function createDesktopExposureTimeScheduler({
   isElectron = false,
   now = () => new Date(),
   logger = console,
+  // SPEC 015 — política WAIT_CONTENT_END: ao chegar o horário do evento,
+  // espera o conteúdo atual terminar antes de minimizar. Opcional para não
+  // quebrar instâncias existentes/testes que não passam essa dependência —
+  // nesse caso o comportamento é o mesmo de antes (minimiza no horário exato).
+  contentGuard = null,
+  onWarning = null, // ({ secondsBefore, text, mediaId }) => void
 }) {
   let nextTimerId = null;
   let restoreTimerId = null;
   let state = EXPOSURE_STATE.RUNNING;
   let lastEvents = [];
   let lastPhase = null;
+  let cancelWaitForEnd = null;
 
   const clearNextTimer = () => {
     if (nextTimerId) {
@@ -121,6 +128,10 @@ export function createDesktopExposureTimeScheduler({
   const stop = () => {
     clearNextTimer();
     clearRestoreTimer();
+    if (cancelWaitForEnd) {
+      cancelWaitForEnd();
+      cancelWaitForEnd = null;
+    }
   };
 
   const beginRestoreCountdown = (durationSeconds) => {
@@ -137,18 +148,7 @@ export function createDesktopExposureTimeScheduler({
     }, durationSeconds * 1000);
   };
 
-  const fire = async (event) => {
-    // Só dispara em RUNNING — evita conflito com SPEC 009 e sobreposição.
-    if (state !== EXPOSURE_STATE.RUNNING) {
-      logger.log(
-        "[desktopExposureTime] skip fire — state is",
-        state,
-        "not RUNNING",
-      );
-      schedule({ events: lastEvents, phase: lastPhase });
-      return;
-    }
-
+  const runMinimize = async (event) => {
     const duration = clampDuration(event.duration_seconds);
     state = EXPOSURE_STATE.MINIMIZING;
 
@@ -173,6 +173,43 @@ export function createDesktopExposureTimeScheduler({
       state = EXPOSURE_STATE.RUNNING;
       schedule({ events: lastEvents, phase: lastPhase });
     }
+  };
+
+  const fire = (event) => {
+    // Só dispara em RUNNING — evita conflito com SPEC 009 e sobreposição.
+    if (state !== EXPOSURE_STATE.RUNNING) {
+      logger.log(
+        "[desktopExposureTime] skip fire — state is",
+        state,
+        "not RUNNING",
+      );
+      schedule({ events: lastEvents, phase: lastPhase });
+      return;
+    }
+
+    if (!contentGuard) {
+      runMinimize(event);
+      return;
+    }
+
+    if (event.show_warning && onWarning) {
+      onWarning({
+        secondsBefore: Number(event.warning_seconds_before || 0),
+        text: event.warning_text || null,
+        mediaId: event.warning_media_id || null,
+      });
+    }
+
+    if (contentGuard.isContentBusy()) {
+      logger.log(
+        "[desktopExposureTime] conteúdo ativo — aguardando fim antes de minimizar",
+        event.name,
+      );
+    }
+    cancelWaitForEnd = contentGuard.onceContentEnd(() => {
+      cancelWaitForEnd = null;
+      runMinimize(event);
+    });
   };
 
   const schedule = ({ events, phase }) => {

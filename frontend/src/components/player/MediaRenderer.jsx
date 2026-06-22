@@ -67,14 +67,54 @@ function videoSnapshot(video, { eventName, media, src, type, extra = {} }) {
   };
 }
 
-export default function MediaRenderer({
+/**
+ * Aquece o cache HTTP do navegador para a próxima mídia da fila, enquanto a
+ * atual ainda está tocando. Sem isso, o vídeo/imagem seguinte só começa a
+ * baixar no instante exato da troca — em conexões lentas ou arquivos grandes
+ * isso aparece como travamento/tela preta nos primeiros segundos do item.
+ *
+ * Não usa <link rel="preload"> (precisaria de `as` correto por tipo e gera
+ * warnings de "preloaded but not used" se o item for pulado/trocado antes da
+ * vez); em vez disso, cria um elemento offscreen real do mesmo tipo, que o
+ * browser já mantém em cache de disco/memória quando o MediaRenderer
+ * principal pedir a mesma URL.
+ */
+function MediaPreloader({ media }) {
+  const type = media ? resolveMediaType(media) : null;
+  const src = media ? resolveMediaUrl(media) : null;
+  if (!src || (type !== "video" && type !== "image" && type !== "audio")) return null;
+
+  const hiddenStyle = { position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" };
+
+  if (type === "video") {
+    return (
+      <video key={`preload-${media.id}`} src={src} preload="auto" muted style={hiddenStyle} aria-hidden="true" />
+    );
+  }
+  if (type === "audio") {
+    return <audio key={`preload-${media.id}`} src={src} preload="auto" muted style={hiddenStyle} aria-hidden="true" />;
+  }
+  return (
+    <img key={`preload-${media.id}`} src={src} alt="" style={hiddenStyle} aria-hidden="true" />
+  );
+}
+
+const MediaRenderer = React.memo(function MediaRenderer({
   media,
+  nextMedia,
   onEnded,
   onError,
   onDebug,
   progress,
   videoMuted = true,
 }) {
+  const progressBarRef = useRef(null);
+  useEffect(() => {
+    if (progressBarRef.current) {
+      progressBarRef.current.style.width = `${(progress ?? 0) * 100}%`;
+    }
+  }, [progress]);
+
   const [visible, setVisible] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [needsGesture, setNeedsGesture] = useState(false);
@@ -296,11 +336,11 @@ export default function MediaRenderer({
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/10">
-        <div
-          className="h-full bg-white/40 transition-all duration-1000 ease-linear"
-          style={{ width: `${(progress ?? 0) * 100}%` }}
-        />
+        <div ref={progressBarRef} className="h-full bg-white/40 transition-all duration-1000 ease-linear" />
       </div>
+      <MediaPreloader media={nextMedia} />
     </div>
   );
-}
+});
+
+export default MediaRenderer;

@@ -25,7 +25,8 @@
       "config.json"
     ],
     "asarUnpack": [
-      "preload.js"
+      "preload.js",
+      "config.json"
     ],
     "extraResources": [
       {

@@ -68,6 +68,11 @@ export class AudioManager {
     this.listeners = [];
     this.fadeTimer = null;
 
+    // Spot represado pela política WAIT_SILENCE: guarda { spotUrl, insertionPolicy,
+    // spotItem } enquanto espera o evento 'ended' da faixa de rádio atual.
+    // null quando não há spot pendente.
+    this._pendingSpot = null;
+
     // audioId -> timestamp da falha (quarentena com TTL, ver _isAudioMarkedFailed)
     this.failedAudioIds = new Map();
     // Conta pulos consecutivos de faixas de rádio sem sucesso — limita a
@@ -225,6 +230,15 @@ export class AudioManager {
     );
   }
 
+  /**
+   * Retorna true se há música/vídeo de fundo audível tocando agora (não pausado,
+   * não terminado). Usado pela política WAIT_SILENCE para decidir entre tocar o
+   * spot imediatamente (fundo já em silêncio) ou represá-lo até o 'ended'.
+   */
+  _isBackgroundActivelyPlaying(bgPlayer) {
+    return !!(bgPlayer && bgPlayer.src && !bgPlayer.paused && !bgPlayer.ended);
+  }
+
   async playSpot(spotUrl, insertionPolicy = 'wait_silence', spotItem = null) {
     if (!this.players.spot) return;
 
@@ -248,6 +262,22 @@ export class AudioManager {
       ? (this.players.radio?.src ? AUDIO_STATE.RADIO : AUDIO_STATE.SILENT)
       : this.state.current;
 
+    const bgPlayer = previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio;
+
+    // WAIT_SILENCE (= WAIT_TRACK_END do SPEC-006): nunca toca o spot por cima
+    // da música. Se o fundo está audível agora, represa o spot e só o toca
+    // quando a faixa de rádio atual terminar (ver _onTrackEnded → 'ended').
+    if (insertionPolicy === 'wait_silence' && this._isBackgroundActivelyPlaying(bgPlayer)) {
+      this._pendingSpot = { spotUrl, insertionPolicy, spotItem };
+      this._logAudio("SPOT_QUEUED", {
+        label: "spot",
+        audioId: spotId,
+        url: spotUrl,
+        reason: "wait_track_end",
+      });
+      return;
+    }
+
     // Cancela listener anterior para evitar retomadas duplicadas
     if (this._spotEndedHandler) {
       this.players.spot.removeEventListener("ended", this._spotEndedHandler);
@@ -255,11 +285,11 @@ export class AudioManager {
     }
 
     // Política de inserção
-    const bgPlayer = previous === AUDIO_STATE.RADIO ? this.players.radio : this.players.mediaAudio;
     if (insertionPolicy === 'interrupt') {
       await this._fadeOut(bgPlayer, this.state.fadeMs);
     } else if (insertionPolicy === 'wait_silence') {
-      // Baixa o volume do fundo para não sobrepor
+      // Fundo já estava parado/em silêncio (ver checagem acima) — apenas
+      // garante volume zerado antes do spot, sem esperar fade longo.
       if (bgPlayer) await this._fadeOut(bgPlayer, this.state.fadeMs);
     } else if (insertionPolicy === 'fade_mix') {
       // Mantém fundo em volume reduzido durante o spot
@@ -361,6 +391,7 @@ export class AudioManager {
    * Silencia tudo
    */
   async silence() {
+    this._pendingSpot = null;
     await this._fadeOut(this.players.radio, this.state.fadeMs);
     await this._fadeOut(this.players.mediaAudio, this.state.fadeMs);
     await this._fadeOut(this.players.spot, this.state.fadeMs);
@@ -644,6 +675,14 @@ export class AudioManager {
       return;
     }
 
+    // Faixa falhou (não terminou naturalmente), mas o fundo já está silencioso
+    // — mesma janela de oportunidade que WAIT_SILENCE espera. Toca o spot
+    // represado agora em vez de deixá-lo preso até a próxima faixa terminar.
+    if (this._pendingSpot) {
+      this._playPendingSpotThenAdvance();
+      return;
+    }
+
     this.nextTrack();
   }
 
@@ -747,7 +786,41 @@ export class AudioManager {
 
   _onTrackEnded(source) {
     if (source === 'radio') {
+      // Faixa terminou: se há spot represado (WAIT_SILENCE), toca-o agora —
+      // o fundo está silencioso, exatamente a janela que essa política espera.
+      // _playPendingSpotThenAdvance cuida de avançar para a próxima faixa
+      // depois (no fim do spot ou se ele falhar ao tocar).
+      if (this._pendingSpot) {
+        this._playPendingSpotThenAdvance();
+        return;
+      }
       this.nextTrack();
+    }
+  }
+
+  /**
+   * Toca o spot represado por WAIT_SILENCE e, ao terminar (ou falhar),
+   * avança a fila de rádio para a próxima faixa.
+   */
+  async _playPendingSpotThenAdvance() {
+    const pending = this._pendingSpot;
+    this._pendingSpot = null;
+    if (!pending) {
+      this.nextTrack();
+      return;
+    }
+
+    this.queue.radioIndex++;
+    if (this.queue.radioIndex >= this.queue.radio.length) {
+      this.queue.radioIndex = 0;
+    }
+
+    // previous = SILENT: o fundo já parou (evento 'ended'); _resumeAfterSpot
+    // vai então tocar a faixa de rádio já avançada via _playRadioByIndex.
+    await this.playSpot(pending.spotUrl, pending.insertionPolicy, pending.spotItem);
+    if (this.state.current !== AUDIO_STATE.SPOT) {
+      // playSpot não conseguiu tocar (falha/quarentena) — segue o fluxo normal.
+      this._playRadioByIndex();
     }
   }
 

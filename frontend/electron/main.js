@@ -12,6 +12,7 @@ const {
   powerSaveBlocker,
   session,
   ipcMain,
+  dialog,
 } = require("electron");
 const path = require("path");
 const os = require("os");
@@ -23,6 +24,13 @@ const { extname } = require("path");
 const DEV_MODE = process.env.NODE_ENV === "development";
 const EXTERNAL_URL = process.env.VITE_PLAYER_URL || null;
 const KIOSK = process.env.PLAYER_KIOSK !== "false";
+const AUTO_BOOT =
+  process.env.PLAYER_AUTO_BOOT === "true" ||
+  process.env.AUTO_BOOT === "true" ||
+  (process.env.PLAYER_AUTO_BOOT !== "false" &&
+    process.env.AUTO_BOOT !== "false" &&
+    !DEV_MODE &&
+    KIOSK);
 
 // Backend URL — pode ser sobrescrita por VITE_BACKEND_URL
 const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:8000";
@@ -211,9 +219,111 @@ function createWindow() {
   if (DEV_MODE) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
 
+async function clearStorage() {
+  await session.defaultSession.clearStorageData({
+    storages: ["localstorage", "cookies", "indexdb", "websql", "serviceworkers", "cachestorage"],
+  });
+}
+
+/**
+ * Verifica se existe sessão anterior salva.
+ *
+ * Em modo kiosk/producao o player precisa iniciar sozinho: preserva storage,
+ * pula prompts nativos e deixa o renderer revalidar token/cache com o backend.
+ * Em desenvolvimento/suporte, ainda permite apagar a sessao manualmente.
+ */
+/**
+ * Arquivo de estado persistido em userData:
+ *   { version: "3.1.0", paired: true/false }
+ *
+ * - paired=false  → app abriu mas ainda não completou o pareamento
+ * - paired=true   → dispositivo já foi vinculado com sucesso
+ *
+ * O renderer notifica via IPC "player:paired" quando o pareamento é concluído.
+ */
+function readState() {
+  const stateFile = path.join(app.getPath("userData"), ".pw_state");
+  try { return JSON.parse(fs.readFileSync(stateFile, "utf-8")); } catch { return null; }
+}
+
+function writeState(obj) {
+  const stateFile = path.join(app.getPath("userData"), ".pw_state");
+  try { fs.writeFileSync(stateFile, JSON.stringify(obj), "utf-8"); } catch { /* ignora */ }
+}
+
+async function handleSessionOnStartup() {
+  const currentVersion = app.getVersion();
+  const state = readState();
+
+  console.log("[electron] PLAYER_AUTO_BOOT_STARTED", {
+    autoBoot: AUTO_BOOT,
+    kiosk: KIOSK,
+    packaged: app.isPackaged,
+    hasState: !!state,
+    paired: !!state?.paired,
+    stateVersion: state?.version || null,
+    currentVersion,
+  });
+
+  // Primeira execução ou nova versão.
+  if (!state || state.version !== currentVersion) {
+    if (AUTO_BOOT) {
+      console.log(
+        `[electron] PLAYER_AUTO_BOOT_SESSION_FOUND — ${!state ? "sem .pw_state" : `atualização ${state.version} → ${currentVersion}`} — preservando storage`,
+      );
+      writeState({ version: currentVersion, paired: !!state?.paired });
+      return;
+    }
+
+    console.log(`[electron] ${!state ? "primeira execução" : `atualização ${state.version} → ${currentVersion}`} — limpando storage`);
+    try { await clearStorage(); } catch { /* ignora */ }
+    writeState({ version: currentVersion, paired: false });
+    return;
+  }
+
+  // Mesma versão e nunca completou pareamento — não pergunta, abre limpo
+  if (!state.paired) {
+    if (AUTO_BOOT) {
+      console.log("[electron] PLAYER_AUTO_BOOT_PAIRING_REQUIRED — abrindo sem limpar storage");
+      return;
+    }
+
+    console.log("[electron] sessão sem pareamento completo — abrindo limpo");
+    try { await clearStorage(); } catch { /* ignora */ }
+    return;
+  }
+
+  if (AUTO_BOOT) {
+    console.log("[electron] PLAYER_AUTO_BOOT_SUCCESS — mantendo sessão atual sem prompt");
+    return;
+  }
+
+  // Dispositivo já foi pareado anteriormente — pergunta ao usuário
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Manter sessão atual", "Apagar e começar do zero"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "PlayWave Player",
+    message: "Sessão anterior encontrada",
+    detail: "Este dispositivo já foi vinculado anteriormente.\n\nDeseja manter a sessão ou apagar tudo e gerar um novo código de pareamento?",
+  });
+
+  if (response === 1) {
+    console.log("[electron] usuário resetou sessão");
+    try { await clearStorage(); } catch (e) { console.error("[electron] falha ao limpar storage:", e); }
+    writeState({ version: currentVersion, paired: false });
+  } else {
+    console.log("[electron] usuário manteve sessão");
+  }
+}
+
 app.whenReady().then(async () => {
   PLAYER_URL = EXTERNAL_URL;
   if (!PLAYER_URL) await startLocalServer();
+
+  await handleSessionOnStartup();
+
   // Bloqueia screensaver / suspensão do sistema (24/7)
   powerSaveId = powerSaveBlocker.start("prevent-display-sleep");
   console.log("[electron] powerSaveBlocker started, id:", powerSaveId);
@@ -266,6 +376,13 @@ function runShell(cmd) {
     });
   });
 }
+
+// Marcado pelo renderer quando o pareamento é concluído com sucesso.
+ipcMain.on("player:paired", () => {
+  console.log("[electron] pareamento concluído — marcando estado");
+  const currentVersion = app.getVersion();
+  writeState({ version: currentVersion, paired: true });
+});
 
 // Legado — alias de `player:restart_app`. Mantém compatibilidade com bundles
 // antigos que ainda enviam `player:restart` via `electronBridge.restart()`.

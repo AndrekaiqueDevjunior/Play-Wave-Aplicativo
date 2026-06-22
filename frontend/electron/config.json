@@ -1,4 +1,8 @@
 {
-  "backend_url": "http://localhost:8000",
-  "environment": "production"
+  "backend_url": "https://playwave.com.br",
+  "environment": "production",
+  "device_id": null,
+  "device_token": null,
+  "device_code": null,
+  "token_version": null
 }

@@ -1288,6 +1288,14 @@ def update_device_desktop_exposure_config(
         device.desktop_exposure_duration_seconds = payload["duration_seconds"]
     if "restore_fullscreen" in payload:
         device.desktop_exposure_restore_fullscreen = payload["restore_fullscreen"]
+    if "show_warning" in payload:
+        device.desktop_exposure_show_warning = payload["show_warning"]
+    if "warning_seconds_before" in payload:
+        device.desktop_exposure_warning_seconds_before = payload["warning_seconds_before"]
+    if "warning_text" in payload:
+        device.desktop_exposure_warning_text = payload["warning_text"]
+    if "warning_media_id" in payload:
+        device.desktop_exposure_warning_media_id = payload["warning_media_id"] or None
 
     self_enabled = bool(device.desktop_exposure_enabled)
     _validate_desktop_exposure_config(

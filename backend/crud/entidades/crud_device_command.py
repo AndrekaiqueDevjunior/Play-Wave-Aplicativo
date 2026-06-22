@@ -11,11 +11,16 @@ DEFAULT_EXPIRES_IN_SECONDS = 600  # 10 minutos
 MIN_EXPIRES_IN_SECONDS = 60
 MAX_EXPIRES_IN_SECONDS = 3600
 STUCK_SENT_TIMEOUT_MINUTES = 2
+STUCK_EXECUTING_TIMEOUT_MINUTES = 5
 
+# Statuses que ainda representam "trabalho por fazer" — usados para expiração
+# e recuperação de comandos travados.
 PENDING_STATUSES = (
     DeviceCommandStatus.PENDING,
     DeviceCommandStatus.SENT,
-    DeviceCommandStatus.EXECUTED,
+    DeviceCommandStatus.RECEIVED,
+    DeviceCommandStatus.EXECUTING,
+    DeviceCommandStatus.EXECUTED,  # legado: alias de RECEIVED
 )
 
 
@@ -108,15 +113,15 @@ class CRUDDeviceCommand:
             cmd.executed_at = now
             cmd.error_message = "Comando expirou sem ACK do player"
 
-        # 2) Reclamar comandos travados em SENT por > N minutos
+        # 2a) Reclamar comandos travados em SENT por > N minutos
         # (player pode ter caido entre SENT e o RECEIVED ACK).
-        stuck_cutoff = now - timedelta(minutes=STUCK_SENT_TIMEOUT_MINUTES)
+        stuck_sent_cutoff = now - timedelta(minutes=STUCK_SENT_TIMEOUT_MINUTES)
         stuck = (
             db.query(DeviceCommand)
             .filter(
                 DeviceCommand.device_id == device_id,
                 DeviceCommand.status == DeviceCommandStatus.SENT,
-                DeviceCommand.sent_at < stuck_cutoff,
+                DeviceCommand.sent_at < stuck_sent_cutoff,
                 or_(
                     DeviceCommand.expires_at.is_(None),
                     DeviceCommand.expires_at > now,
@@ -128,7 +133,34 @@ class CRUDDeviceCommand:
             cmd.status = DeviceCommandStatus.PENDING
             cmd.sent_at = None
 
-        if stuck or expired:
+        # 2b) Reclamar comandos travados em EXECUTING/RECEIVED/EXECUTED por > N min.
+        # Ocorre quando o player morreu após marcar received/executing mas antes do ACK
+        # (ex: restart_app — o processo é encerrado durante a execução).
+        stuck_exec_cutoff = now - timedelta(minutes=STUCK_EXECUTING_TIMEOUT_MINUTES)
+        stuck_exec = (
+            db.query(DeviceCommand)
+            .filter(
+                DeviceCommand.device_id == device_id,
+                DeviceCommand.status.in_([
+                    DeviceCommandStatus.EXECUTING,
+                    DeviceCommandStatus.RECEIVED,
+                    DeviceCommandStatus.EXECUTED,
+                ]),
+                DeviceCommand.started_at < stuck_exec_cutoff,
+                or_(
+                    DeviceCommand.expires_at.is_(None),
+                    DeviceCommand.expires_at > now,
+                ),
+            )
+            .all()
+        )
+        for cmd in stuck_exec:
+            cmd.status = DeviceCommandStatus.PENDING
+            cmd.sent_at = None
+            cmd.started_at = None
+            cmd.received_at = None
+
+        if stuck or stuck_exec or expired:
             db.commit()
 
         # 3) Listar pending ainda validos (expires_at NULL ou futuro).
@@ -181,14 +213,14 @@ class CRUDDeviceCommand:
         return obj
 
     def mark_received(self, db: Session, *, obj: DeviceCommand) -> DeviceCommand:
-        obj.status = DeviceCommandStatus.EXECUTED
+        obj.status = DeviceCommandStatus.RECEIVED
         obj.received_at = datetime.utcnow()
         db.commit()
         db.refresh(obj)
         return obj
 
     def mark_executing(self, db: Session, *, obj: DeviceCommand) -> DeviceCommand:
-        obj.status = DeviceCommandStatus.EXECUTED
+        obj.status = DeviceCommandStatus.EXECUTING
         obj.started_at = datetime.utcnow()
         db.commit()
         db.refresh(obj)

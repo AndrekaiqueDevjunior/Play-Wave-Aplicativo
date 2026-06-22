@@ -98,6 +98,10 @@ export default function DispositivoDetalhe() {
     interval_seconds: 10,
     duration_seconds: 10,
     restore_fullscreen: true,
+    // SPEC 015 — aviso visual antes de minimizar (política WAIT_CONTENT_END).
+    show_warning: false,
+    warning_seconds_before: 15,
+    warning_text: "",
   });
   const [desktopExposureTestLoading, setDesktopExposureTestLoading] =
     useState(false);
@@ -166,6 +170,10 @@ export default function DispositivoDetalhe() {
       duration_seconds: device.desktop_exposure_config.duration_seconds ?? 10,
       restore_fullscreen:
         device.desktop_exposure_config.restore_fullscreen ?? true,
+      show_warning: device.desktop_exposure_config.show_warning ?? false,
+      warning_seconds_before:
+        device.desktop_exposure_config.warning_seconds_before ?? 15,
+      warning_text: device.desktop_exposure_config.warning_text ?? "",
     });
   }, [device?.id, device?.desktop_exposure_config]);
 
@@ -1015,6 +1023,70 @@ export default function DispositivoDetalhe() {
             </Label>
           </div>
 
+          {/* SPEC 015 — aviso visual configurável antes de minimizar. */}
+          <div className="flex items-center gap-3">
+            <Checkbox
+              id="desktop-exposure-warning"
+              checked={desktopExposureConfig.show_warning}
+              disabled={!desktopExposureConfig.enabled}
+              onCheckedChange={(value) =>
+                setDesktopExposureConfig((prev) => ({
+                  ...prev,
+                  show_warning: value,
+                }))
+              }
+            />
+            <Label htmlFor="desktop-exposure-warning" className="text-sm">
+              Exibir aviso antes de minimizar
+            </Label>
+          </div>
+
+          {desktopExposureConfig.show_warning && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pl-7">
+              <div className="space-y-1">
+                <Label htmlFor="desktop-exposure-warning-seconds">
+                  Segundos antes de minimizar
+                </Label>
+                <Input
+                  id="desktop-exposure-warning-seconds"
+                  type="number"
+                  min={0}
+                  max={120}
+                  value={desktopExposureConfig.warning_seconds_before ?? ""}
+                  disabled={!desktopExposureConfig.enabled}
+                  onChange={(event) =>
+                    setDesktopExposureConfig((prev) => ({
+                      ...prev,
+                      warning_seconds_before:
+                        event.target.value === ""
+                          ? null
+                          : Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="desktop-exposure-warning-text">
+                  Texto do aviso
+                </Label>
+                <Input
+                  id="desktop-exposure-warning-text"
+                  type="text"
+                  maxLength={255}
+                  placeholder="A tela será minimizada em breve"
+                  value={desktopExposureConfig.warning_text ?? ""}
+                  disabled={!desktopExposureConfig.enabled}
+                  onChange={(event) =>
+                    setDesktopExposureConfig((prev) => ({
+                      ...prev,
+                      warning_text: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               type="button"
@@ -1026,6 +1098,9 @@ export default function DispositivoDetalhe() {
                   interval_seconds: 10,
                   duration_seconds: 10,
                   restore_fullscreen: true,
+                  show_warning: false,
+                  warning_seconds_before: 15,
+                  warning_text: "",
                 })
               }
             >

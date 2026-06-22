@@ -36,6 +36,7 @@ import { spotScheduleResolver } from "@/player-core/spotScheduleResolver";
 import { onForceRepair } from "@/player-core/repair";
 import { createWindowExposureScheduler } from "@/player-core/windowExposureScheduler";
 import { createDesktopExposureTimeScheduler } from "@/player-core/desktopExposureTimeScheduler";
+import { createContentGuard } from "@/player-core/contentGuard";
 import Platform, {
   acquireWakeLock,
   releaseWakeLock,
@@ -176,10 +177,58 @@ function PlayerDebugOverlay({ data }) {
   );
 }
 
+// Se o Electron injetou credenciais pré-pareadas via config.json, pré-popula
+// o localStorage antes do primeiro render para pular a tela de pareamento.
+(function seedPrepairedCredentials() {
+  try {
+    const pre = window.__ELECTRON__?.prepaired;
+    if (!pre?.device_id || !pre?.device_token) return;
+    if (localStorage.getItem("pw_player_device_id")) return; // já pareado, não sobrescreve
+    PairingStorage.save({
+      code:         pre.device_code  || null,
+      id:           pre.device_id,
+      token:        pre.device_token,
+      tokenVersion: pre.token_version ?? null,
+    });
+    console.log("[player] credenciais pré-pareadas carregadas do config.json");
+  } catch {
+    // silencioso — falha não deve impedir o player de carregar
+  }
+})();
+
+// Emite log estruturado de boot — nunca loga token ou payload sensível.
+function bootLog(event, extra = {}) {
+  const saved = PairingStorage.load();
+  console.log(`[player] ${event}`, {
+    event,
+    device_id:      saved.id   || null,
+    tenant_id:      null, // não disponível no renderer
+    boot_mode:      window.__ELECTRON__ ? "electron" : "web",
+    platform:       window.__ELECTRON__?.platform || navigator?.platform || "unknown",
+    player_version: PLAYER_VERSION,
+    online:         navigator?.onLine ?? true,
+    ...extra,
+  });
+}
+
 export default function Player() {
   const saved = PairingStorage.load();
   const isOnline = useOnlineStatus();
   const debugMode = useMemo(getDebugMode, []);
+
+  // Emite log de boot na inicialização do componente.
+  // Executa uma única vez (referência estável via ref de controle).
+  const bootLoggedRef = useRef(false);
+  if (!bootLoggedRef.current) {
+    bootLoggedRef.current = true;
+    const hasSession = !!(saved.id && saved.token);
+    bootLog("PLAYER_AUTO_BOOT_STARTED", { has_session: hasSession });
+    if (hasSession) {
+      bootLog("PLAYER_AUTO_BOOT_SESSION_FOUND", { device_id: saved.id });
+    } else {
+      bootLog("PLAYER_AUTO_BOOT_PAIRING_REQUIRED");
+    }
+  }
 
   // Generate or reuse pairing code (setter usado em renovação por expiração ou forceRepair)
   const [pairingCode, setPairingCode] = useState(
@@ -251,6 +300,12 @@ export default function Player() {
   const startTimeRef = useRef(null);
   const desktopExposureSchedulerRef = useRef(null);
   const desktopExposureTimeSchedulerRef = useRef(null);
+  // SPEC 015 — política WAIT_CONTENT_END: instância única compartilhada
+  // pelos dois schedulers de minimizar (intervalo e horário), criada uma vez
+  // e nunca recriada — eles guardam a referência via closure no useEffect de
+  // criação dos schedulers.
+  const contentGuardRef = useRef(createContentGuard());
+  const [minimizeWarning, setMinimizeWarning] = useState(null);
   const deviceTokenRef = useRef(deviceToken);
   const sseRef = useRef(null);
   const failedMediaIdsRef = useRef(new Set());
@@ -496,6 +551,7 @@ export default function Player() {
           setDeviceToken(res.device_token);
           setForceRepairReason(null);
           deviceTokenRef.current = res.device_token;
+          window.__ELECTRON__?.notifyPaired?.();
           setPhase("loading");
         } else if (res?.status === "expired") {
           // SPEC 004 — código expirou sem confirmação: gera um novo código.
@@ -580,7 +636,13 @@ export default function Player() {
         setCurrentIndex(0);
         setProgress(0);
         setPhase("playing");
-        PlaylistCache.set(id, { medias, timestamp: Date.now() }).catch(() => {});
+        PlaylistCache.set(id, { medias, timestamp: Date.now(), schedule_version: res?.campaign?.config_version || null }).catch(() => {});
+        bootLog("PLAYER_AUTO_BOOT_SUCCESS", {
+          device_id: id,
+          campaign_id: res?.campaign?.id || null,
+          schedule_version: res?.campaign?.config_version || null,
+          media_count: medias.length,
+        });
         return true;
       }
 
@@ -592,6 +654,11 @@ export default function Player() {
         setCurrentIndex(0);
         setProgress(0);
         setPhase("playing");
+        bootLog("PLAYER_AUTO_BOOT_SUCCESS", {
+          device_id: id,
+          campaign_id: res?.campaign?.id || null,
+          mode: "radio_only",
+        });
         return true;
       }
 
@@ -617,7 +684,45 @@ export default function Player() {
         const isAuthError =
           msg.includes("401") || msg.includes("403") || msg.includes("Token");
         if (isAuthError) {
-          console.error("[player] auth error, clearing saved pairing:", msg);
+          // Antes de desistir e pedir novo pareamento, tenta uma revalidação
+          // após 3s — erros 401 transientes (rede instável, servidor reiniciando)
+          // não devem forçar o cliente a parear de novo.
+          console.warn("[player] auth error on playlist load — waiting 3s before clearing session:", msg);
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const retry = await loadPlaylist(deviceId, deviceToken);
+            if (retry) return; // revalidou com sucesso, já entrou em playing
+          } catch (retryErr) {
+            const retryMsg = retryErr?.message || "";
+            const stillAuth = retryMsg.includes("401") || retryMsg.includes("403") || retryMsg.includes("Token");
+            if (!stillAuth) {
+              // Segundo erro não é de auth — trata como rede/offline
+              const cached = await PlaylistCache.get(deviceId).catch(() => null);
+              const cachedMedias = (cached?.medias || []).filter((m) => isMediaCurrentlyPlayable(m));
+              if (cachedMedias.length > 0) {
+                bootLog("PLAYER_AUTO_BOOT_OFFLINE_CACHE_USED", {
+                  device_id: deviceId,
+                  cached_at: cached?.timestamp || null,
+                  media_count: cachedMedias.length,
+                  reason: retryMsg,
+                });
+                setPlaylist(cachedMedias);
+                setCurrentIndex(0);
+                setProgress(0);
+                setPhase("playing");
+                return;
+              }
+              setPhase("no_campaign");
+              return;
+            }
+          }
+          // Dois erros consecutivos de auth → session realmente inválida
+          bootLog("PLAYER_AUTO_BOOT_FAILED", {
+            device_id: deviceId,
+            reason: "auth_error_persistent",
+            error: msg,
+          });
+          console.error("[player] auth error persists after retry — clearing saved pairing");
           PairingStorage.clear();
           setDeviceId(null);
           setDeviceToken(null);
@@ -632,6 +737,13 @@ export default function Player() {
             isMediaCurrentlyPlayable(m),
           );
           if (cachedMedias.length > 0) {
+            bootLog("PLAYER_AUTO_BOOT_OFFLINE_CACHE_USED", {
+              device_id: deviceId,
+              cached_at: cached?.timestamp || null,
+              schedule_version: cached?.schedule_version || null,
+              media_count: cachedMedias.length,
+              reason: msg,
+            });
             console.log(
               "[player] using cached playlist (",
               cachedMedias.length,
@@ -642,6 +754,11 @@ export default function Player() {
             setProgress(0);
             setPhase("playing");
           } else {
+            bootLog("PLAYER_AUTO_BOOT_FAILED", {
+              device_id: deviceId,
+              reason: "no_cache_no_network",
+              error: msg,
+            });
             setPhase("no_campaign");
           }
         }
@@ -857,6 +974,10 @@ export default function Player() {
   const advanceMedia = useCallback(
     (reason = "advance") => {
       if (!playlist.length) return;
+      // SPEC 015 — o conteúdo atual terminou (natural, por duração ou por
+      // falha): libera qualquer minimização represada esperando este exato
+      // momento (WAIT_CONTENT_END).
+      contentGuardRef.current.notifyContentEnded();
       const currentMedia = playlist[currentIndex];
       // Para playback log: usa tempo real desde o startTime quando duration não
       // foi definida (vídeo/áudio com duração natural).
@@ -920,10 +1041,18 @@ export default function Player() {
     [advanceMedia, currentIndex, playlist],
   );
 
+  // SPEC 015 — aviso visual configurável exibido antes de minimizar (quando
+  // a config tiver show_warning=true). Compartilhado pelos dois schedulers.
+  const handleMinimizeWarning = useCallback(({ secondsBefore, text, mediaId }) => {
+    setMinimizeWarning({ secondsBefore, text, mediaId, shownAt: Date.now() });
+  }, []);
+
   useEffect(() => {
     desktopExposureSchedulerRef.current = createWindowExposureScheduler({
       executeCommand,
       isElectron: Platform.isElectron,
+      contentGuard: contentGuardRef.current,
+      onWarning: handleMinimizeWarning,
     });
     return () => desktopExposureSchedulerRef.current?.stop();
   }, []);
@@ -966,6 +1095,8 @@ export default function Player() {
         PlayerState.set("desktop_exposure_pending", action),
       loadPending: () => PlayerState.get("desktop_exposure_pending"),
       isElectron: Platform.isElectron,
+      contentGuard: contentGuardRef.current,
+      onWarning: handleMinimizeWarning,
     });
     desktopExposureTimeSchedulerRef.current = scheduler;
     scheduler.recover();
@@ -978,6 +1109,17 @@ export default function Player() {
       phase,
     });
   }, [desktopExposureEvents, phase]);
+
+  // SPEC 015 — esconde o aviso de minimização automaticamente. Janela de
+  // exibição = secondsBefore configurado (mínimo 5s de garantia visual) —
+  // tempo suficiente mesmo quando o conteúdo é de duração natural e o fim
+  // real demora mais que o esperado.
+  useEffect(() => {
+    if (!minimizeWarning) return;
+    const visibleMs = Math.max(minimizeWarning.secondsBefore || 0, 5) * 1000;
+    const timer = setTimeout(() => setMinimizeWarning(null), visibleMs);
+    return () => clearTimeout(timer);
+  }, [minimizeWarning]);
 
   // ── 5a. Stop condition: end_date / schedule_end_time / loop_count ────────
   // Programa um setTimeout cravado para o instante de parada e força recarga.
@@ -1042,7 +1184,12 @@ export default function Player() {
 
   // ── 5. Progress + media advance ──────────────────────────────────────────
   useEffect(() => {
-    if (phase !== "playing" || playlist.length === 0) return;
+    if (phase !== "playing" || playlist.length === 0) {
+      // SPEC 015 — fora da fase "playing" ou sem playlist não há conteúdo
+      // protegido: os schedulers de minimizar podem agir livremente.
+      contentGuardRef.current.update({ phase, hasPlaylist: playlist.length > 0 });
+      return;
+    }
     const media = playlist[currentIndex];
     // Vídeo/áudio sem duration definida tocam até o fim natural — o avanço
     // vem do onEnded do <video>/<audio>. Para esses casos não programamos
@@ -1055,10 +1202,19 @@ export default function Player() {
     setProgress(0);
 
     if (usesNaturalDuration) {
+      // SPEC 015 — fim desconhecido de antemão (vídeo/áudio de duração
+      // natural): contentGuard sabe que há conteúdo ativo mas não estima
+      // endsAt. notifyContentEnded() é disparado em advanceMedia.
+      contentGuardRef.current.update({ phase, hasPlaylist: true, endsAt: null });
       return undefined;
     }
 
     const duration = (media?.duration || 10) * 1000;
+    contentGuardRef.current.update({
+      phase,
+      hasPlaylist: true,
+      endsAt: startTimeRef.current + duration,
+    });
     progressRef.current = setInterval(() => {
       const elapsed = Date.now() - startTimeRef.current;
       setProgress(Math.min(elapsed / duration, 1));
@@ -1247,6 +1403,8 @@ export default function Player() {
         const res = await sendHeartbeat(deviceId, deviceToken, {
           status: phase === "playing" ? "online" : "waiting",
           player_version: PLAYER_VERSION,
+          boot_mode: window.__ELECTRON__ ? "electron" : "web",
+          os_platform: window.__ELECTRON__?.platform || navigator?.platform || null,
           ip_address: null,
           storage_used: 0,
           current_campaign_id: campaignId,
@@ -1493,6 +1651,7 @@ export default function Player() {
         <div className="fixed inset-0 bg-black">
           <MediaRenderer
             media={current}
+            nextMedia={nextMedia}
             progress={progress}
             videoMuted={finalVideoMuted}
             onDebug={setVideoDebug}
@@ -1629,6 +1788,7 @@ export default function Player() {
     <div className="fixed inset-0 bg-black">
       <MediaRenderer
         media={current}
+        nextMedia={nextMedia}
         progress={progress}
         videoMuted={finalVideoMuted}
         onDebug={setVideoDebug}
@@ -1655,6 +1815,11 @@ export default function Player() {
           </svg>
           <p className="text-white text-lg font-semibold">Toque para iniciar o áudio</p>
           <p className="text-white/50 text-xs">O navegador bloqueou a reprodução automática</p>
+        </div>
+      )}
+      {minimizeWarning && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-black/80 text-white text-sm backdrop-blur-sm z-40 pointer-events-none">
+          {minimizeWarning.text || "A tela será minimizada em breve"}
         </div>
       )}
       <PlayerDebugOverlay data={debugData} />

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWindowExposureScheduler } from "../player-core/windowExposureScheduler.js";
+import { createContentGuard } from "../player-core/contentGuard.js";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -104,5 +105,144 @@ describe("window exposure scheduler", () => {
 
     expect(executeCommand).not.toHaveBeenCalled();
     expect(scheduler.isScheduled()).toBe(false);
+  });
+});
+
+describe("window exposure scheduler — WAIT_CONTENT_END (SPEC 015)", () => {
+  it("com contentGuard e conteúdo ativo, espera o fim antes de executar show_desktop", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(executeCommand).not.toHaveBeenCalled();
+
+    guard.notifyContentEnded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+
+    scheduler.stop();
+  });
+
+  it("com contentGuard e sem conteúdo ativo, executa imediatamente no intervalo", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "no_campaign", hasPlaylist: false });
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+
+    scheduler.stop();
+  });
+
+  it("dispara onWarning quando show_warning está ativo na config", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+    const onWarning = vi.fn();
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+      onWarning,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+        show_warning: true,
+        warning_seconds_before: 10,
+        warning_text: "Aviso",
+        warning_media_id: "media-1",
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onWarning).toHaveBeenCalledWith({
+      secondsBefore: 10,
+      text: "Aviso",
+      mediaId: "media-1",
+    });
+
+    guard.notifyContentEnded();
+    scheduler.stop();
+  });
+
+  it("stop() cancela a espera por fim de conteúdo pendente", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    scheduler.stop();
+    guard.notifyContentEnded();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(executeCommand).not.toHaveBeenCalled();
   });
 });
