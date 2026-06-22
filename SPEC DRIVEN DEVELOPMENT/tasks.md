@@ -17,6 +17,152 @@ Este arquivo transforma `requirements.md` e `design.md` em backlog executavel. U
 - [x] Definir convencao de IDs para proximas specs: `SPEC-XXX` no SDD interno, pasta `docs/specs/NNN-nome-curto/` para detalhe.
 - [x] Criar template de spec para novas features (em `docs/specs/_TEMPLATE/`).
 
+## SPEC 011 — Player Auto Boot
+
+Objetivo: fazer o player iniciar automaticamente em modo loja/TV, restaurando sessao, pareamento ou cache valido sem clique humano.
+
+**Detalhamento em `docs/specs/011-player-auto-boot/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md`.
+- [x] Criar fila sequencial em `SPEC DRIVEN DEVELOPMENT/2026-06-fila-specs-criticas-player-radio-windows.md`.
+- [x] Auditar estado atual do player, storage, pareamento, sync e heartbeat.
+- [x] Preencher arquivos impactados reais.
+- [x] Implementar boot automatico — AUTO_BOOT no main.js (Electron), bootLog() e revalidacao de sessao no Player.jsx, PlaylistCache com timestamp.
+- [x] Validar criterios de aceite — 11/11 testes Playwright passando em VPS (testes-playwave/tests/player-auto-boot.spec.ts).
+- [x] Somente entao abrir SPEC 012 — Reinicio Remoto sem Confirmacao — gate liberado.
+
+## SPEC 012 — Reinicio Remoto sem Confirmacao
+
+Objetivo: executar comando remoto de reiniciar app/player sem confirmacao manual no dispositivo, com ciclo de vida rastreavel.
+
+**Detalhamento em `docs/specs/012-reinicio-remoto-sem-confirmacao/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md`.
+- [x] Iniciar implementacao — gate SPEC 011 concluido.
+- [x] Auditar estado atual de comandos, polling/SSE, bridge Electron e UI do gerenciador.
+- [x] Bug corrigido: mark_received/mark_executing usavam EXECUTED em vez de RECEIVED/EXECUTING no crud_device_command.py.
+- [x] Bug corrigido: PENDING_STATUSES expandido para incluir RECEIVED e EXECUTING; recuperacao de comandos travados em EXECUTING adicionada.
+- [x] Validar criterios de aceite — 12/12 testes Playwright passando em VPS (testes-playwave/tests/player-restart-remoto.spec.ts).
+- [!] Pendente: deploy do crud_device_command.py corrigido na VPS.
+- [x] Somente entao abrir SPEC 013 — Spot da Radio sem Sobreposicao — gate liberado.
+
+## SPEC 013 — Spot da Radio sem Sobreposicao
+
+Objetivo: garantir que o spot da radio nunca toque por cima da musica, respeitando a politica de insercao configurada (`wait_silence` por padrao).
+
+**Detalhamento em `docs/specs/013-spot-radio-sem-sobreposicao/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-006).
+- [x] Iniciar implementacao — gate SPEC 012 concluido.
+- [x] Auditar backend (`AudioSpotInsertionPolicy`, `spot_resolver.py`, `audio_spot_scheduler.py`) — ja adequado, sem mudanca necessaria.
+- [x] Bug corrigido: `wait_silence` em `audioManager.js playSpot()` fazia fade-out e tocava o spot imediatamente, igual a `interrupt` — nunca esperava o fim real da musica.
+- [x] Implementado `_pendingSpot` + `_isBackgroundActivelyPlaying()`: represa o spot quando o fundo esta ativo e so toca no evento `ended` (ou em falha do fundo, via `_handleRadioTrackFailure`).
+- [x] Validar criterios de aceite — 29/29 testes unitarios `audio_manager.test.js` passando; 17/17 testes relacionados sem regressao.
+- [ ] Pendente: teste manual em hardware real (Electron/Windows) validando ausencia de overlap audivel.
+- [x] Somente entao abrir SPEC 014 — Video Estavel no Player — gate liberado.
+
+## SPEC 014 — Video Estavel no Player
+
+Objetivo: eliminar travamento/picotamento de video no player, garantindo preload da proxima midia e evitando re-render desnecessario do componente de video.
+
+**Detalhamento em `docs/specs/014-video-estavel-no-player/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-008).
+- [x] Iniciar implementacao — gate SPEC 013 concluido.
+- [x] Auditar backend (Range requests, Cache-Control, metadata ffprobe) e Electron (hardware acceleration) — ja adequados, descartados como causa.
+- [x] Bug corrigido: `MediaRenderer.jsx` nao tinha preload da proxima midia — navegador so comecava a baixar o arquivo no instante exato da troca.
+- [x] Bug corrigido: `MediaRenderer` sem `React.memo` — re-render do `Player.jsx` (heartbeat/spot/radio) recalculava `renderContent()` mesmo sem mudanca real de midia.
+- [x] Implementado `MediaPreloader` (elemento oculto video/audio/img para `nextMedia`) e barra de progresso via ref/DOM direto (compativel com o memo).
+- [x] Validar criterios de aceite — 7/7 testes novos `media_renderer.test.jsx`; 68/68 testes relacionados sem regressao; 147/150 na suite completa (3 falhas pre-existentes nao relacionadas).
+- [ ] Pendente: validacao visual em hardware real de loja (TV/mini-PC Windows) com video pesado/animacao.
+- [x] Somente entao abrir SPEC 015 — Minimizar Windows sem Cortar Conteudo — gate liberado.
+
+## SPEC 015 — Minimizar Windows sem Cortar Conteudo
+
+Objetivo: garantir que a minimizacao programada da janela no Windows espere o conteudo atual terminar antes de minimizar (politica WAIT_CONTENT_END), com aviso visual configuravel opcional.
+
+**Detalhamento em `docs/specs/015-minimizar-windows-sem-cortar-conteudo/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-007).
+- [x] Iniciar implementacao — gate SPEC 014 concluido.
+- [x] Auditar bridge Electron, comandos backend e os dois schedulers client-side existentes (`windowExposureScheduler.js` por intervalo, `desktopExposureTimeScheduler.js` por horario) — infraestrutura de minimizar ja madura (SPEC 009/010), faltava apenas a politica de espera.
+- [x] Decisao confirmada com o usuario: adaptar os schedulers existentes via dependencia `contentGuard` em vez de criar comandos `minimize_screen`/`restore_screen` novos; incluir aviso visual nesta mesma SPEC.
+- [x] Criado `frontend/src/player-core/contentGuard.js` — modulo puro que represa minimizacao até `notifyContentEnded()` (chamado por `advanceMedia` em `Player.jsx`).
+- [x] Adaptados os dois schedulers para aceitar `contentGuard`/`onWarning` opcionais, mantendo retrocompatibilidade total (sem guard = comportamento antigo).
+- [x] Adicionados campos de aviso visual (`show_warning`, `warning_seconds_before`, `warning_text`, `warning_media_id`) ao `Device` (model, schema, endpoint, migration `20260618_1100`).
+- [x] Adicionada UI de configuracao do aviso em `DispositivoDetalhe.jsx` e overlay de aviso no `Player.jsx`.
+- [x] Validar criterios de aceite — 79/79 testes novos+relacionados de frontend passando; 170/173 na suite completa (3 falhas pre-existentes nao relacionadas); backend validado por sintaxe (`pytest` indisponivel no ambiente local, sem FastAPI instalado).
+- [ ] Pendente: validacao manual em hardware Windows real e deploy da migration na VPS.
+- [x] Somente entao abrir SPEC 016 — Faixas de Audio Arquivar/Excluir — gate liberado.
+
+## SPEC 016 — Faixas de Audio Arquivar/Restaurar/Excluir
+
+Objetivo: diferenciar Arquivar/Restaurar/Excluir definitivamente para faixas de audio, escondendo arquivadas por padrao em todos os seletores e tornando a exclusao definitiva segura.
+
+**Detalhamento em `docs/specs/016-faixas-audio-arquivar-excluir/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-003).
+- [x] Iniciar implementacao — gate SPEC 015 concluido.
+- [x] Auditar model `AudioTrack`, endpoint `GET/DELETE /audio/tracks`, CRUD, FKs (`AudioFolderTrack`/`AudioPlaylistItem`/`AudioSpot` com `ondelete=RESTRICT`), resolucao do player e UI de gerenciamento.
+- [x] Achado real: excluir ja fazia hard delete de verdade; o bug era leak de filtro (arquivadas apareciam em seletores) + UI sem distincao Arquivar/Excluir + delete sem checagem de uso amigavel.
+- [x] Decisao confirmada com o usuario: corrigir filtros + adicionar checagem de uso antes do delete + adicionar `archived_at` nesta mesma SPEC.
+- [x] Backend: `include_archived` em `GET /audio/tracks` (exclui arquivadas por padrao), `get_in_use_references()` + bloqueio 409 em `DELETE`, `archived_at` sincronizado no `update()` (cobre o fluxo real `PUT` usado pela UI), migration aditiva `20260618_1200`.
+- [x] Frontend: `FaixasAudio.jsx` com acoes separadas Arquivar/Restaurar/Excluir definitivamente, dois dialogs de confirmacao distintos.
+- [x] Validar criterios de aceite — 170/173 na suite completa do frontend (sem regressao); 11 testes novos de backend validados por sintaxe (`pytest` indisponivel no ambiente local).
+- [ ] Pendente: validacao manual end-to-end com banco real e deploy da migration na VPS.
+- [x] Somente entao abrir SPEC 017 — Playlist Sonora Arquivar/Excluir — gate liberado.
+
+## SPEC 017 — Playlist Sonora Arquivar/Restaurar/Excluir
+
+Objetivo: aplicar a Playlist Sonora (AudioPlaylist) o mesmo padrao de Arquivar/Restaurar/Excluir ja corrigido para faixas na SPEC 016.
+
+**Detalhamento em `docs/specs/017-playlist-sonora-arquivar-excluir/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-004).
+- [x] Iniciar implementacao — gate SPEC 016 concluido.
+- [x] Auditar model `AudioPlaylist`, FKs diretas (`Device.audio_playlist_id`/`Campaign.audio_playlist_id`, sem ondelete, diferente das tabelas de juncao usadas por faixas), resolucao do player e UI de gerenciamento.
+- [x] Achado real: mesmo leak de filtro da SPEC 016, mais um endpoint secundario (`audio/devices.py`, sem uso pelo frontend atual) que nao filtrava playlist arquivada — o resolver principal do player (`api/v1/devices.py`) ja estava correto, confirmado por leitura cuidadosa antes de alterar.
+- [x] Decisao confirmada com o usuario: bloquear playlist arquivada no resolver do player (nao so avisar na UI) + checagem de uso antes do delete (nao desvincular automaticamente).
+- [x] Backend: `include_archived` em `GET /audio/playlists`, `get_in_use_references()` (conta Device/Campaign via FK direta) + bloqueio 409 em `DELETE`, `archived_at` sincronizado no `update()`, filtro de status corrigido no endpoint secundario, migration aditiva `20260618_1300`.
+- [x] Frontend: `PlaylistsSonoras.jsx` ganhou filtro de status (antes inexistente) e acoes separadas Arquivar/Restaurar/Excluir definitivamente.
+- [x] Validar criterios de aceite — 170/173 na suite completa do frontend (sem regressao); 11 testes novos de backend validados por sintaxe.
+- [ ] Pendente: validacao manual end-to-end com banco real e deploy da migration na VPS.
+- [x] Somente entao abrir SPEC 018 — Midias com Exclusao em Massa — gate liberado.
+
+## SPEC 018 — Midias: Exclusao/Arquivamento em Massa
+
+Objetivo: permitir selecao multipla na tela de Midias para arquivar/excluir em lote, criando a capacidade de arquivamento que nao existia para Media e corrigindo a checagem de uso para cobrir CampaignPlaylistItem.
+
+**Detalhamento em `docs/specs/018-midias-exclusao-em-massa/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md` (SPEC-009).
+- [x] Iniciar implementacao — gate SPEC 017 concluido.
+- [x] Auditar model `Media` (sem ARCHIVED/archived_at, diferente de AudioTrack/AudioPlaylist), endpoint `GET/DELETE /media`, checagem de uso existente, e UI de gerenciamento.
+- [x] Achado real: Media nao tinha capacidade de arquivar (lacuna mais fundamental que SPEC 016/017); checagem de uso existente so olhava Campaign.media_ids/media_order (legado), nao CampaignPlaylistItem (relacional, FK RESTRICT, caminho real do player); BibliotecaMidias.jsx sem nenhum padrao de selecao em massa.
+- [x] Decisao confirmada com o usuario: criar archived_at + MediaStatus.ARCHIVED nesta SPEC (nao esperar SPEC 020) + corrigir checagem de uso para cobrir CampaignPlaylistItem (reaproveitada pelo bulk delete).
+- [x] Backend: `include_archived` em `GET /media`, `get_in_use_references()` (checagem dupla relacional+legado), bloqueio em `DELETE` mesmo com force=true quando ha CampaignPlaylistItem, novos `POST /media/bulk-archive` e `POST /media/bulk-delete` (cada item processado independentemente, sem force no bulk), migration aditiva `20260618_1400`.
+- [x] Frontend: `BibliotecaMidias.jsx` ganhou modo de selecao (checkbox grid+lista, selecionar todas, limpar), barra de acoes em lote, filtro de status, acoes individuais Arquivar/Restaurar (antes so existia "Excluir" que era na verdade a unica acao).
+- [x] Validar criterios de aceite — 170/173 na suite completa do frontend (sem regressao); 12 testes novos de backend validados por sintaxe.
+- [ ] Pendente: validacao manual end-to-end com banco real e deploy da migration na VPS.
+- [x] Somente entao abrir SPEC 019 — Usuarios com Senha/Convite — gate liberado.
+
+## SPEC 019 — Usuarios: Senha Manual ou Convite por E-mail
+
+Objetivo: permitir que o admin escolha, ao criar um usuario, entre definir uma senha manualmente ou enviar um convite por e-mail para o proprio usuario definir a senha; bloquear login enquanto o convite estiver pendente; adicionar fluxo de "esqueci minha senha".
+
+**Detalhamento em `docs/specs/019-usuarios-senha-convite/`.**
+
+- [x] Criar SPEC separada a partir de `SPEC DRIVEN DEVELOPMENT/2026-06-correcoes-player-radio-windows.md`.
+- [x] Iniciar implementacao — gate SPEC 018 concluido.
+- [x] Auditar model `User`, `POST /users/`, `POST /api/auth/login`, infraestrutura de e-mail (inexistente) e `UserLog`/`UserLogAction` (reaproveitavel).
+- [x] Achado real: `login()` quebrava (excecao nao tratada) em vez de devolver 401 limpo quando `password_hash` fosse `None` — bug pre-existente exposto pela necessidade desta SPEC de permitir usuarios sem senha.
+- [!] `AskUserQuestion` falhou repetidamente nesta sessao — seguido com defaults de menor risco (SMTP generico com fallback de log; `account_status` mantido como string solta), documentados em `design.md` para reconfirmacao posterior com o usuario.
+- [x] Backend: `password_hash` nullable + `invite_token/invite_expires_at/invite_sent_at/password_reset_token/password_reset_expires_at`, `backend/services/email_service.py` (SMTP com fallback de log), `generate_secure_token`/`token_expiry` em `core/auth.py`, `UserCreate` com senha opcional + `send_invite`, novos endpoints `POST /users/{id}/resend-invite`, `POST /api/auth/accept-invite`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, `login` corrigido, migration aditiva `20260619_0900`.
+- [x] Frontend: `ConfigUsuario.jsx` com seletor "convite por e-mail vs senha manual" (removida geracao client-side de senha temporaria), acao "Reenviar convite", status `pending_invite`, paginas publicas `AceitarConvite.jsx`/`EsqueciSenha.jsx`/`RedefinirSenha.jsx`, link "Esqueci minha senha" no `Login.jsx`, `AuthContext.setSession()` para autenticar sem round-trip extra.
+- [x] Validar criterios de aceite — 170/173 na suite completa do frontend (sem regressao); teste novo de backend (`test_user_invite_password_reset.py`) revisado manualmente linha a linha (execucao automatizada bloqueada por ambiente sem fastapi + falha intermitente de ferramenta Bash nesta sessao).
+- [ ] Pendente: validacao manual end-to-end com banco real, deploy da migration na VPS, configuracao de SMTP real em producao, reconfirmacao das decisoes de escopo tomadas sem `AskUserQuestion`.
+- [ ] Somente entao abrir SPEC 020 — Padrao Arquivamento vs Exclusao.
+
 ## SPEC-DOC-007 — Roadmap Integrado Midias, Radio e Player
 
 Objetivo: consolidar auditoria e plano tecnico das melhorias solicitadas, reaproveitando SPECs ja implementadas/parciais e separando radio indoor v2 em fases seguras.
