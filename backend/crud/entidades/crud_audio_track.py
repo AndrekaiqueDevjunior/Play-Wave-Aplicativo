@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -60,12 +61,51 @@ class CRUDAudioTrack(CRUDBase[AudioTrack, AudioTrackCreate, AudioTrackUpdate]):
             .all()
         )
     
+    def update(self, db: Session, *, db_obj: AudioTrack, obj_in) -> AudioTrack:
+        # SPEC 016 — archived_at acompanha o enum `status` sempre que ele
+        # muda, seja via PUT genérico (fluxo real usado pela UI hoje,
+        # `atualizarFaixa`) ou via update_status() abaixo. Setado ao entrar
+        # em ARCHIVED, limpo ao saír (restore para active/inactive) — evita
+        # que o timestamp fique dessincronizado dependendo de qual endpoint
+        # foi usado para arquivar/restaurar.
+        update_data = obj_in if isinstance(obj_in, dict) else obj_in.dict(exclude_unset=True)
+        if "status" in update_data and update_data["status"] is not None:
+            new_status = update_data["status"]
+            new_status = new_status.value if hasattr(new_status, "value") else new_status
+            db_obj.archived_at = datetime.utcnow() if new_status == "archived" else None
+        return super().update(db, db_obj=db_obj, obj_in=obj_in)
+
     def update_status(self, db: Session, *, db_obj: AudioTrack, status: str) -> AudioTrack:
-        db_obj.status = status
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+        return self.update(db, db_obj=db_obj, obj_in={"status": status})
+
+    def get_in_use_references(self, db: Session, *, track_id: str) -> dict:
+        """Retorna onde a faixa esta em uso (playlists, pastas, spots), para
+        bloquear exclusao definitiva com uma mensagem clara em vez de deixar
+        a constraint RESTRICT do banco estourar um IntegrityError genérico.
+        """
+        from core.models import AudioPlaylistItem, AudioFolderTrack, AudioSpot
+
+        playlist_count = (
+            db.query(AudioPlaylistItem)
+            .filter(AudioPlaylistItem.track_id == track_id)
+            .count()
+        )
+        folder_count = (
+            db.query(AudioFolderTrack)
+            .filter(AudioFolderTrack.track_id == track_id)
+            .count()
+        )
+        spot_count = (
+            db.query(AudioSpot)
+            .filter(AudioSpot.track_id == track_id)
+            .count()
+        )
+        return {
+            "playlists": playlist_count,
+            "folders": folder_count,
+            "spots": spot_count,
+            "in_use": (playlist_count + folder_count + spot_count) > 0,
+        }
     
     def get_statistics(self, db: Session, *, tenant_id: str = None) -> dict:
         query = db.query(AudioTrack)

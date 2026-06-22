@@ -77,7 +77,14 @@ def get_audio_tracks(
     category: Optional[AudioTrackCategoryEnum] = Query(None),
     category_id: Optional[str] = Query(None),
     status: Optional[AudioTrackStatusEnum] = Query(None),
-    tenant_id: Optional[str] = Query(None)
+    tenant_id: Optional[str] = Query(None),
+    # SPEC 016 — por padrão, faixas arquivadas não aparecem em nenhuma
+    # listagem operacional (seletor de playlist/rádio, lista do admin).
+    # include_archived=true é a forma explícita de ver arquivadas (ex.: para
+    # restaurar). Quando `status` é passado explicitamente, respeita o filtro
+    # pedido em vez de aplicar o default — permite continuar consultando
+    # "status=archived" diretamente quando necessário.
+    include_archived: bool = Query(False),
 ):
     """
     Lista faixas de áudio com filtros opcionais
@@ -96,6 +103,8 @@ def get_audio_tracks(
         query = query.filter(AudioTrack.category_id == category_id)
     if status:
         query = query.filter(AudioTrack.status == status.value)
+    elif not include_archived:
+        query = query.filter(AudioTrack.status != "archived")
     if search:
         like = f"%{search}%"
         query = query.filter(
@@ -352,7 +361,11 @@ def delete_audio_track(
     track_id: str
 ):
     """
-    Remove faixa de áudio
+    Remove faixa de áudio definitivamente.
+
+    SPEC 016 — bloqueia a exclusão com 409 e mensagem clara quando a faixa
+    está em uso (playlist, pasta de rádio ou spot), em vez de deixar a
+    constraint RESTRICT do banco estourar um IntegrityError genérico (500).
     """
     track = crud_audio_track.get(db, id=track_id)
     if not track:
@@ -360,14 +373,26 @@ def delete_audio_track(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Faixa de áudio não encontrada"
         )
-    
+
     # Verificar permissão
     if current_user.role != "admin" and str(track.tenant_id) != str(current_user.tenant_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para remover esta faixa"
         )
-    
+
+    refs = crud_audio_track.get_in_use_references(db, track_id=track_id)
+    if refs["in_use"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Faixa em uso e não pode ser excluída definitivamente "
+                f"(playlists: {refs['playlists']}, pastas: {refs['folders']}, "
+                f"spots: {refs['spots']}). Arquive a faixa ou remova-a dos "
+                "locais que a utilizam antes de excluir."
+            ),
+        )
+
     # Remover arquivo físico se existir
     if track.file_url and track.file_url.startswith("/uploads/"):
         file_path = track.file_url[1:]  # Remove o /
@@ -376,7 +401,7 @@ def delete_audio_track(
                 os.remove(file_path)
             except Exception:
                 pass  # Ignora erro ao remover arquivo
-    
+
     _notify_track_changed(db, track_id, reason="track.deleted")
     crud_audio_track.remove(db, id=track_id)
     return {"message": "Faixa de áudio removida com sucesso"}

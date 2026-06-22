@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listarFaixas, atualizarFaixa, listarCategoriasAudio } from "@/api/audio";
+import { listarFaixas, atualizarFaixa, deletarFaixa, listarCategoriasAudio } from "@/api/audio";
 import { assetUrl } from "@/utils/mediaUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,8 @@ import {
   Square,
   X,
   Tag,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import AudioTrackFormModal from "@/components/audio/AudioTrackFormModal";
 import AudioMultipleUploadModal from "@/components/audio/AudioMultipleUploadModal";
@@ -66,7 +68,8 @@ export default function FaixasAudio() {
   const [multipleUploadOpen, setMultipleUploadOpen] = useState(false);
   const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
   const audioRef = useRef(null);
   
@@ -78,7 +81,11 @@ export default function FaixasAudio() {
     queryKey: ["audio-tracks"],
     // limit no teto do backend: a página filtra/busca no client e não pode
     // perder faixas que ficam fora da página padrão de 100 itens.
-    queryFn: () => listarFaixas({ limit: 1000 }),
+    // include_archived=true — SPEC 016: por padrão o backend esconde
+    // arquivadas (para não aparecerem em seletores de playlist/rádio), mas
+    // esta é a tela de gerenciamento, onde o admin precisa ver/restaurar
+    // arquivadas via o filtro de status já existente abaixo.
+    queryFn: () => listarFaixas({ limit: 1000, include_archived: true }),
   });
 
   const { data: categories = [] } = useQuery({
@@ -102,11 +109,11 @@ export default function FaixasAudio() {
     return categoryLabels[track.category] || track.category;
   }
 
-  const deleteMutation = useMutation({
+  const archiveMutation = useMutation({
     mutationFn: (id) => atualizarFaixa(id, { status: "archived" }),
     onSuccess: () => {
       qc.invalidateQueries(["audio-tracks"]);
-      setDeleteTarget(null);
+      setArchiveTarget(null);
       toast({ title: "Faixa arquivada." });
     },
     onError: (err) => {
@@ -115,6 +122,39 @@ export default function FaixasAudio() {
         err?.message ||
         (typeof err === "string" ? err : "Erro ao arquivar faixa.");
       toast({ title: "Erro ao arquivar", description: msg, variant: "destructive" });
+    },
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id) => atualizarFaixa(id, { status: "active" }),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-tracks"]);
+      toast({ title: "Faixa restaurada." });
+    },
+    onError: (err) => {
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao restaurar faixa.");
+      toast({ title: "Erro ao restaurar", description: msg, variant: "destructive" });
+    },
+  });
+
+  const hardDeleteMutation = useMutation({
+    mutationFn: (id) => deletarFaixa(id),
+    onSuccess: () => {
+      qc.invalidateQueries(["audio-tracks"]);
+      setHardDeleteTarget(null);
+      toast({ title: "Faixa excluída definitivamente." });
+    },
+    onError: (err) => {
+      // Backend retorna 409 com mensagem clara quando a faixa está em uso
+      // (playlist/pasta/spot) — ver crud_audio_track.get_in_use_references.
+      const msg =
+        err?.detail ||
+        err?.message ||
+        (typeof err === "string" ? err : "Erro ao excluir faixa.");
+      toast({ title: "Não foi possível excluir", description: msg, variant: "destructive" });
     },
   });
 
@@ -467,14 +507,38 @@ export default function FaixasAudio() {
                     >
                       <Edit2 className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => setDeleteTarget(track)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {track.status === "archived" ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Restaurar"
+                          onClick={() => restoreMutation.mutate(track.id)}
+                          disabled={restoreMutation.isPending}
+                        >
+                          <ArchiveRestore className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Excluir definitivamente"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setHardDeleteTarget(track)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Arquivar"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setArchiveTarget(track)}
+                      >
+                        <Archive className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -506,15 +570,26 @@ export default function FaixasAudio() {
         open={categoryDrawerOpen}
         onOpenChange={setCategoryDrawerOpen}
       />
-      {deleteTarget && (
+      {archiveTarget && (
         <ConfirmDialog
-          open={!!deleteTarget}
+          open={!!archiveTarget}
           title="Arquivar faixa"
-          description={`Arquivar "${deleteTarget.name}"? A faixa será removida das playlists ativas.`}
+          description={`Arquivar "${archiveTarget.name}"? A faixa deixa de aparecer nas seleções de playlist/rádio e pode ser restaurada depois.`}
           confirmLabel="Arquivar"
           variant="destructive"
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={() => archiveMutation.mutate(archiveTarget.id)}
+        />
+      )}
+      {hardDeleteTarget && (
+        <ConfirmDialog
+          open={!!hardDeleteTarget}
+          title="Excluir faixa definitivamente"
+          description={`Excluir "${hardDeleteTarget.name}" de forma definitiva? Esta ação não pode ser desfeita. Se a faixa estiver em uso em alguma playlist, pasta de rádio ou spot, a exclusão será bloqueada.`}
+          confirmLabel="Excluir definitivamente"
+          variant="destructive"
+          onClose={() => setHardDeleteTarget(null)}
+          onConfirm={() => hardDeleteMutation.mutate(hardDeleteTarget.id)}
         />
       )}
     </div>
