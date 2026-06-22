@@ -10,6 +10,7 @@
 
 # Guia de deploy com credenciais SSH/produção — mantido apenas localmente
 DEPLOY_VPS.md
+acesso vps.txt
 
 # Diretório do agente Claude Code
 .claude/
@@ -61,6 +62,7 @@ MANIFEST
 # VIRTUAL ENVIRONMENTS
 # ===========================================
 venv/
+.venv/
 env/
 ENV/
 env.bak/
@@ -196,3 +198,6 @@ frontend/android/**/*.keystore
 frontend/android/**/release.keystore
 frontend/android/.gradle/
 frontend/android/**/build/
+.playwright-mcp/
+frontend/test-results/
+testes-playwave/.env.vps
