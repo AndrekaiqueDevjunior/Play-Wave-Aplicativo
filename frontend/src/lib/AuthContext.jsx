@@ -201,6 +201,17 @@ export function AuthProvider({ children }) {
     return userData;
   }, []);
 
+  // Define a sessão a partir de uma resposta de auth já obtida (ex.: aceitar
+  // convite, redefinir senha) — evita repetir um segundo POST /login.
+  const setSession = useCallback((authResponse, remember = false) => {
+    const token = authResponse?.access_token;
+    const userData = authResponse?.user;
+    if (!token || !userData) return;
+    storeSession(token, userData, remember);
+    setUser(userData);
+    setIsAuthenticated(true);
+  }, []);
+
   // Logout — notifica o backend e limpa sessão local
   const logout = useCallback(async () => {
     const token = getStoredToken();
@@ -250,6 +261,7 @@ export function AuthProvider({ children }) {
         sessionExpired,
         dismissSessionExpired,
         login,
+        setSession,
         logout,
         getToken,
         hasRole,

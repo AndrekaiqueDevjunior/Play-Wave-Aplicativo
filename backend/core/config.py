@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     OPERATOR_INITIAL_EMAIL: str = "operador@playwave.com"
     OPERATOR_INITIAL_PASSWORD: str = "Troque@456!"
 
+    # E-mail (SPEC 019 — convite e reset de senha)
+    # Quando SMTP_HOST não está configurado, o serviço de e-mail apenas loga
+    # o conteúdo (modo dev/fallback) em vez de falhar a criação do usuário.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: str = "no-reply@playwave.com"
+    SMTP_USE_TLS: bool = True
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+    INVITE_TOKEN_EXPIRE_HOURS: int = 72
+    PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 2
+
     def get_allowed_origins(self) -> List[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 

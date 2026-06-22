@@ -60,6 +60,9 @@ import Apresentacao from "@/pages/Apresentacao";
 
 // Login
 import Login from "@/pages/Login";
+import AceitarConvite from "@/pages/AceitarConvite";
+import EsqueciSenha from "@/pages/EsqueciSenha";
+import RedefinirSenha from "@/pages/RedefinirSenha";
 
 function isNativePlayerShell() {
   if (typeof window === "undefined") return false;
@@ -79,6 +82,9 @@ function App() {
             <Routes>
             {/* Pública */}
             <Route path="/login" element={<Login />} />
+            <Route path="/aceitar-convite" element={<AceitarConvite />} />
+            <Route path="/esqueci-senha" element={<EsqueciSenha />} />
+            <Route path="/redefinir-senha" element={<RedefinirSenha />} />
 
             {/* Player de TV — autenticação de device, sem layout admin */}
             {nativePlayerShell && <Route path="/" element={<Player />} />}

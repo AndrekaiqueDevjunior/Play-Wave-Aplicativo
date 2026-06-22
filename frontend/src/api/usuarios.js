@@ -22,4 +22,28 @@ export const alterarRoleUsuario = (id, role) =>
 export const alterarStatusUsuario = (id, is_active) =>
   apiFetch(`/users/${id}/status`, { method: "PATCH", body: JSON.stringify({ is_active }) });
 
+export const reenviarConviteUsuario = (id) =>
+  apiFetch(`/users/${id}/resend-invite`, { method: "POST" });
+
+export const aceitarConvite = (token, password) =>
+  apiFetch("/api/auth/accept-invite", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+    noAuth: true,
+  });
+
+export const solicitarResetSenha = (email) =>
+  apiFetch("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+    noAuth: true,
+  });
+
+export const confirmarResetSenha = (token, password) =>
+  apiFetch("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+    noAuth: true,
+  });
+
 export const buscarMe = () => apiFetch("/api/auth/me", { noAuth: false });

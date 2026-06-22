@@ -42,6 +42,7 @@ import {
   criarUsuario,
   atualizarUsuario,
   deletarUsuario,
+  reenviarConviteUsuario,
 } from "@/api/usuarios";
 import { criarLog } from "@/api/userLogs";
 import { useToast } from "@/components/ui/use-toast";
@@ -61,6 +62,7 @@ import {
   ClipboardList,
   Search,
   Trash2,
+  MailWarning,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -89,13 +91,6 @@ async function registrarLog(targetUserId, targetEmail, action, performedBy, deta
   }
 }
 
-function gerarSenhaTemporaria(tamanho = 10) {
-  const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  const bytes = new Uint32Array(tamanho);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (n) => alfabeto[n % alfabeto.length]).join("");
-}
-
 export default function ConfigUsuarios() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -104,8 +99,15 @@ export default function ConfigUsuarios() {
   const [filterStatus, setFilterStatus] = useState("all");
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [invite, setInvite] = useState({ name: "", email: "", role: "operator" });
+  const [invite, setInvite] = useState({
+    name: "",
+    email: "",
+    role: "operator",
+    accessMode: "invite", // "invite" (e-mail) | "password" (definida pelo admin)
+    password: "",
+  });
   const [inviteSaving, setInviteSaving] = useState(false);
+  const [resendingId, setResendingId] = useState(null);
 
   const [editUser, setEditUser] = useState(null);
   const [blockUser, setBlockUser] = useState(null);
@@ -136,43 +138,68 @@ export default function ConfigUsuarios() {
   const handleInvite = async () => {
     setInviteSaving(true);
     try {
-      const password = gerarSenhaTemporaria();
       const emailNormalizado = invite.email.trim().toLowerCase();
-      const created = await criarUsuario({
+      const sendInvite = invite.accessMode === "invite";
+      const payload = {
         name: invite.name.trim(),
         email: emailNormalizado,
         role: invite.role,
-        password,
-        is_active: true,
-        account_status: "active",
-      });
+        send_invite: sendInvite,
+      };
+      if (!sendInvite) {
+        payload.password = invite.password;
+      }
+      const created = await criarUsuario(payload);
       await registrarLog(
         created?.id || "pending",
         emailNormalizado,
         "invite",
         me?.email || "admin",
-        `Convite para ${invite.name} (${invite.role})`,
+        sendInvite
+          ? `Convite por e-mail para ${invite.name} (${invite.role})`
+          : `Usuário criado com senha definida pelo admin para ${invite.name} (${invite.role})`,
       );
-      try {
-        await navigator.clipboard?.writeText(password);
-      } catch {
-        /* clipboard pode estar indisponível em contexto inseguro */
-      }
       toast({
         title: "Usuário criado!",
-        description: `Senha temporária de ${emailNormalizado}: ${password} (copiada para a área de transferência)`,
+        description: sendInvite
+          ? `Um e-mail de convite foi enviado para ${emailNormalizado}.`
+          : `${emailNormalizado} já pode acessar com a senha definida.`,
       });
       setInviteOpen(false);
-      setInvite({ name: "", email: "", role: "operator" });
+      setInvite({ name: "", email: "", role: "operator", accessMode: "invite", password: "" });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     } catch (err) {
       toast({
-        title: "Erro ao convidar usuário",
+        title: "Erro ao criar usuário",
         description: err?.message || "Não foi possível criar o usuário.",
         variant: "destructive",
       });
     } finally {
       setInviteSaving(false);
+    }
+  };
+
+  const handleResendInvite = async (user) => {
+    setResendingId(user.id);
+    try {
+      await reenviarConviteUsuario(user.id);
+      await registrarLog(
+        user.id,
+        user.email,
+        "resend_invite",
+        me?.email || "admin",
+        "Convite reenviado",
+      );
+      toast({ title: "Convite reenviado!", description: `Novo e-mail enviado para ${user.email}.` });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    } catch (err) {
+      toast({
+        title: "Erro ao reenviar convite",
+        description: err?.message || "Não foi possível reenviar o convite.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingId(null);
     }
   };
 
@@ -357,6 +384,7 @@ export default function ConfigUsuarios() {
                   <SelectItem value="active">Ativos</SelectItem>
                   <SelectItem value="inactive">Inativos</SelectItem>
                   <SelectItem value="blocked">Bloqueados</SelectItem>
+                  <SelectItem value="pending_invite">Convite pendente</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -365,12 +393,12 @@ export default function ConfigUsuarios() {
               <DialogTrigger asChild>
                 <Button>
                   <Plus className="w-4 h-4 mr-2" />
-                  Convidar Usuário
+                  Novo Usuário
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Convidar Usuário</DialogTitle>
+                  <DialogTitle>Novo Usuário</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 pt-2">
                   <div className="space-y-2">
@@ -410,6 +438,37 @@ export default function ConfigUsuarios() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label>Como conceder acesso</Label>
+                    <Select
+                      value={invite.accessMode}
+                      onValueChange={(v) => setInvite({ ...invite, accessMode: v, password: "" })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="invite">Enviar convite por e-mail</SelectItem>
+                        <SelectItem value="password">Definir senha agora</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {invite.accessMode === "invite"
+                        ? "O usuário recebe um e-mail com um link para criar a própria senha."
+                        : "Você define a senha inicial; o usuário poderá trocá-la depois."}
+                    </p>
+                  </div>
+                  {invite.accessMode === "password" && (
+                    <div className="space-y-2">
+                      <Label>Senha</Label>
+                      <Input
+                        type="password"
+                        value={invite.password}
+                        onChange={(e) => setInvite({ ...invite, password: e.target.value })}
+                        placeholder="Mínimo de 6 caracteres"
+                      />
+                    </div>
+                  )}
                   <div className="flex justify-end gap-3">
                     <Button
                       variant="outline"
@@ -419,10 +478,15 @@ export default function ConfigUsuarios() {
                     </Button>
                     <Button
                       onClick={handleInvite}
-                      disabled={inviteSaving || !invite.email || !invite.name}
+                      disabled={
+                        inviteSaving ||
+                        !invite.email ||
+                        !invite.name ||
+                        (invite.accessMode === "password" && invite.password.length < 6)
+                      }
                     >
                       <Send className="w-4 h-4 mr-2" />
-                      {inviteSaving ? "Enviando..." : "Enviar Convite"}
+                      {inviteSaving ? "Criando..." : "Criar Usuário"}
                     </Button>
                   </div>
                 </div>
@@ -557,12 +621,22 @@ export default function ConfigUsuarios() {
                                   <Pencil className="w-4 h-4 mr-2" />
                                   Editar dados
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleResetPassword(user)}
-                                >
-                                  <KeyRound className="w-4 h-4 mr-2" />
-                                  Redefinir senha
-                                </DropdownMenuItem>
+                                {status === "pending_invite" ? (
+                                  <DropdownMenuItem
+                                    disabled={resendingId === user.id}
+                                    onClick={() => handleResendInvite(user)}
+                                  >
+                                    <MailWarning className="w-4 h-4 mr-2" />
+                                    {resendingId === user.id ? "Reenviando..." : "Reenviar convite"}
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem
+                                    onClick={() => handleResetPassword(user)}
+                                  >
+                                    <KeyRound className="w-4 h-4 mr-2" />
+                                    Redefinir senha
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem
                                   onClick={() => setLogUser(user)}
                                 >

@@ -18,6 +18,8 @@ import {
   KeyRound,
   Send,
   Pencil,
+  MailWarning,
+  LogIn,
 } from "lucide-react";
 
 const ACTION_CONFIG = {
@@ -25,6 +27,16 @@ const ACTION_CONFIG = {
     label: "Convite enviado",
     icon: Send,
     color: "text-blue-500 bg-blue-50",
+  },
+  resend_invite: {
+    label: "Convite reenviado",
+    icon: MailWarning,
+    color: "text-blue-500 bg-blue-50",
+  },
+  accept_invite: {
+    label: "Convite aceito",
+    icon: LogIn,
+    color: "text-emerald-500 bg-emerald-50",
   },
   edit: {
     label: "Dados editados",

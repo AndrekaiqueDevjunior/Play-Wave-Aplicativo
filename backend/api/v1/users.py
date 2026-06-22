@@ -6,12 +6,14 @@ from typing import List, Optional
 
 from core.database import get_db
 from core.dependencies import get_current_user
-from core.models import User, UserRole
+from core.models import User, UserRole, UserLog, UserLogAction
+from core.config import settings
 from core.schemas_completos import (
-    UserCreate, UserUpdate, UserResponse, UserRoleEnum
+    UserCreate, UserUpdate, UserResponse, UserRoleEnum, UserResendInviteResponse
 )
-from core.auth import get_password_hash
+from core.auth import get_password_hash, generate_secure_token, token_expiry
 from crud.entidades import crud_user
+from services.email_service import send_invite_email
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -131,18 +133,94 @@ def create_user(
         if current_user.role == "operator" and user_in.role == UserRoleEnum.ADMIN:
             user_in.role = UserRoleEnum.OPERATOR
 
-    user_data = user_in.model_dump(exclude_none=True)
-    password = user_data.pop("password")
-    user_data["password_hash"] = get_password_hash(password)
-    user_data.setdefault("account_status", "active")
-    user_data.setdefault("is_active", True)
+    send_invite = user_in.send_invite
+    user_data = user_in.model_dump(exclude_none=True, exclude={"password", "send_invite"})
+
+    if send_invite:
+        user_data["password_hash"] = None
+        user_data["account_status"] = "pending_invite"
+        user_data["is_active"] = True
+        user_data["invite_token"] = generate_secure_token()
+        user_data["invite_expires_at"] = token_expiry(settings.INVITE_TOKEN_EXPIRE_HOURS)
+        user_data["invite_sent_at"] = datetime.utcnow()
+    else:
+        user_data["password_hash"] = get_password_hash(user_in.password)
+        user_data.setdefault("account_status", "active")
+        user_data.setdefault("is_active", True)
     _stamp_change(user_data, current_user)
 
     user = User(**user_data)
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    if send_invite:
+        send_invite_email(user.email, user.name, user.invite_token)
+        db.add(UserLog(
+            target_user_id=user.id,
+            target_user_email=user.email,
+            action=UserLogAction.INVITE,
+            performed_by=current_user.email,
+            tenant_id=user.tenant_id,
+        ))
+        db.commit()
+
     return user
+
+
+@router.post("/{user_id}/resend-invite", response_model=UserResendInviteResponse)
+def resend_invite(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_id: str
+):
+    """
+    Reenvia convite por e-mail para usuário em account_status="pending_invite",
+    gerando um novo token (invalida o anterior) com nova expiração.
+    """
+    if current_user.role not in ["admin", "operator"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sem permissão para reenviar convites"
+        )
+
+    user = crud_user.get(db, id=user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado"
+        )
+
+    if user.account_status != "pending_invite":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Usuário não está com convite pendente"
+        )
+
+    invite_token = generate_secure_token()
+    invite_expires_at = token_expiry(settings.INVITE_TOKEN_EXPIRE_HOURS)
+    invite_sent_at = datetime.utcnow()
+
+    update_data = {
+        "invite_token": invite_token,
+        "invite_expires_at": invite_expires_at,
+        "invite_sent_at": invite_sent_at,
+    }
+    _stamp_change(update_data, current_user)
+    user = crud_user.update(db, db_obj=user, obj_in=update_data)
+
+    send_invite_email(user.email, user.name, invite_token)
+    db.add(UserLog(
+        target_user_id=user.id,
+        target_user_email=user.email,
+        action=UserLogAction.RESEND_INVITE,
+        performed_by=current_user.email,
+        tenant_id=user.tenant_id,
+    ))
+    db.commit()
+
+    return UserResendInviteResponse(invite_sent_at=invite_sent_at, invite_expires_at=invite_expires_at)
 
 
 @router.put("/{user_id}", response_model=UserResponse)

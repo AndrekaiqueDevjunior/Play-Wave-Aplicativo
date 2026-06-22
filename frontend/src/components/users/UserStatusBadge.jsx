@@ -14,12 +14,17 @@ const config = {
     label: "Bloqueado (inadimpl.)",
     className: "bg-red-100 text-red-700 border-red-200",
   },
+  pending_invite: {
+    label: "Convite pendente",
+    className: "bg-amber-100 text-amber-700 border-amber-200",
+  },
 };
 
 const dot = {
   active: "bg-emerald-500",
   inactive: "bg-slate-400",
   blocked: "bg-red-500",
+  pending_invite: "bg-amber-500",
 };
 
 export default function UserStatusBadge({ status }) {

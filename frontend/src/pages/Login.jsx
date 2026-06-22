@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -393,16 +393,21 @@ export default function Login() {
                 )}
               </div>
 
-              <label className="flex items-center gap-3 text-[16px] text-slate-500 cursor-pointer">
-                <Checkbox
-                  id="remember"
-                  checked={remember}
-                  onCheckedChange={(checked) => setValue("remember", !!checked)}
-                  disabled={isSubmitting || isLocked}
-                  className="w-5 h-5 rounded border-slate-300 bg-white shadow-sm"
-                />
-                Lembrar acesso neste dispositivo
-              </label>
+              <div className="flex items-center justify-between gap-3 text-[16px]">
+                <label className="flex items-center gap-3 text-slate-500 cursor-pointer">
+                  <Checkbox
+                    id="remember"
+                    checked={remember}
+                    onCheckedChange={(checked) => setValue("remember", !!checked)}
+                    disabled={isSubmitting || isLocked}
+                    className="w-5 h-5 rounded border-slate-300 bg-white shadow-sm"
+                  />
+                  Lembrar acesso neste dispositivo
+                </label>
+                <Link to="/esqueci-senha" className="text-blue-600 font-medium whitespace-nowrap">
+                  Esqueci minha senha
+                </Link>
+              </div>
 
               {serverError && (
                 <div

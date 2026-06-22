@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -32,3 +33,13 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def generate_secure_token() -> str:
+    """Token opaco para convite/reset de senha (não é um JWT — apenas
+    uma chave aleatória usada como índice único na tabela users)."""
+    return secrets.token_urlsafe(32)
+
+
+def token_expiry(hours: int) -> datetime:
+    return datetime.utcnow() + timedelta(hours=hours)

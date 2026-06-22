@@ -31,6 +31,7 @@ def _make_user(**kwargs):
         tenant_id=uuid.uuid4(),
         is_active=True,
         name="Admin",
+        account_status="active",
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )

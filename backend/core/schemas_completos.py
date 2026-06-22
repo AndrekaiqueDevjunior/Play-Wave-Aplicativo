@@ -88,6 +88,7 @@ class MediaStatusEnum(str, Enum):
     AVAILABLE = "available"
     PROCESSING = "processing"
     ERROR = "error"
+    ARCHIVED = "archived"
 
 
 class AudioTrackCategoryEnum(str, Enum):
@@ -165,6 +166,8 @@ class UserLogActionEnum(str, Enum):
     BLOCK = "block"
     UNBLOCK = "unblock"
     RESET_PASSWORD = "reset_password"
+    RESEND_INVITE = "resend_invite"
+    ACCEPT_INVITE = "accept_invite"
 
 
 # Schemas Base
@@ -281,7 +284,17 @@ class UserBase(BaseSchema):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6)
+    # SPEC 019 — senha agora é opcional: se omitida (ou send_invite=True),
+    # o usuário é criado em account_status="pending_invite" e recebe um
+    # e-mail de convite para definir a própria senha.
+    password: Optional[str] = Field(None, min_length=6)
+    send_invite: bool = False
+
+    @model_validator(mode="after")
+    def _check_password_or_invite(self):
+        if not self.send_invite and not self.password:
+            raise ValueError("Informe uma senha ou marque envio de convite por e-mail")
+        return self
 
 
 class UserUpdate(BaseSchema):
@@ -299,11 +312,32 @@ class UserUpdate(BaseSchema):
 
 class UserResponse(UserBase, TimestampedSchema):
     id: str
+    invite_sent_at: Optional[datetime] = None
+    invite_expires_at: Optional[datetime] = None
 
 
 class UserLogin(BaseSchema):
     email: EmailStr
     password: str
+
+
+class UserResendInviteResponse(BaseSchema):
+    invite_sent_at: datetime
+    invite_expires_at: datetime
+
+
+class UserAcceptInviteRequest(BaseSchema):
+    token: str
+    password: str = Field(..., min_length=6)
+
+
+class PasswordForgotRequest(BaseSchema):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseSchema):
+    token: str
+    password: str = Field(..., min_length=6)
 
 
 # Device Schemas
@@ -385,6 +419,11 @@ class DeviceDesktopExposureConfigUpdate(BaseSchema):
     interval_seconds: Optional[int] = Field(None, ge=10, le=86400)
     duration_seconds: Optional[int] = Field(None, ge=1, le=300)
     restore_fullscreen: Optional[bool] = None
+    # SPEC 015 — aviso visual configurável antes de minimizar.
+    show_warning: Optional[bool] = None
+    warning_seconds_before: Optional[int] = Field(None, ge=0, le=120)
+    warning_text: Optional[str] = Field(None, max_length=255)
+    warning_media_id: Optional[str] = None
 
 
 class DeviceDesktopExposureConfig(BaseSchema):
@@ -392,6 +431,10 @@ class DeviceDesktopExposureConfig(BaseSchema):
     interval_seconds: Optional[int] = None
     duration_seconds: Optional[int] = None
     restore_fullscreen: bool
+    show_warning: bool = False
+    warning_seconds_before: Optional[int] = None
+    warning_text: Optional[str] = None
+    warning_media_id: Optional[str] = None
     updated_at: Optional[datetime] = None
 
 
@@ -670,6 +713,8 @@ class AudioPlaylistResponse(AudioPlaylistBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[AudioPlaylistStatusEnum] = None
+    # SPEC 017 — preenchido quando status=archived; None caso contrário.
+    archived_at: Optional[datetime] = None
     version: int = 0
     items: Optional[List[AudioPlaylistItemResponse]] = None
 
@@ -835,6 +880,8 @@ class MediaResponse(MediaBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[MediaStatusEnum] = None
+    # SPEC 018 — preenchido quando status=archived; None caso contrário.
+    archived_at: Optional[datetime] = None
     availability_status: Optional[str] = None
     usage_count: Optional[int] = None
     audio_policy: Optional[AudioPolicyEnum] = None  # SPEC 005
@@ -842,6 +889,24 @@ class MediaResponse(MediaBase, TimestampedSchema):
     start_time: Optional[str] = None               # TASK 17
     end_time: Optional[str] = None                 # TASK 17
     days_of_week: Optional[List[str]] = None       # TASK 17
+
+
+# SPEC 018 — exclusão/arquivamento em massa de mídias
+class MediaBulkActionRequest(BaseSchema):
+    media_ids: List[str] = Field(..., min_length=1, max_length=200)
+
+
+class MediaBulkActionItemResult(BaseSchema):
+    media_id: str
+    success: bool
+    reason: Optional[str] = None
+
+
+class MediaBulkActionResponse(BaseSchema):
+    requested: int
+    succeeded: int
+    failed: int
+    results: List[MediaBulkActionItemResult]
 
 
 class MediaVersionResponse(BaseSchema):
@@ -918,6 +983,8 @@ class AudioTrackResponse(AudioTrackBase, TimestampedSchema):
     id: str
     tenant_id: Optional[str] = None
     status: Optional[AudioTrackStatusEnum] = None
+    # SPEC 016 — preenchido quando status=archived; None caso contrário.
+    archived_at: Optional[datetime] = None
 
 
 # AudioCategory Schemas (TASK 02 — categorias personalizadas)

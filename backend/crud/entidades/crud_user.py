@@ -45,7 +45,13 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
     
     def email_exists(self, db: Session, *, email: str) -> bool:
         return db.query(User).filter(User.email == email).first() is not None
-    
+
+    def get_by_invite_token(self, db: Session, *, token: str) -> Optional[User]:
+        return db.query(User).filter(User.invite_token == token).first()
+
+    def get_by_password_reset_token(self, db: Session, *, token: str) -> Optional[User]:
+        return db.query(User).filter(User.password_reset_token == token).first()
+
     def create_with_tenant(self, db: Session, *, obj_in: UserCreate, tenant_id: str) -> User:
         obj_in_data = obj_in.dict()
         obj_in_data["tenant_id"] = tenant_id
