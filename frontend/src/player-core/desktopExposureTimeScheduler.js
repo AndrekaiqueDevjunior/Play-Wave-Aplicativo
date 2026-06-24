@@ -16,6 +16,11 @@
  * `weekdays` nulo/vazio = todos os dias.
  */
 
+import {
+  INTERRUPTION_POLICY,
+  normalizeInterruptionPolicy,
+} from "./contentGuard.js";
+
 export const EXPOSURE_STATE = {
   RUNNING: "RUNNING",
   MINIMIZING: "MINIMIZING",
@@ -107,6 +112,7 @@ export function createDesktopExposureTimeScheduler({
 }) {
   let nextTimerId = null;
   let restoreTimerId = null;
+  let warnTimerId = null;
   let state = EXPOSURE_STATE.RUNNING;
   let lastEvents = [];
   let lastPhase = null;
@@ -124,10 +130,17 @@ export function createDesktopExposureTimeScheduler({
       restoreTimerId = null;
     }
   };
+  const clearWarnTimer = () => {
+    if (warnTimerId) {
+      clearTimeout(warnTimerId);
+      warnTimerId = null;
+    }
+  };
 
   const stop = () => {
     clearNextTimer();
     clearRestoreTimer();
+    clearWarnTimer();
     if (cancelWaitForEnd) {
       cancelWaitForEnd();
       cancelWaitForEnd = null;
@@ -175,6 +188,35 @@ export function createDesktopExposureTimeScheduler({
     }
   };
 
+  // Exibe o aviso configurado (se houver) e só então minimiza, após o atraso
+  // de leitura (warning_seconds_before). Sem aviso, minimiza direto. O aviso é
+  // disparado imediatamente ANTES da minimização (já respeitada a fronteira do
+  // item), garantindo que apareça na tela antes da janela sumir.
+  const warnThenMinimize = (event) => {
+    if (event.show_warning && onWarning) {
+      const secondsBefore = Number(event.warning_seconds_before || 0);
+      onWarning({
+        secondsBefore,
+        text: event.warning_text || null,
+        mediaId: event.warning_media_id || null,
+      });
+      const delayMs = Math.max(secondsBefore, 1) * 1000;
+      logger.log(
+        "[desktopExposureTime] aviso exibido — minimizando em",
+        delayMs / 1000,
+        "s",
+        event.name,
+      );
+      clearWarnTimer();
+      warnTimerId = setTimeout(() => {
+        warnTimerId = null;
+        runMinimize(event);
+      }, delayMs);
+      return;
+    }
+    runMinimize(event);
+  };
+
   const fire = (event) => {
     // Só dispara em RUNNING — evita conflito com SPEC 009 e sobreposição.
     if (state !== EXPOSURE_STATE.RUNNING) {
@@ -187,28 +229,31 @@ export function createDesktopExposureTimeScheduler({
       return;
     }
 
-    if (!contentGuard) {
-      runMinimize(event);
+    const policy = normalizeInterruptionPolicy(event.interruption_policy);
+    const busy = contentGuard ? contentGuard.isContentBusy() : false;
+
+    if (!contentGuard || policy === INTERRUPTION_POLICY.IMMEDIATE || !busy) {
+      warnThenMinimize(event);
       return;
     }
 
-    if (event.show_warning && onWarning) {
-      onWarning({
-        secondsBefore: Number(event.warning_seconds_before || 0),
-        text: event.warning_text || null,
-        mediaId: event.warning_media_id || null,
-      });
-    }
-
-    if (contentGuard.isContentBusy()) {
+    if (policy === INTERRUPTION_POLICY.NEVER) {
       logger.log(
-        "[desktopExposureTime] conteúdo ativo — aguardando fim antes de minimizar",
+        "[desktopExposureTime] conteúdo ativo + policy 'never' — evento pulado",
         event.name,
       );
+      schedule({ events: lastEvents, phase: lastPhase });
+      return;
     }
+
+    // after_current_item (padrão): aguarda o item atual terminar.
+    logger.log(
+      "[desktopExposureTime] conteúdo ativo — aguardando fim do item antes de avisar/minimizar",
+      event.name,
+    );
     cancelWaitForEnd = contentGuard.onceContentEnd(() => {
       cancelWaitForEnd = null;
-      runMinimize(event);
+      warnThenMinimize(event);
     });
   };
 

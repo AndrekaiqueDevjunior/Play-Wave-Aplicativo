@@ -173,7 +173,7 @@ describe("window exposure scheduler — WAIT_CONTENT_END (SPEC 015)", () => {
     scheduler.stop();
   });
 
-  it("dispara onWarning quando show_warning está ativo na config", async () => {
+  it("exibe o aviso só após a fronteira do item e minimiza depois de warning_seconds_before", async () => {
     const executeCommand = vi.fn().mockResolvedValue({ success: true });
     const guard = createContentGuard();
     guard.update({ phase: "playing", hasPlaylist: true });
@@ -203,14 +203,92 @@ describe("window exposure scheduler — WAIT_CONTENT_END (SPEC 015)", () => {
       commandContext: {},
     });
 
+    // Intervalo vence com conteúdo ativo: NÃO avisa nem minimiza ainda —
+    // primeiro respeita o item atual (não atravessa a mídia).
     await vi.advanceTimersByTimeAsync(1000);
+    expect(onWarning).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
+
+    // Item terminou → aviso aparece imediatamente antes da minimização.
+    guard.notifyContentEnded();
+    await vi.advanceTimersByTimeAsync(0);
     expect(onWarning).toHaveBeenCalledWith({
       secondsBefore: 10,
       text: "Aviso",
       mediaId: "media-1",
     });
+    // Ainda dentro da janela do aviso: não minimizou.
+    expect(executeCommand).not.toHaveBeenCalled();
 
+    // Após warning_seconds_before → minimiza.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+
+    scheduler.stop();
+  });
+
+  it("policy 'never' pula a exposição enquanto há mídia tocando", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+        interruption_policy: "never",
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    // Conteúdo ativo + never → pulou; terminar o item NÃO deve minimizar.
     guard.notifyContentEnded();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executeCommand).not.toHaveBeenCalled();
+
+    scheduler.stop();
+  });
+
+  it("policy 'immediate' minimiza mesmo com mídia tocando", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const scheduler = createWindowExposureScheduler({
+      executeCommand,
+      isElectron: true,
+      contentGuard: guard,
+    });
+
+    scheduler.schedule({
+      desktopExposureConfig: {
+        enabled: true,
+        interval_seconds: 1,
+        duration_seconds: 2,
+        restore_fullscreen: false,
+        interruption_policy: "immediate",
+      },
+      deviceId: "device-1",
+      deviceToken: "token-1",
+      phase: "playing",
+      commandContext: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+
     scheduler.stop();
   });
 

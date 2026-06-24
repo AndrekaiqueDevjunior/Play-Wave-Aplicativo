@@ -14,6 +14,25 @@
  * advanceMedia significa que o conteúdo anterior terminou).
  */
 
+/**
+ * Política de interrupção de mídia ao disparar uma ação de sistema (minimizar).
+ *  - never              → nunca interrompe; se há mídia tocando, PULA a ocorrência.
+ *  - after_current_item → (padrão) espera o item atual terminar e então executa.
+ *  - immediate          → executa na hora, mesmo com mídia tocando.
+ */
+export const INTERRUPTION_POLICY = {
+  NEVER: "never",
+  AFTER_CURRENT_ITEM: "after_current_item",
+  IMMEDIATE: "immediate",
+};
+
+export function normalizeInterruptionPolicy(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === INTERRUPTION_POLICY.IMMEDIATE) return INTERRUPTION_POLICY.IMMEDIATE;
+  if (v === INTERRUPTION_POLICY.NEVER) return INTERRUPTION_POLICY.NEVER;
+  return INTERRUPTION_POLICY.AFTER_CURRENT_ITEM; // default
+}
+
 export function createContentGuard() {
   let snapshot = {
     phase: "waiting",

@@ -213,7 +213,7 @@ describe("desktopExposureTimeScheduler — WAIT_CONTENT_END (SPEC 015)", () => {
     s.stop();
   });
 
-  it("dispara onWarning antes de esperar o fim do conteúdo quando show_warning está ativo", async () => {
+  it("exibe o aviso só após o fim do conteúdo e minimiza depois de warning_seconds_before", async () => {
     const executeShowDesktop = vi.fn().mockResolvedValue({ ok: true });
     const guard = createContentGuard();
     guard.update({ phase: "playing", hasPlaylist: true });
@@ -240,7 +240,14 @@ describe("desktopExposureTimeScheduler — WAIT_CONTENT_END (SPEC 015)", () => {
       phase: "playing",
     });
 
+    // Chega 08:00 com conteúdo ativo: NÃO avisa nem minimiza — respeita o item.
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(onWarning).not.toHaveBeenCalled();
+    expect(executeShowDesktop).not.toHaveBeenCalled();
+
+    // Item terminou → aviso aparece imediatamente antes da minimização.
+    guard.notifyContentEnded();
+    await vi.advanceTimersByTimeAsync(0);
     expect(onWarning).toHaveBeenCalledWith({
       secondsBefore: 15,
       text: "Voltamos já",
@@ -248,8 +255,66 @@ describe("desktopExposureTimeScheduler — WAIT_CONTENT_END (SPEC 015)", () => {
     });
     expect(executeShowDesktop).not.toHaveBeenCalled();
 
+    // Após warning_seconds_before → minimiza.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(executeShowDesktop).toHaveBeenCalledTimes(1);
+    s.stop();
+  });
+
+  it("policy 'never' pula o evento enquanto há mídia tocando", async () => {
+    const executeShowDesktop = vi.fn().mockResolvedValue({ ok: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const s = createDesktopExposureTimeScheduler({
+      executeShowDesktop,
+      isElectron: true,
+      contentGuard: guard,
+    });
+    s.schedule({
+      events: [
+        {
+          id: "a",
+          time: "08:00",
+          duration_seconds: 10,
+          enabled: true,
+          interruption_policy: "never",
+        },
+      ],
+      phase: "playing",
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     guard.notifyContentEnded();
     await vi.advanceTimersByTimeAsync(0);
+    expect(executeShowDesktop).not.toHaveBeenCalled();
+    s.stop();
+  });
+
+  it("policy 'immediate' minimiza no horário mesmo com mídia tocando", async () => {
+    const executeShowDesktop = vi.fn().mockResolvedValue({ ok: true });
+    const guard = createContentGuard();
+    guard.update({ phase: "playing", hasPlaylist: true });
+
+    const s = createDesktopExposureTimeScheduler({
+      executeShowDesktop,
+      isElectron: true,
+      contentGuard: guard,
+    });
+    s.schedule({
+      events: [
+        {
+          id: "a",
+          time: "08:00",
+          duration_seconds: 10,
+          enabled: true,
+          interruption_policy: "immediate",
+        },
+      ],
+      phase: "playing",
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     expect(executeShowDesktop).toHaveBeenCalledTimes(1);
     s.stop();
   });

@@ -1,16 +1,47 @@
+import {
+  INTERRUPTION_POLICY,
+  normalizeInterruptionPolicy,
+} from "./contentGuard.js";
+
+/**
+ * windowExposureScheduler — exposição de desktop por INTERVALO (SPEC 009/015).
+ *
+ * Fluxo correto da ação (SPEC-007 / pedido do cliente Windows):
+ *
+ *   [intervalo vence]
+ *     → política de interrupção (never | after_current_item | immediate)
+ *     → (after_current_item) aguarda o item atual terminar  ← não atravessa mídia
+ *     → exibe o AVISO configurado (onWarning)               ← aviso aparece
+ *     → aguarda warning_seconds_before                      ← tempo de leitura
+ *     → minimiza (executeCommand show_desktop)
+ *     → Electron restaura após duration_seconds
+ *
+ * Ponto-chave da correção: o aviso é disparado IMEDIATAMENTE ANTES de
+ * minimizar (depois de respeitada a fronteira do item), com um atraso real
+ * (warning_seconds_before) entre aviso e minimização. Antes, o aviso era
+ * disparado no momento do intervalo e a minimização acontecia depois, sem
+ * atraso — quando não havia mídia ativa, a janela minimizava no mesmo tick do
+ * setState do aviso (antes do React pintar), e o aviso "não aparecia".
+ */
 export function createWindowExposureScheduler({
   executeCommand,
   isElectron = false,
   logger = console,
-  // SPEC 015 — política WAIT_CONTENT_END: quando o horário do intervalo
-  // chega, espera o conteúdo atual terminar (contentGuard.onceContentEnd)
-  // antes de minimizar. contentGuard é opcional para não quebrar quem
-  // instancia o scheduler sem essa dependência (ex.: testes antigos).
+  // SPEC 015 — contentGuard é opcional (testes/instâncias antigas). Sem ele,
+  // a ação executa imediatamente no intervalo (comportamento legado).
   contentGuard = null,
   onWarning = null, // ({ secondsBefore, text, mediaId }) => void
 }) {
   let timerId = null;
+  let warnTimerId = null;
   let cancelWaitForEnd = null;
+
+  const clearWarnTimer = () => {
+    if (warnTimerId) {
+      clearTimeout(warnTimerId);
+      warnTimerId = null;
+    }
+  };
 
   const stop = () => {
     if (timerId) {
@@ -21,6 +52,7 @@ export function createWindowExposureScheduler({
       cancelWaitForEnd();
       cancelWaitForEnd = null;
     }
+    clearWarnTimer();
   };
 
   const schedule = ({
@@ -54,14 +86,31 @@ export function createWindowExposureScheduler({
       return;
     }
 
+    const policy = normalizeInterruptionPolicy(
+      desktopExposureConfig.interruption_policy,
+    );
+
     logger.log(
       "[windowExposureScheduler] scheduling desktop exposure in",
       interval,
-      "seconds",
+      "seconds (policy:",
+      policy + ")",
       desktopExposureConfig,
     );
 
+    const reschedule = () =>
+      schedule({
+        desktopExposureConfig,
+        deviceId,
+        deviceToken,
+        phase,
+        commandContext,
+      });
+
     const runExposure = async () => {
+      logger.log("[windowExposureScheduler] minimizando (show_desktop)", {
+        duration_seconds: duration,
+      });
       try {
         await executeCommand(
           {
@@ -79,40 +128,70 @@ export function createWindowExposureScheduler({
           err,
         );
       }
-      schedule({
-        desktopExposureConfig,
-        deviceId,
-        deviceToken,
-        phase,
-        commandContext,
+      reschedule();
+    };
+
+    // Exibe o aviso (se configurado) e só então minimiza, após o atraso de
+    // leitura. Sem aviso, minimiza direto.
+    const warnThenRun = () => {
+      const wantWarning =
+        Boolean(desktopExposureConfig.show_warning) &&
+        typeof onWarning === "function";
+      if (!wantWarning) {
+        runExposure();
+        return;
+      }
+      const secondsBefore = Number(
+        desktopExposureConfig.warning_seconds_before || 0,
+      );
+      onWarning({
+        secondsBefore,
+        text: desktopExposureConfig.warning_text || null,
+        mediaId: desktopExposureConfig.warning_media_id || null,
+      });
+      const delayMs = Math.max(secondsBefore, 1) * 1000;
+      logger.log(
+        "[windowExposureScheduler] aviso exibido — minimizando em",
+        delayMs / 1000,
+        "s",
+      );
+      clearWarnTimer();
+      warnTimerId = setTimeout(() => {
+        warnTimerId = null;
+        runExposure();
+      }, delayMs);
+    };
+
+    // Aplica a política de interrupção quando o intervalo vence.
+    const proceed = () => {
+      const busy = contentGuard ? contentGuard.isContentBusy() : false;
+
+      if (!contentGuard || policy === INTERRUPTION_POLICY.IMMEDIATE || !busy) {
+        warnThenRun();
+        return;
+      }
+
+      if (policy === INTERRUPTION_POLICY.NEVER) {
+        logger.log(
+          "[windowExposureScheduler] conteúdo ativo + policy 'never' — exposição pulada neste ciclo",
+        );
+        reschedule();
+        return;
+      }
+
+      // after_current_item (padrão): aguarda o item atual terminar.
+      logger.log(
+        "[windowExposureScheduler] conteúdo ativo — aguardando fim do item antes de avisar/minimizar",
+      );
+      cancelWaitForEnd = contentGuard.onceContentEnd(() => {
+        cancelWaitForEnd = null;
+        warnThenRun();
       });
     };
 
     timerId = setTimeout(() => {
       timerId = null;
-
-      if (!contentGuard) {
-        runExposure();
-        return;
-      }
-
-      if (desktopExposureConfig.show_warning && onWarning) {
-        onWarning({
-          secondsBefore: Number(desktopExposureConfig.warning_seconds_before || 0),
-          text: desktopExposureConfig.warning_text || null,
-          mediaId: desktopExposureConfig.warning_media_id || null,
-        });
-      }
-
-      if (contentGuard.isContentBusy()) {
-        logger.log(
-          "[windowExposureScheduler] conteúdo ativo — aguardando fim antes de minimizar",
-        );
-      }
-      cancelWaitForEnd = contentGuard.onceContentEnd(() => {
-        cancelWaitForEnd = null;
-        runExposure();
-      });
+      proceed();
     }, interval * 1000);
   };
 
