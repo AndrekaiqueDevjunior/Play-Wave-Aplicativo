@@ -20,9 +20,17 @@
             android:launchMode="singleTask"
             android:exported="true">
 
+            <!-- RF01 — autostart como HOME launcher: o Android abre o player
+                 automaticamente no boot por ser a "tela inicial", sem depender
+                 de RECEIVE_BOOT_COMPLETED nem da restrição de background-launch
+                 do Android 10+. Para autostart garantido, defina o PlayWave
+                 como app de Início padrão uma vez (Configurações > Apps padrão >
+                 App de início) — ou provisione como Device Owner. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
         </activity>
@@ -36,6 +44,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- RF01 — Autostart nativo: abre o player automaticamente após o boot,
+             removendo a dependência de apps de "auto start" de terceiros.
+             Confiável quando o app é Device Owner ou Home/launcher (ver
+             BootReceiver para limitações de background-start no Android 10+). -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- SPEC 003 — Device Admin Receiver para provisionamento como Device Owner.
              Necessário para PowerManager.reboot() e DevicePolicyManager.lockNow().
@@ -56,6 +79,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- RF01 — autostart do player após o boot do aparelho. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- SPEC 003 — Necessária para PowerManager.reboot() quando provisionado
          como Device Owner. tools:ignore evita warning do lint (permissão
